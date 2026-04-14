@@ -1,0 +1,72 @@
+# CloudPress - Cloudflare Workers Configuration
+# wrangler.toml
+#
+# Deploy with: npx wrangler deploy
+# Dev server:  npx wrangler dev
+
+name        = "cloudpress"
+main        = "index.js"
+compatibility_date = "2024-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ── Routes ────────────────────────────────────────────────────────────────────
+# Uncomment and set your domain after adding it to Cloudflare
+# routes = [
+#   { pattern = "yourdomain.com/*", zone_name = "yourdomain.com" }
+# ]
+
+# ── D1 Database ───────────────────────────────────────────────────────────────
+# Create with: npx wrangler d1 create cloudpress-db
+[[d1_databases]]
+binding      = "CP_DB"
+database_name = "cloudpress-db"
+database_id  = "YOUR_D1_DATABASE_ID_HERE"
+
+# ── KV Namespace ──────────────────────────────────────────────────────────────
+# Create with: npx wrangler kv:namespace create CP_KV
+[[kv_namespaces]]
+binding      = "CP_KV"
+id           = "YOUR_KV_NAMESPACE_ID_HERE"
+# preview_id = "YOUR_KV_PREVIEW_ID_HERE"   # for wrangler dev
+
+# ── R2 Bucket (for media uploads) ─────────────────────────────────────────────
+# Create with: npx wrangler r2 bucket create cloudpress-media
+[[r2_buckets]]
+binding     = "CP_MEDIA"
+bucket_name = "cloudpress-media"
+
+# ── Environment Variables (non-secret) ────────────────────────────────────────
+[vars]
+CP_SITE_NAME    = "My CloudPress Site"
+CP_SITE_TAGLINE = "Just another CloudPress site"
+# CP_DEBUG      = "true"    # Uncomment for debug mode
+
+# ── Cron Triggers ─────────────────────────────────────────────────────────────
+# CloudPress uses Cloudflare Cron Triggers instead of wp-cron.
+[triggers]
+crons = [
+  "*/5 * * * *",    # Every 5 minutes (for scheduled posts, etc.)
+]
+
+# ── Secrets (set via CLI, NOT here) ───────────────────────────────────────────
+# Set these with: npx wrangler secret put SECRET_NAME
+#
+#   CP_AUTH_KEY
+#   CP_SECURE_AUTH_KEY
+#   CP_LOGGED_IN_KEY
+#   CP_NONCE_KEY
+#   CP_AUTH_SALT
+#   CP_SECURE_AUTH_SALT
+#   CP_LOGGED_IN_SALT
+#   CP_NONCE_SALT
+#   CP_ADMIN_EMAIL
+#   CP_GITHUB_TOKEN     (optional, for private GitHub theme/plugin repos)
+
+# ── Per-environment overrides ──────────────────────────────────────────────────
+[env.production]
+name = "cloudpress-production"
+# routes = [{ pattern = "yourdomain.com/*", zone_name = "yourdomain.com" }]
+
+[env.staging]
+name = "cloudpress-staging"
+# routes = [{ pattern = "staging.yourdomain.com/*", zone_name = "yourdomain.com" }]

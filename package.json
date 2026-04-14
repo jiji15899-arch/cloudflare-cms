@@ -1,0 +1,23 @@
+{
+  "name": "cloudpress",
+  "version": "1.0.0",
+  "description": "CloudPress CMS - WordPress-compatible CMS for Cloudflare Workers",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "dev":     "wrangler dev",
+    "deploy":  "wrangler deploy",
+    "deploy:production": "wrangler deploy --env production",
+    "db:init": "wrangler d1 execute cloudpress-db --file=./cp-admin/schema.sql",
+    "db:migrate": "wrangler d1 migrations apply cloudpress-db",
+    "secrets":  "node scripts/generate-secrets.js | wrangler secret bulk"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["cloudflare", "workers", "cms", "cloudpress"],
+  "license": "GPL-2.0-or-later"
+}
