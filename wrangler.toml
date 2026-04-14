@@ -4,7 +4,7 @@
 # Deploy with: npx wrangler deploy
 # Dev server:  npx wrangler dev
 
-name        = "cloudpress"
+name        = "cloudflare-cms"
 main        = "index.js"
 compatibility_date = "2024-09-01"
 compatibility_flags = ["nodejs_compat"]
@@ -29,11 +29,9 @@ binding      = "CP_KV"
 id           = "YOUR_KV_NAMESPACE_ID_HERE"
 # preview_id = "YOUR_KV_PREVIEW_ID_HERE"   # for wrangler dev
 
-# ── R2 Bucket (for media uploads) ─────────────────────────────────────────────
-# Create with: npx wrangler r2 bucket create cloudpress-media
-[[r2_buckets]]
-binding     = "CP_MEDIA"
-bucket_name = "cloudpress-media"
+# ── Media Storage ─────────────────────────────────────────────────────────────
+# Media files are stored in KV (no R2 required).
+# Max file size: 5 MB per file.
 
 # ── Environment Variables (non-secret) ────────────────────────────────────────
 [vars]
