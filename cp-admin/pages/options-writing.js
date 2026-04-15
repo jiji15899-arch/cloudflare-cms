@@ -1,5 +1,5 @@
 /**
- * CloudPress Admin – Writing Settings
+ * CloudPress Admin - Writing Settings
  * Replaces WordPress wp-admin/options-writing.php
  * @package CloudPress
  */
