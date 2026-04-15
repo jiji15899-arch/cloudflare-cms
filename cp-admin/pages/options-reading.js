@@ -1,5 +1,5 @@
 /**
- * CloudPress Admin – Reading Settings
+ * CloudPress Admin - Reading Settings
  * Replaces WordPress wp-admin/options-reading.php
  * @package CloudPress
  */
@@ -72,14 +72,14 @@ export async function handleOptionsReading(request, cp) {
               <div>
                 <label style="font-size:13px;color:#555">Homepage: </label>
                 <select name="page_on_front" style="padding:6px 8px;border:1px solid #ccc;border-radius:4px;background:#fff">
-                  <option value="">— Select —</option>
+                  <option value="">-- Select --</option>
                   ${pageOpts(vals.page_on_front)}
                 </select>
               </div>
               <div>
                 <label style="font-size:13px;color:#555">Posts page: </label>
                 <select name="page_for_posts" style="padding:6px 8px;border:1px solid #ccc;border-radius:4px;background:#fff">
-                  <option value="">— Select —</option>
+                  <option value="">-- Select --</option>
                   ${pageOpts(vals.page_for_posts)}
                 </select>
               </div>
