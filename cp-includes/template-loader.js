@@ -7,10 +7,10 @@
  * fetched from GitHub via the GitHub Contents API and rendered as HTML strings.
  *
  * Template hierarchy (simplified, mirrors WordPress):
- *   single.html → index.html
- *   page.html   → index.html
- *   archive.html → index.html
- *   404.html    → index.html
+ *   single.html -> index.html
+ *   page.html   -> index.html
+ *   archive.html -> index.html
+ *   404.html    -> index.html
  *
  * Templates receive a `context` object instead of PHP globals.
  *
@@ -22,7 +22,7 @@ import { getOption } from './option.js';
 const KV_PREFIX     = 'cp:template:';
 const KV_TTL        = 3600; // 1 hour cache
 
-// ── Public API ────────────────────────────────────────────────────────────────
+// -- Public API ----------------------------------------------------------------
 
 /**
  * Load and return a rendered template.
@@ -49,7 +49,7 @@ export async function loadTemplate(cp, templateName, context = {}) {
 
 /**
  * Render a template string with a context.
- * Very simple {{variable}} interpolation — themes can use full JS template literals.
+ * Very simple {{variable}} interpolation -- themes can use full JS template literals.
  *
  * @param {object} cp
  * @param {string} templateName
@@ -80,7 +80,7 @@ export async function getTemplatePart(cp, templateName) {
   return null;
 }
 
-// ── Theme / template fetching ─────────────────────────────────────────────────
+// -- Theme / template fetching -------------------------------------------------
 
 /**
  * Fetch a template file from KV cache or GitHub.
@@ -126,7 +126,7 @@ async function fetchTemplate(cp, filename) {
   }
 }
 
-// ── Template hierarchy ────────────────────────────────────────────────────────
+// -- Template hierarchy --------------------------------------------------------
 
 function buildHierarchy(templateName, context) {
   const base = templateName.replace(/\.html$/, '');
@@ -150,7 +150,7 @@ function buildHierarchy(templateName, context) {
   return [...new Set(list)];
 }
 
-// ── Rendering ─────────────────────────────────────────────────────────────────
+// -- Rendering -----------------------------------------------------------------
 
 function interpolate(template, context) {
   return template.replace(/\{\{(\s*[\w.]+\s*)\}\}/g, (_, key) => {
@@ -173,7 +173,7 @@ function defaultTemplate(templateName, context) {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${escHtml(title)}</title>
-  <style>body{font-family:system-ui,sans-serif;max-width:800px;margin:2rem auto;padding:0 1rem}</style>
+  <link rel="stylesheet" href="/cp-includes/css/template-fallback.css">
 </head>
 <body>
   <h1>${escHtml(title)}</h1>
