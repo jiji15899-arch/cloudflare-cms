@@ -6,10 +6,10 @@
  * No external services required.
  *
  * Routes handled:
- *   /feed          → RSS 2.0
- *   /feed/rss      → RSS 2.0
- *   /feed/atom     → Atom 1.0
- *   /*/feed        → Category / tag / author feeds
+ *   /feed          -> RSS 2.0
+ *   /feed/rss      -> RSS 2.0
+ *   /feed/atom     -> Atom 1.0
+ *   /*/feed        -> Category / tag / author feeds
  *
  * @package CloudPress
  */
@@ -18,7 +18,7 @@ import { cpLoad }    from '../cp-load.js';
 import { getOption } from './option.js';
 import { getPosts }  from './post.js';
 
-// ── Entry point ───────────────────────────────────────────────────────────────
+// -- Entry point ---------------------------------------------------------------
 
 /**
  * Handle a feed request.
@@ -61,7 +61,7 @@ export async function handleFeed(request, env, ctx) {
   return rssFeed({ posts, blogname, tagline, siteurl, feedUrl, cp });
 }
 
-// ── RSS 2.0 ───────────────────────────────────────────────────────────────────
+// -- RSS 2.0 -------------------------------------------------------------------
 
 function rssFeed({ posts, blogname, tagline, siteurl, feedUrl, cp }) {
   const lastBuild = posts[0]?.post_modified || new Date().toUTCString();
@@ -110,7 +110,7 @@ ${items}
   });
 }
 
-// ── Atom 1.0 ──────────────────────────────────────────────────────────────────
+// -- Atom 1.0 ------------------------------------------------------------------
 
 function atomFeed({ posts, blogname, tagline, siteurl, feedUrl, cp }) {
   const updated = posts[0]?.post_modified
@@ -153,7 +153,7 @@ ${entries}
   });
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// -- Helpers -------------------------------------------------------------------
 
 function postLink(siteurl, post) {
   const base = String(siteurl || '').replace(/\/$/, '');
