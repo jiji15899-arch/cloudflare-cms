@@ -1,5 +1,5 @@
 /**
- * CloudPress Admin – Plugins
+ * CloudPress Admin - Plugins
  * Replaces WordPress wp-admin/plugins.php
  * @package CloudPress
  */
@@ -93,7 +93,7 @@ export async function handlePlugins(request, cp) {
     </td>
     <td>v${esc(p.version || '?')}</td>
     <td><span class="cp-status ${isActive ? 'cp-status-publish' : 'cp-status-draft'}">${isActive ? 'Active' : 'Inactive'}</span></td>
-    ${p.github_repo ? `<td><a href="https://github.com/${esc(p.github_repo)}" target="_blank" style="font-size:12px">${esc(p.github_repo)}</a></td>` : '<td>—</td>'}
+    ${p.github_repo ? `<td><a href="https://github.com/${esc(p.github_repo)}" target="_blank" style="font-size:12px">${esc(p.github_repo)}</a></td>` : '<td>--</td>'}
   </tr>`;
   }).join('');
 
