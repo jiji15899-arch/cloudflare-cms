@@ -1,5 +1,5 @@
 /**
- * CloudPress Admin – Upgrade / Update Core
+ * CloudPress Admin - Upgrade / Update Core
  * Replaces WordPress wp-admin/update-core.php
  * @package CloudPress
  */
