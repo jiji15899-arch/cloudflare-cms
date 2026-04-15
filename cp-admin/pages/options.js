@@ -1,5 +1,5 @@
 /**
- * CloudPress Admin – Options (Settings overview)
+ * CloudPress Admin - Options (Settings overview)
  * Replaces WordPress wp-admin/options.php
  * @package CloudPress
  */
