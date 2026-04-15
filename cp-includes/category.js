@@ -8,7 +8,7 @@
  * @package CloudPress
  */
 
-// ── Term fetch ────────────────────────────────────────────────────────────────
+// -- Term fetch ----------------------------------------------------------------
 
 /**
  * Get a single term by ID.
@@ -33,7 +33,7 @@ export async function getTerm(cp, termId, taxonomy = '') {
 
 /**
  * Get a term by slug.
- * Equivalent to get_term_by('slug', …).
+ * Equivalent to get_term_by('slug', ...).
  *
  * @param {object} cp
  * @param {string} slug
@@ -109,7 +109,7 @@ export async function getPostTerms(cp, postId, taxonomy) {
   return rows.results || [];
 }
 
-// ── Term write ────────────────────────────────────────────────────────────────
+// -- Term write ----------------------------------------------------------------
 
 /**
  * Insert a term (and its taxonomy record).
@@ -290,7 +290,7 @@ async function recountTerms(cp, taxonomy) {
   }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// -- Helpers -------------------------------------------------------------------
 
 function slugifyTerm(name) {
   return String(name || '')
