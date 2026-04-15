@@ -3,8 +3,8 @@
  * Replaces WordPress wp-admin/install.php + wp-admin/setup-config.php
  *
  * Handles first-run setup:
- *  1. /cp-admin/setup-config  → DB/KV config (already done via Cloudflare dashboard)
- *  2. /cp-admin/install       → Create tables (D1), create admin user, save config
+ *  1. /cp-admin/setup-config  -> DB/KV config (already done via Cloudflare dashboard)
+ *  2. /cp-admin/install       -> Create tables (D1), create admin user, save config
  *
  * No MySQL. Uses D1 (SQLite) + KV.
  * No VIP/pricing. All features free. Admin assigns roles.
@@ -52,7 +52,7 @@ export async function handleInstaller(request, env, ctx) {
   return new Response('Not found', { status: 404 });
 }
 
-// ── Step 1: Setup Config ─────────────────────────────────────────────────
+// -- Step 1: Setup Config -------------------------------------------------
 
 async function handleSetupConfig(request, env, method, isInstalled) {
   if (isInstalled) {
@@ -89,7 +89,7 @@ async function handleSetupConfig(request, env, method, isInstalled) {
   return htmlResponse(renderSetupForm(errors, values), 200);
 }
 
-// ── Step 2: Install ──────────────────────────────────────────────────────
+// -- Step 2: Install ------------------------------------------------------
 
 async function handleInstall(request, env, method, isInstalled, url) {
   if (isInstalled && !url.searchParams.has('force')) {
@@ -138,7 +138,7 @@ async function handleInstall(request, env, method, isInstalled, url) {
   return htmlResponse(renderInstallForm(errors, values, step1), 200);
 }
 
-// ── Core Install Logic ────────────────────────────────────────────────────
+// -- Core Install Logic ----------------------------------------------------
 
 async function runInstall(env, step1, adminInfo) {
   const prefix   = step1.db_prefix || 'cp_';
@@ -255,7 +255,7 @@ async function runInstall(env, step1, adminInfo) {
   }
 }
 
-// ── D1 Schema ──────────────────────────────────────────────────────────────
+// -- D1 Schema --------------------------------------------------------------
 
 async function createSchema(db, prefix) {
   const tables = [
@@ -417,10 +417,10 @@ async function createSchema(db, prefix) {
   }
 }
 
-// ── HTML Renderers ────────────────────────────────────────────────────────
+// -- HTML Renderers --------------------------------------------------------
 
 function renderSetupForm(errors, values) {
-  return layout('CloudPress Setup — Step 1: Configuration', `
+  return layout('CloudPress Setup -- Step 1: Configuration', `
     <div class="install-card">
       <h2>Welcome to CloudPress</h2>
       <p class="lead">Let's configure your site before installing. This information is stored securely in Cloudflare KV.</p>
@@ -475,7 +475,7 @@ function renderSetupForm(errors, values) {
 }
 
 function renderInstallForm(errors, values, step1) {
-  return layout('CloudPress Setup — Step 2: Create Admin User', `
+  return layout('CloudPress Setup -- Step 2: Create Admin User', `
     <div class="install-card">
       <h2>Create Your Administrator Account</h2>
       <p class="lead">Almost there! Set up your admin login credentials.</p>
@@ -520,7 +520,7 @@ function renderInstallSuccess(result) {
     <div class="install-card success-card">
       <div class="success-icon">&#10003;</div>
       <h2>CloudPress has been installed successfully!</h2>
-      <p>Your site is ready. Here are your login details — <strong>save them now</strong>.</p>
+      <p>Your site is ready. Here are your login details -- <strong>save them now</strong>.</p>
       <table class="form-table">
         <tr>
           <th>Username</th>
@@ -565,43 +565,7 @@ function layout(title, content) {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>${esc(title)}</title>
-  <style>
-    *,*::before,*::after{box-sizing:border-box}
-    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-         background:#f0f0f1;margin:0;padding:2rem 1rem;color:#1d2327}
-    .install-wrap{max-width:700px;margin:0 auto}
-    .install-header{text-align:center;margin-bottom:2rem}
-    .install-logo{font-size:2rem;font-weight:800;color:#1d2327;text-decoration:none}
-    .install-logo span{color:#F6821F}
-    .install-card{background:#fff;border-radius:8px;padding:2rem 2.5rem;
-                  box-shadow:0 2px 10px rgba(0,0,0,.08);margin-bottom:1.5rem}
-    h2{font-size:1.4rem;margin:0 0 .5rem;color:#1d2327}
-    .lead{color:#646970;margin:0 0 1.5rem}
-    .form-table{width:100%;border-collapse:collapse;margin-bottom:1.5rem}
-    .form-table tr{border-bottom:1px solid #dcdcde}
-    .form-table tr:last-child{border-bottom:none}
-    .form-table th{padding:14px 20px 14px 0;text-align:right;width:180px;
-                   font-size:13px;font-weight:600;vertical-align:top;padding-top:18px}
-    .form-table td{padding:12px 0}
-    .regular-text{width:100%;max-width:380px;padding:7px 10px;border:1px solid #8c8f94;
-                  border-radius:4px;font-size:14px;transition:.15s}
-    .regular-text:focus{border-color:#2271b1;outline:2px solid rgba(34,113,177,.2)}
-    .description{color:#646970;font-size:12.5px;margin:.4rem 0 0}
-    code{background:#f0f0f1;padding:2px 6px;border-radius:3px;font-size:12px}
-    .btn{display:inline-flex;align-items:center;padding:8px 18px;border-radius:4px;
-         font-size:14px;font-weight:500;cursor:pointer;text-decoration:none;
-         border:1px solid transparent;margin-right:8px;transition:.15s}
-    .btn-primary{background:#2271b1;color:#fff;border-color:#2271b1}
-    .btn-primary:hover{background:#135e96}
-    .btn-secondary{background:#fff;color:#1d2327;border-color:#dcdcde}
-    .btn-secondary:hover{background:#f0f0f1}
-    .submit{margin-top:1rem}
-    .notice-error{background:#fcf0f1;border-left:4px solid #d63638;padding:.8rem 1rem;
-                  border-radius:0 4px 4px 0;margin-bottom:1.2rem}
-    .notice-error ul{margin:0;padding:0 0 0 1rem;color:#d63638;font-size:13.5px}
-    .success-card{border-left:4px solid #00a32a}
-    .success-icon{font-size:3rem;color:#00a32a;text-align:center;margin-bottom:1rem}
-  </style>
+  <link rel="stylesheet" href="/cp-admin/css/installer.css">
 </head>
 <body>
 <div class="install-wrap">
@@ -614,7 +578,7 @@ function layout(title, content) {
 </html>`;
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// -- Helpers ----------------------------------------------------------------
 
 function htmlResponse(html, status = 200) {
   return new Response(html, { status, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
