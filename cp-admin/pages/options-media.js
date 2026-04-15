@@ -1,5 +1,5 @@
 /**
- * CloudPress Admin – Media Settings
+ * CloudPress Admin - Media Settings
  * Replaces WordPress wp-admin/options-media.php
  * @package CloudPress
  */
