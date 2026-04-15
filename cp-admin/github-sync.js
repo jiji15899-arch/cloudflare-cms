@@ -11,14 +11,14 @@
 import { cpLoad }         from '../cp-load.js';
 import { getAdminUser }   from './auth-check.js';
 
-/** Registered AJAX action handlers (action → { handler, nopriv }) */
+/** Registered AJAX action handlers (action -> { handler, nopriv }) */
 const AJAX_ACTIONS = new Map();
 
 /**
  * Register an AJAX action.
  *
  * @param {string}   action   - Action name (cp_action format)
- * @param {Function} handler  - async handler(cp, formData) → object
+ * @param {Function} handler  - async handler(cp, formData) -> object
  * @param {boolean}  nopriv   - Allow unauthenticated requests
  */
 export function registerAjaxAction(action, handler, nopriv = false) {
@@ -84,7 +84,7 @@ export async function handleAjax(request, env, ctx) {
   }
 }
 
-// ── Built-in AJAX Actions ─────────────────────────────────────────────────
+// -- Built-in AJAX Actions -------------------------------------------------
 
 async function handleBuiltinAction(action, cp, formData, user) {
   switch (action) {
