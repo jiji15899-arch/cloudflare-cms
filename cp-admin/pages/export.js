@@ -1,5 +1,5 @@
 /**
- * CloudPress Admin – Export
+ * CloudPress Admin - Export
  * Replaces WordPress wp-admin/export.php
  * Exports as CloudPress JSON or WordPress WXR XML.
  * @package CloudPress
@@ -20,7 +20,7 @@ export async function handleExport(request, cp) {
   const format = url.searchParams.get('format') || '';
   const prefix = cp.db_prefix || 'cp_';
 
-  // ── Perform export ──────────────────────────────────────────────────────────
+  // -- Perform export ----------------------------------------------------------
   if (format === 'json' || format === 'wxr') {
     const postType = url.searchParams.get('post_type') || 'all';
     const status   = url.searchParams.get('status') || 'all';
@@ -168,7 +168,7 @@ export async function handleExport(request, cp) {
     });
   }
 
-  // ── Export UI ───────────────────────────────────────────────────────────────
+  // -- Export UI ---------------------------------------------------------------
   const content = `
 <div class="cp-card" style="max-width:640px">
   <h1>Export</h1>
