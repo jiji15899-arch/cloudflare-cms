@@ -1,5 +1,5 @@
 /**
- * CloudPress Admin – Pages
+ * CloudPress Admin - Pages
  * Replaces WordPress wp-admin/edit.php?post_type=page
  *
  * @package CloudPress
