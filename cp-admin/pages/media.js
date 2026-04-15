@@ -1,5 +1,5 @@
 /**
- * CloudPress Admin – Media Library
+ * CloudPress Admin - Media Library
  * Replaces WordPress wp-admin/upload.php
  *
  * @package CloudPress
