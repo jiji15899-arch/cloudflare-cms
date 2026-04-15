@@ -1,5 +1,5 @@
 /**
- * CloudPress Admin – Themes
+ * CloudPress Admin - Themes
  * Replaces WordPress wp-admin/themes.php
  * @package CloudPress
  */
