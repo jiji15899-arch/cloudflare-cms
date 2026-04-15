@@ -39,7 +39,7 @@ export async function handleCronRequest(request, env, ctx) {
   // Run cron in the background (non-blocking for the visitor)
   ctx.waitUntil(runCronJobs(cp));
 
-  // Immediately respond — cron runs in background
+  // Immediately respond -- cron runs in background
   return new Response('', {
     status: 200,
     headers: {
@@ -84,7 +84,7 @@ export async function runCronJobs(cp) {
   const prefix     = cp.config.DB_PREFIX || 'cp_';
   const gmtNow     = Math.floor(Date.now() / 1000);
 
-  // ── Acquire cron lock (KV-based) ────────────────────────────────────────────
+  // -- Acquire cron lock (KV-based) --------------------------------------------
   const existingLock = await kv.get(CRON_LOCK_KEY);
   if (existingLock) {
     // Another cron process is running
@@ -99,7 +99,7 @@ export async function runCronJobs(cp) {
   if (acquiredLock !== lockToken) return;
 
   try {
-    // ── Fetch due cron events from D1 ─────────────────────────────────────────
+    // -- Fetch due cron events from D1 -----------------------------------------
     const { results: dueEvents } = await db.prepare(`
       SELECT * FROM ${prefix}cron_events
       WHERE timestamp <= ?
@@ -134,12 +134,12 @@ export async function runCronJobs(cp) {
             WHERE id = ?
           `).bind(nextTimestamp, event.id).run();
         } else {
-          // Unknown schedule → delete
+          // Unknown schedule -> delete
           await db.prepare(`DELETE FROM ${prefix}cron_events WHERE id = ?`)
             .bind(event.id).run();
         }
       } else {
-        // Single event → delete
+        // Single event -> delete
         await db.prepare(`DELETE FROM ${prefix}cron_events WHERE id = ?`)
           .bind(event.id).run();
       }
