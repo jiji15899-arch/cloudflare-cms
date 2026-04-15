@@ -1,5 +1,5 @@
 /**
- * CloudPress Admin – Profile
+ * CloudPress Admin - Profile
  * Replaces WordPress wp-admin/profile.php
  * @package CloudPress
  */
