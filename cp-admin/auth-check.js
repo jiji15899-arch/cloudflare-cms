@@ -2,7 +2,7 @@
  * CloudPress Admin Auth Check
  * Replaces WordPress's wp-admin capability checks / is_user_logged_in()
  *
- * JWT-based authentication — no PHP sessions, no wp-login.php.
+ * JWT-based authentication -- no PHP sessions, no wp-login.php.
  * Token is stored in a secure HttpOnly cookie (cp_token).
  *
  * @package CloudPress
