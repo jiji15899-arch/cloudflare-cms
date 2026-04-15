@@ -1,5 +1,5 @@
 /**
- * CloudPress Admin – Users
+ * CloudPress Admin - Users
  * Replaces WordPress wp-admin/users.php
  * @package CloudPress
  */
@@ -152,7 +152,7 @@ export async function handleUsers(request, cp) {
 <!-- Table -->
 <div class="cp-card">
   <form method="get" style="margin-bottom:12px;display:flex;gap:8px">
-    <input type="text" name="s" value="${esc(search)}" placeholder="Search users…" style="padding:6px 10px;border:1px solid #ccc;border-radius:4px;flex:1">
+    <input type="text" name="s" value="${esc(search)}" placeholder="Search users..." style="padding:6px 10px;border:1px solid #ccc;border-radius:4px;flex:1">
     <button type="submit" class="cp-btn cp-btn-secondary">Search</button>
   </form>
   <table class="cp-table">
