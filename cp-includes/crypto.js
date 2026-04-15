@@ -8,7 +8,7 @@
  * @package CloudPress
  */
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// -- Helpers ----------------------------------------------------------------
 
 function b64encode(buf) {
   return btoa(String.fromCharCode(...new Uint8Array(buf)));
@@ -22,7 +22,7 @@ function strToBytes(str) {
   return new TextEncoder().encode(str);
 }
 
-// ── Password Hashing ───────────────────────────────────────────────────────
+// -- Password Hashing -------------------------------------------------------
 
 const HASH_ALGORITHM = 'SHA-256';
 const HASH_ITERATIONS = 100_000;
@@ -60,7 +60,7 @@ export async function hashPassword(password) {
 export async function checkPassword(password, storedHash) {
   if (!storedHash) return false;
 
-  // Legacy MD5 check (WordPress phpass prefixed hashes) — always fail, prompt reset
+  // Legacy MD5 check (WordPress phpass prefixed hashes) -- always fail, prompt reset
   if (storedHash.startsWith('$P$') || storedHash.startsWith('$H$')) {
     return false;
   }
@@ -91,7 +91,7 @@ export async function checkPassword(password, storedHash) {
   return diff === 0;
 }
 
-// ── General Hashing ────────────────────────────────────────────────────────
+// -- General Hashing --------------------------------------------------------
 
 /**
  * HMAC-SHA256 of data using key.
@@ -120,7 +120,7 @@ export async function sha256(data) {
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// ── Nonce ──────────────────────────────────────────────────────────────────
+// -- Nonce ------------------------------------------------------------------
 
 /**
  * Generate a nonce for a given action + user ID.
@@ -158,7 +158,7 @@ export async function verifyNonce(nonce, action, userId, secret) {
   return false;
 }
 
-// ── Random token ───────────────────────────────────────────────────────────
+// -- Random token -----------------------------------------------------------
 
 /**
  * Generate a cryptographically random URL-safe token.
