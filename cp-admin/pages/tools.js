@@ -1,5 +1,5 @@
 /**
- * CloudPress Admin – Tools
+ * CloudPress Admin - Tools
  * Replaces WordPress wp-admin/tools.php
  * @package CloudPress
  */
