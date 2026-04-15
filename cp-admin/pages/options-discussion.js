@@ -1,5 +1,5 @@
 /**
- * CloudPress Admin – Discussion Settings
+ * CloudPress Admin - Discussion Settings
  * Replaces WordPress wp-admin/options-discussion.php
  * @package CloudPress
  */
