@@ -7,6 +7,7 @@
  * Routes:
  *  /                           → Front page / blog
  *  /cp-admin/*                 → Admin panel
+ *  /cp-admin/images/*          → Inline static assets (SVG icons, favicon)
  *  /cp-login                   → Login (JWT-based, no wp-login.php)
  *  /cp-activate                → Account activation
  *  /cp-signup                  → Registration
@@ -18,7 +19,7 @@
  *  /cp-sitemap.xml             → XML Sitemap
  *  /feed                       → RSS feed
  *  /cp-includes/*              → Blocked (403)
- *  /uploads/*                  → Media (R2)
+ *  /uploads/*                  → Media (KV)
  *  /[year]/[month]/[slug]      → Single post
  *  /[slug]                     → Page / archive
  *
@@ -69,7 +70,13 @@ export async function route(request, env, ctx) {
     return handleInstaller(request, env, ctx);
   }
 
-  // ── Static Media (R2 bucket) ───────────────────────────────────────────────
+  // ── Admin static assets (images, icons) ───────────────────────────────────
+  // Workers have no filesystem — static assets are served inline.
+  if (path.startsWith('/cp-admin/images/')) {
+    return serveAdminAsset(path);
+  }
+
+  // ── Static Media (KV store) ───────────────────────────────────────────────
   if (path.startsWith('/uploads/') || path.startsWith('/cp-content/uploads/')) {
     return handleMedia(request, env, ctx);
   }
@@ -146,22 +153,82 @@ export async function route(request, env, ctx) {
 
   // ── Favicon ────────────────────────────────────────────────────────────────
   if (path === '/favicon.ico') {
-    // Try R2 first, otherwise 204
-    if (env.CP_MEDIA) {
+    // Try KV first, then fall back to inline SVG favicon
+    if (env.CP_KV) {
       try {
-        const obj = await env.CP_MEDIA.get('favicon.ico');
-        if (obj) {
-          return new Response(obj.body, {
+        const stored = await env.CP_KV.get('cp:favicon', { type: 'arrayBuffer' });
+        if (stored) {
+          return new Response(stored, {
             headers: { 'Content-Type': 'image/x-icon', 'Cache-Control': 'public, max-age=86400' },
           });
         }
       } catch (_) {}
     }
-    return new Response('', { status: 204 });
+    // Inline SVG as fallback favicon
+    return serveAdminAsset('/cp-admin/images/favicon.ico');
   }
 
   // ── Everything else → Front-end (themes, posts, pages, archives) ───────────
   return handleFront(request, env, ctx, { CP_USE_THEMES: true });
+}
+
+// ── Static asset handler (inline, no filesystem required) ─────────────────────
+// Cloudflare Workers have no filesystem access at runtime.
+// All static assets must be embedded as strings or served from KV/R2.
+
+function serveAdminAsset(path) {
+  const file = path.replace('/cp-admin/images/', '');
+
+  switch (file) {
+    case 'favicon.ico':
+    case 'favicon.svg': {
+      // CloudPress logo as inline SVG favicon
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="6" fill="#1d2327"/>
+  <text x="4" y="24" font-family="system-ui,sans-serif" font-size="22" font-weight="800" fill="#F6821F">C</text>
+  <text x="14" y="24" font-family="system-ui,sans-serif" font-size="22" font-weight="800" fill="#ffffff">P</text>
+</svg>`;
+      return new Response(svg, {
+        headers: {
+          'Content-Type':  'image/svg+xml',
+          'Cache-Control': 'public, max-age=86400',
+        },
+      });
+    }
+
+    case 'logo.svg': {
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 32">
+  <rect width="32" height="32" rx="6" fill="#1d2327"/>
+  <text x="4" y="24" font-family="system-ui,sans-serif" font-size="22" font-weight="800" fill="#F6821F">C</text>
+  <text x="14" y="24" font-family="system-ui,sans-serif" font-size="22" font-weight="800" fill="#ffffff">P</text>
+  <text x="40" y="22" font-family="system-ui,sans-serif" font-size="16" font-weight="700" fill="#1d2327">Cloud<tspan fill="#F6821F">Press</tspan></text>
+</svg>`;
+      return new Response(svg, {
+        headers: {
+          'Content-Type':  'image/svg+xml',
+          'Cache-Control': 'public, max-age=86400',
+        },
+      });
+    }
+
+    case 'spinner.svg': {
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <circle cx="12" cy="12" r="10" fill="none" stroke="#dcdcde" stroke-width="3"/>
+  <path d="M12 2a10 10 0 0 1 10 10" fill="none" stroke="#2271b1" stroke-width="3" stroke-linecap="round">
+    <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite"/>
+  </path>
+</svg>`;
+      return new Response(svg, {
+        headers: {
+          'Content-Type':  'image/svg+xml',
+          'Cache-Control': 'no-cache',
+        },
+      });
+    }
+
+    default:
+      return new Response('Not found', { status: 404 });
+  }
 }
 
 function forbidden() {
