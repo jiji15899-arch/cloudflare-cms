@@ -11,7 +11,7 @@
 import { getOption }   from './option.js';
 import { escHtml }     from './formatting.js';
 
-// ── Fetch ─────────────────────────────────────────────────────────────────────
+// -- Fetch ---------------------------------------------------------------------
 
 /**
  * Get a single comment by ID.
@@ -99,7 +99,7 @@ export async function countComments(cp, postId = 0) {
   };
 }
 
-// ── Write ─────────────────────────────────────────────────────────────────────
+// -- Write ---------------------------------------------------------------------
 
 /**
  * Insert a new comment.
@@ -224,7 +224,7 @@ export async function setCommentStatus(cp, commentId, status) {
   return updateComment(cp, { comment_ID: commentId, comment_approved: status });
 }
 
-// ── Spam check (basic) ────────────────────────────────────────────────────────
+// -- Spam check (basic) --------------------------------------------------------
 
 /**
  * Very lightweight spam heuristics (no external API).
@@ -252,7 +252,7 @@ export function isCommentSpam(data) {
   return false;
 }
 
-// ── Comment form rendering ────────────────────────────────────────────────────
+// -- Comment form rendering ----------------------------------------------------
 
 /**
  * Render the comment reply form HTML.
@@ -338,7 +338,7 @@ export function listComments(comments, parentId = 0) {
   return items.join('\n');
 }
 
-// ── Internals ─────────────────────────────────────────────────────────────────
+// -- Internals -----------------------------------------------------------------
 
 async function updateCommentCount(cp, postId) {
   const prefix = cp.db_prefix || 'cp_';
