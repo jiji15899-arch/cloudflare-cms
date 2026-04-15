@@ -119,7 +119,7 @@ export async function handleOptionsGeneral(request, cp) {
         <td>
           <input type="text" id="date_format" name="date_format" class="cp-form-input"
                  value="${esc(opts.date_format || 'F j, Y')}">
-          <p class="cp-description">Example: <code>F j, Y</code> → ${new Date().toLocaleDateString('en-US', {year:'numeric',month:'long',day:'numeric'})}</p>
+          <p class="cp-description">Example: <code>F j, Y</code> -> ${new Date().toLocaleDateString('en-US', {year:'numeric',month:'long',day:'numeric'})}</p>
         </td>
       </tr>
       <tr>
