@@ -103,7 +103,7 @@ export async function handlePosts(request, cp, opts = {}) {
 <!-- Search -->
 <form method="get" style="margin-bottom:14px;display:flex;gap:8px">
   <input type="hidden" name="post_type" value="${esc(postType)}">
-  <input type="text" name="s" value="${esc(search)}" placeholder="Search ${typeLabel.toLowerCase()}…"
+  <input type="text" name="s" value="${esc(search)}" placeholder="Search ${typeLabel.toLowerCase()}..."
          class="cp-form-input" style="max-width:280px">
   <button type="submit" class="cp-btn cp-btn-secondary">Search</button>
 </form>
