@@ -18,7 +18,7 @@ export async function handleComments(request, cp) {
   const perPage = 20;
   const notices = [];
 
-  // ── Bulk / single actions ─────────────────────────────────────────────────
+  // -- Bulk / single actions -------------------------------------------------
   if (method === 'POST') {
     const fd = await request.formData().catch(() => new FormData());
     const bulkAction = fd.get('action') || action;
@@ -46,7 +46,7 @@ export async function handleComments(request, cp) {
     }
   }
 
-  // ── Count comments by status ──────────────────────────────────────────────
+  // -- Count comments by status ----------------------------------------------
   const counts = await Promise.all([
     cp.db.prepare(`SELECT COUNT(*) as n FROM ${prefix}comments`).first(),
     cp.db.prepare(`SELECT COUNT(*) as n FROM ${prefix}comments WHERE comment_approved='1'`).first(),
@@ -55,7 +55,7 @@ export async function handleComments(request, cp) {
   ]);
   const [total, approved, pending, spam] = counts.map(r => r?.n ?? 0);
 
-  // ── Fetch comments ────────────────────────────────────────────────────────
+  // -- Fetch comments --------------------------------------------------------
   let whereSql = '';
   if (status === 'approved')  whereSql = `WHERE c.comment_approved='1'`;
   else if (status === 'pending') whereSql = `WHERE c.comment_approved='0'`;
@@ -168,7 +168,7 @@ function esc(str) {
   return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 function truncate(str, n) {
-  return str && str.length > n ? str.slice(0, n) + '…' : (str || '');
+  return str && str.length > n ? str.slice(0, n) + '...' : (str || '');
 }
 function formatDate(d) {
   try { return new Date(d).toLocaleString(); } catch (_) { return d || ''; }
