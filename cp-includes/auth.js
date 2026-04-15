@@ -2,7 +2,7 @@
  * CloudPress Authentication Handler
  * Replaces WordPress wp-login.php
  *
- * JWT-based login — no PHP sessions.
+ * JWT-based login -- no PHP sessions.
  * Issues a signed HttpOnly cookie (cp_token) on success.
  *
  * @package CloudPress
@@ -12,7 +12,7 @@ import { cpLoad }           from '../cp-load.js';
 import { authenticateUser } from './user.js';
 import { signJwt, buildAuthCookie, clearAuthCookie } from './jwt.js';
 
-// ── Login ──────────────────────────────────────────────────────────────────
+// -- Login ------------------------------------------------------------------
 
 export async function handleLogin(request, env, ctx) {
   const cp  = await cpLoad(request, env, ctx);
@@ -67,7 +67,7 @@ export async function handleLogin(request, env, ctx) {
   return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
 }
 
-// ── Logout ─────────────────────────────────────────────────────────────────
+// -- Logout -----------------------------------------------------------------
 
 export async function handleLogout(request, env, ctx) {
   return new Response(null, {
@@ -79,7 +79,7 @@ export async function handleLogout(request, env, ctx) {
   });
 }
 
-// ── Login page HTML ────────────────────────────────────────────────────────
+// -- Login page HTML --------------------------------------------------------
 
 function renderLoginPage(error, redirectTo, siteName) {
   const esc = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -90,96 +90,7 @@ function renderLoginPage(error, redirectTo, siteName) {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Log In &lsaquo; ${esc(siteName)}</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #f0f0f1;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      margin: 0;
-      padding: 20px;
-    }
-    .login-wrap {
-      width: 100%;
-      max-width: 360px;
-    }
-    .login-logo {
-      text-align: center;
-      margin-bottom: 24px;
-    }
-    .login-logo svg { width: 64px; height: 64px; }
-    .login-logo h1 {
-      margin: 8px 0 0;
-      font-size: 22px;
-      font-weight: 600;
-      color: #1d2327;
-    }
-    .login-box {
-      background: #fff;
-      border-radius: 8px;
-      padding: 28px 32px;
-      box-shadow: 0 2px 12px rgba(0,0,0,.08);
-    }
-    .login-box label {
-      display: block;
-      font-size: 13px;
-      font-weight: 600;
-      color: #1d2327;
-      margin-bottom: 6px;
-    }
-    .login-box input[type=text],
-    .login-box input[type=password] {
-      width: 100%;
-      padding: 10px 14px;
-      font-size: 15px;
-      border: 1px solid #8c8f94;
-      border-radius: 4px;
-      margin-bottom: 16px;
-      outline: none;
-      transition: border-color .2s;
-    }
-    .login-box input:focus { border-color: #2271b1; box-shadow: 0 0 0 1px #2271b1; }
-    .login-remember {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 13px;
-      color: #3c434a;
-      margin-bottom: 18px;
-    }
-    .login-btn {
-      width: 100%;
-      padding: 10px;
-      font-size: 15px;
-      font-weight: 600;
-      background: #2271b1;
-      color: #fff;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      transition: background .2s;
-    }
-    .login-btn:hover { background: #135e96; }
-    .login-error {
-      background: #fff0f0;
-      border-left: 4px solid #d63638;
-      padding: 10px 14px;
-      color: #d63638;
-      font-size: 13px;
-      border-radius: 4px;
-      margin-bottom: 16px;
-    }
-    .login-footer {
-      text-align: center;
-      margin-top: 16px;
-      font-size: 12px;
-      color: #646970;
-    }
-    .login-footer a { color: #2271b1; text-decoration: none; }
-  </style>
+  <link rel="stylesheet" href="/cp-includes/css/login.css">
 </head>
 <body>
 <div class="login-wrap">
