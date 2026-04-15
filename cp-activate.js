@@ -28,7 +28,7 @@ export async function handleActivate(request, env, ctx) {
   const cp = await cpLoad(request, env, ctx, { CP_INSTALLING: true });
   if (cp.__cpError) return cp.response;
 
-  // Non-multisite → redirect to registration URL
+  // Non-multisite -> redirect to registration URL
   if (!isMultisite(cp)) {
     return cpRedirect(await getRegistrationUrl(cp));
   }
@@ -62,7 +62,7 @@ export async function handleActivate(request, env, ctx) {
   let activateCookieKey = null;
 
   if (key) {
-    // Check if URL still has key param — if so, store in KV and redirect
+    // Check if URL still has key param -- if so, store in KV and redirect
     if (url.searchParams.has('key')) {
       const cleanUrl = new URL(url.toString());
       cleanUrl.searchParams.delete('key');
@@ -180,27 +180,7 @@ async function renderActivatePage(cp, key, result, url) {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${escHtml(siteName)} &rsaquo; Activate</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-           background: #f1f1f1; margin: 0; padding: 2rem 1rem; color: #333; }
-    #signup-content { max-width: 600px; margin: 2rem auto; }
-    .cp-activate-container { background: #fff; border-radius: 6px; padding: 2rem 2.5rem;
-                              box-shadow: 0 2px 8px rgba(0,0,0,.1); }
-    h2 { font-size: 1.4rem; margin: 0 0 1.2rem; color: #1d2327; }
-    label { font-weight: 600; display: block; margin-bottom: .4rem; }
-    input[type="text"] { width: 100%; padding: .6rem .8rem; font-size: 1rem;
-                          border: 1px solid #8c8f94; border-radius: 4px; }
-    .cp-btn { background: #2271b1; color: #fff; border: none; padding: .6rem 1.4rem;
-              font-size: 1rem; border-radius: 4px; cursor: pointer; }
-    .cp-btn:hover { background: #135e96; }
-    #signup-welcome { background: #f0f6fc; border-left: 4px solid #2271b1;
-                       padding: 1rem 1.4rem; border-radius: 0 4px 4px 0; margin: 1rem 0; }
-    #signup-welcome p { margin: .4rem 0; }
-    .h3 { font-weight: 700; }
-    a { color: #2271b1; }
-    .lead-in { line-height: 1.7; }
-  </style>
+  <link rel="stylesheet" href="/cp-includes/css/activate.css">
 </head>
 <body>
 <div id="signup-content">
