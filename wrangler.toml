@@ -1,70 +1,82 @@
-# CloudPress - Cloudflare Workers Configuration
+# CloudPress CMS — Cloudflare Workers 배포 설정
 # wrangler.toml
 #
-# Deploy with: npx wrangler deploy
-# Dev server:  npx wrangler dev
+# ── 최초 배포 순서 ─────────────────────────────────────────────────────────
+#  1. D1 생성:  npx wrangler d1 create cloudpress-db
+#               → 출력된 database_id를 아래 database_id에 붙여넣기
+#
+#  2. KV 생성:  npx wrangler kv:namespace create CP_KV
+#               → 출력된 id를 아래 id에 붙여넣기
+#
+#  3. 스키마 적용:
+#               npx wrangler d1 execute cloudpress-db --file=schema.sql --remote
+#
+#  4. 비밀값 설정:
+#               npx wrangler secret put CP_AUTH_KEY
+#               npx wrangler secret put CP_ADMIN_EMAIL
+#               (나머지 secrets도 아래 목록 참고)
+#
+#  5. 배포:     npx wrangler deploy
+#
+#  6. 브라우저에서 https://<worker>.workers.dev/cp-admin/setup-config 접속
+#     → 인스톨러에서 사이트 설정 & 관리자 계정 생성
 
-name        = "cloudflare-cms"
-main        = "index.js"
-compatibility_date = "2024-09-01"
+name               = "cloudflare-cms"
+main               = "index.js"
+compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
 # ── Routes ────────────────────────────────────────────────────────────────────
-# Uncomment and set your domain after adding it to Cloudflare
+# 사용자 도메인 연결 후 아래 주석 해제
 # routes = [
 #   { pattern = "yourdomain.com/*", zone_name = "yourdomain.com" }
 # ]
 
 # ── D1 Database ───────────────────────────────────────────────────────────────
-# Create with: npx wrangler d1 create cloudpress-db
+# Create: npx wrangler d1 create cloudpress-db
 [[d1_databases]]
-binding      = "CP_DB"
+binding       = "CP_DB"
 database_name = "cloudpress-db"
-database_id  = "YOUR_D1_DATABASE_ID_HERE"
+database_id   = "YOUR_D1_DATABASE_ID_HERE"
 
 # ── KV Namespace ──────────────────────────────────────────────────────────────
-# Create with: npx wrangler kv:namespace create CP_KV
+# Create: npx wrangler kv:namespace create CP_KV
 [[kv_namespaces]]
-binding      = "CP_KV"
-id           = "YOUR_KV_NAMESPACE_ID_HERE"
-# preview_id = "YOUR_KV_PREVIEW_ID_HERE"   # for wrangler dev
+binding = "CP_KV"
+id      = "YOUR_KV_NAMESPACE_ID_HERE"
+# preview_id = "YOUR_KV_PREVIEW_ID_HERE"   # wrangler dev 전용
 
-# ── Media Storage ─────────────────────────────────────────────────────────────
-# Media files are stored in KV (no R2 required).
-# Max file size: 5 MB per file.
-
-# ── Environment Variables (non-secret) ────────────────────────────────────────
+# ── Environment Variables ──────────────────────────────────────────────────────
 [vars]
 CP_SITE_NAME    = "My CloudPress Site"
 CP_SITE_TAGLINE = "Just another CloudPress site"
-# CP_DEBUG      = "true"    # Uncomment for debug mode
+# CP_DEBUG = "true"   # 디버그 모드 활성화
 
 # ── Cron Triggers ─────────────────────────────────────────────────────────────
-# CloudPress uses Cloudflare Cron Triggers instead of wp-cron.
 [triggers]
 crons = [
-  "*/5 * * * *",    # Every 5 minutes (for scheduled posts, etc.)
+  "*/5 * * * *",    # 5분마다 (예약 게시, 만료 처리 등)
 ]
 
-# ── Secrets (set via CLI, NOT here) ───────────────────────────────────────────
-# Set these with: npx wrangler secret put SECRET_NAME
+# ── Secrets (CLI로만 설정 — 여기에 직접 입력 금지) ───────────────────────────
+# npx wrangler secret put <SECRET_NAME>
 #
-#   CP_AUTH_KEY
-#   CP_SECURE_AUTH_KEY
-#   CP_LOGGED_IN_KEY
-#   CP_NONCE_KEY
-#   CP_AUTH_SALT
-#   CP_SECURE_AUTH_SALT
-#   CP_LOGGED_IN_SALT
-#   CP_NONCE_SALT
-#   CP_ADMIN_EMAIL
-#   CP_GITHUB_TOKEN     (optional, for private GitHub theme/plugin repos)
+#   CP_AUTH_KEY            — JWT 서명 키 (필수, 32자 이상 무작위 문자열)
+#   CP_SECURE_AUTH_KEY     — (선택)
+#   CP_LOGGED_IN_KEY       — (선택)
+#   CP_NONCE_KEY           — (선택)
+#   CP_AUTH_SALT           — (선택)
+#   CP_SECURE_AUTH_SALT    — (선택)
+#   CP_LOGGED_IN_SALT      — (선택)
+#   CP_NONCE_SALT          — (선택)
+#   CP_ADMIN_EMAIL         — 관리자 이메일 (필수)
+#   CP_GITHUB_TOKEN        — GitHub Personal Access Token (테마/플러그인 비공개 레포용, 선택)
 
 # ── Per-environment overrides ──────────────────────────────────────────────────
 [env.production]
-name = "cloudpress-production"
+name = "cloudflare-cms-production"
 # routes = [{ pattern = "yourdomain.com/*", zone_name = "yourdomain.com" }]
 
 [env.staging]
-name = "cloudpress-staging"
+name = "cloudflare-cms-staging"
 # routes = [{ pattern = "staging.yourdomain.com/*", zone_name = "yourdomain.com" }]
