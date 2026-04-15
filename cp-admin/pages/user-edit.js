@@ -1,5 +1,5 @@
 /**
- * CloudPress Admin – Edit User
+ * CloudPress Admin - Edit User
  * Replaces WordPress wp-admin/user-edit.php
  * @package CloudPress
  */
