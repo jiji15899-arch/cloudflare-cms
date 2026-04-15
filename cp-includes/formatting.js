@@ -8,7 +8,7 @@
  * @package CloudPress
  */
 
-// ── Paragraph / line-break handling ─────────────────────────────────────────
+// -- Paragraph / line-break handling -----------------------------------------
 
 /**
  * Convert double line-breaks to HTML paragraph tags.
@@ -83,7 +83,7 @@ export function nl2br(str) {
   return String(str || '').replace(/\n/g, '<br />\n');
 }
 
-// ── Excerpt ──────────────────────────────────────────────────────────────────
+// -- Excerpt ------------------------------------------------------------------
 
 /**
  * Generate a post excerpt from content.
@@ -91,7 +91,7 @@ export function nl2br(str) {
  *
  * @param {string} content   Raw post content
  * @param {number} wordCount Number of words to include
- * @param {string} more      Appended string (default "…")
+ * @param {string} more      Appended string (default "...")
  * @returns {string}
  */
 export function wpTrimExcerpt(content, wordCount = 55, more = '\u2026') {
@@ -124,7 +124,7 @@ export function getMoreSplit(content) {
   };
 }
 
-// ── HTML / string utilities ──────────────────────────────────────────────────
+// -- HTML / string utilities --------------------------------------------------
 
 /**
  * Strip HTML tags from a string.
@@ -175,7 +175,7 @@ export function decodeHtmlEntities(str) {
  * @param {string} suffix
  * @returns {string}
  */
-export function truncate(str, length = 100, suffix = '…') {
+export function truncate(str, length = 100, suffix = '...') {
   const s = String(str || '');
   return s.length > length ? s.slice(0, length) + suffix : s;
 }
@@ -189,7 +189,7 @@ export function truncate(str, length = 100, suffix = '…') {
  * @param {string} more
  * @returns {string}
  */
-export function trimWords(str, count = 55, more = '…') {
+export function trimWords(str, count = 55, more = '...') {
   const words = String(str || '').trim().split(/\s+/).filter(Boolean);
   if (words.length <= count) return str;
   return words.slice(0, count).join(' ') + more;
@@ -240,7 +240,7 @@ export async function uniqueSlug(cp, slug, excludeId = 0, postType = 'post') {
   }
 }
 
-// ── Date / time ──────────────────────────────────────────────────────────────
+// -- Date / time --------------------------------------------------------------
 
 /**
  * Format a date string using a PHP-style format string.
@@ -333,7 +333,7 @@ export function humanTimeDiff(from, to = new Date()) {
   return `${Math.round(s / 31536000)} years`;
 }
 
-// ── Number helpers ────────────────────────────────────────────────────────────
+// -- Number helpers ------------------------------------------------------------
 
 /**
  * Format a number with commas and optional decimal places.
@@ -350,7 +350,7 @@ export function numberFormat(num, decimals = 0) {
   });
 }
 
-// ── Shortcode ─────────────────────────────────────────────────────────────────
+// -- Shortcode -----------------------------------------------------------------
 
 /**
  * Strip all [shortcode] tags from content.
