@@ -14,7 +14,7 @@ import { requireAdmin }     from './auth-check.js';
 import { renderAdminShell } from './admin-shell.js';
 import { handleInstaller }  from './installer.js';
 
-// ── Sub-page handlers ──────────────────────────────────────────────────────
+// -- Sub-page handlers ------------------------------------------------------
 import { handleDashboard }         from './pages/dashboard.js';
 import { handlePosts }             from './pages/posts.js';
 import { handlePostEdit }          from './pages/post-edit.js';
@@ -53,30 +53,30 @@ export async function handleAdmin(request, env, ctx) {
   const path   = url.pathname.replace(/\/+$/, '') || '/cp-admin';
   const method = request.method.toUpperCase();
 
-  // ── Installer routes (no auth required) ──────────────────────────────────
+  // -- Installer routes (no auth required) ----------------------------------
   if (path === '/cp-admin/setup-config' || path === '/cp-admin/install') {
     return handleInstaller(request, env, ctx);
   }
 
-  // ── AJAX (may handle its own auth internally) ─────────────────────────────
+  // -- AJAX (may handle its own auth internally) -----------------------------
   if (path === '/cp-admin/admin-ajax' || path === '/cp-admin/admin-ajax.js') {
     return handleAjax(request, env, ctx);
   }
 
-  // ── GitHub Sync (REST-style endpoint, requires admin) ─────────────────────
+  // -- GitHub Sync (REST-style endpoint, requires admin) ---------------------
   if (path === '/cp-admin/github-sync' || path.startsWith('/cp-admin/github-sync/')) {
     return handleGithubSync(request, env, ctx);
   }
 
-  // ── Bootstrap ─────────────────────────────────────────────────────────────
+  // -- Bootstrap -------------------------------------------------------------
   const cp = await cpLoad(request, env, ctx);
   if (cp.__cpError) return cp.response;
 
-  // ── Auth check (redirect to /cp-login if not admin) ──────────────────────
+  // -- Auth check (redirect to /cp-login if not admin) ----------------------
   const authResult = await requireAdmin(cp);
   if (authResult) return authResult; // redirect response
 
-  // ── Dispatch to sub-page handler ─────────────────────────────────────────
+  // -- Dispatch to sub-page handler -----------------------------------------
   return dispatchAdmin(request, env, ctx, cp, path, method, url);
 }
 
