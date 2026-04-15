@@ -10,7 +10,7 @@
 import { getOption } from './option.js';
 import { escHtml }   from './formatting.js';
 
-// ── URL helpers ───────────────────────────────────────────────────────────────
+// -- URL helpers ---------------------------------------------------------------
 
 /**
  * Get the site URL with an optional path appended.
@@ -68,7 +68,7 @@ export async function contentUrl(cp, path = '') {
   return path ? `${base}/${path.replace(/^\//, '')}` : base;
 }
 
-// ── Nonce ─────────────────────────────────────────────────────────────────────
+// -- Nonce ---------------------------------------------------------------------
 
 /**
  * Generate a nonce token for a given action.
@@ -90,7 +90,7 @@ export async function createNonce(cp, action = 'cp_nonce') {
 
 /**
  * Verify a nonce token.
- * Equivalent to wp_verify_nonce() — returns 1 (current tick) or 2 (previous tick).
+ * Equivalent to wp_verify_nonce() -- returns 1 (current tick) or 2 (previous tick).
  *
  * @param {object} cp
  * @param {string} nonce
@@ -126,7 +126,7 @@ export async function nonceField(cp, action, name = '_cpnonce') {
   return `<input type="hidden" name="${escHtml(name)}" value="${escHtml(nonce)}">`;
 }
 
-// ── Pagination ────────────────────────────────────────────────────────────────
+// -- Pagination ----------------------------------------------------------------
 
 /**
  * Generate pagination links.
@@ -185,7 +185,7 @@ function pageLink(base, num, label, cls = '') {
   return `<a href="${escHtml(url)}" class="cp-page-link ${cls}">${label}</a>`;
 }
 
-// ── Misc utilities ────────────────────────────────────────────────────────────
+// -- Misc utilities ------------------------------------------------------------
 
 /**
  * Recursively merge two plain objects (shallow).
