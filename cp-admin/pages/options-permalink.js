@@ -1,5 +1,5 @@
 /**
- * CloudPress Admin – Permalink Settings
+ * CloudPress Admin - Permalink Settings
  * Replaces WordPress wp-admin/options-permalink.php
  * @package CloudPress
  */
