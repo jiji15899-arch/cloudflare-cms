@@ -1,5 +1,5 @@
 /**
- * CloudPress Admin – Import
+ * CloudPress Admin - Import
  * Replaces WordPress wp-admin/import.php
  * Supports WordPress XML (WXR) import directly.
  * @package CloudPress
@@ -136,7 +136,7 @@ export async function handleImport(request, cp) {
   );
 }
 
-// ── Minimal WXR parser using regex (no DOM available in Workers) ──────────────
+// -- Minimal WXR parser using regex (no DOM available in Workers) --------------
 
 async function importWXR(cp, prefix, xml) {
   const log = { posts: 0, pages: 0, users: 0, comments: 0, categories: 0, tags: 0, errors: [] };
@@ -185,7 +185,7 @@ async function importWXR(cp, prefix, xml) {
     } catch (e) { log.errors.push(`Tag: ${e.message}`); }
   }
 
-  // Authors → users
+  // Authors -> users
   const authorMatches = xml.matchAll(/<wp:author>([\s\S]*?)<\/wp:author>/g);
   for (const m of authorMatches) {
     try {
