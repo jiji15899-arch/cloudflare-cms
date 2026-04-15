@@ -109,16 +109,7 @@ function cpDie(cp, message, title = 'Error', status = 500, backLink = false) {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${escHtml(title)}</title>
-  <style>
-    body { font-family: -apple-system, sans-serif; background: #f1f1f1;
-           display: flex; align-items: center; justify-content: center;
-           min-height: 100vh; margin: 0; }
-    .box { background: #fff; padding: 2rem 2.5rem; border-radius: 6px;
-           border-left: 4px solid #d63638; max-width: 480px;
-           box-shadow: 0 2px 8px rgba(0,0,0,.1); }
-    h1 { color: #d63638; font-size: 1.2rem; margin: 0 0 1rem; }
-    a { color: #2271b1; }
-  </style>
+  <link rel="stylesheet" href="/cp-includes/css/comments.css">
 </head>
 <body>
   <div class="box">
