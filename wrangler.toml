@@ -25,6 +25,11 @@ name               = "cloudflare-cms"
 main               = "index.js"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
+# -- Static Assets (CSS, JS for admin UI) -------------------------------------
+# Cloudflare Workers Assets - serves files from /public directory
+[assets]
+directory = "./public"
+
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 # 사용자 도메인 연결 후 아래 주석 해제
