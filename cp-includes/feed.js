@@ -9,7 +9,7 @@
  *   /feed          -> RSS 2.0
  *   /feed/rss      -> RSS 2.0
  *   /feed/atom     -> Atom 1.0
- *   /*/feed        -> Category / tag / author feeds
+ *   /{slug}/feed   -> Category / tag / author feeds
  *
  * @package CloudPress
  */
