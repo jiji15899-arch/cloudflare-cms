@@ -47,7 +47,7 @@ export async function handleSitemap(request, env, ctx) {
   return new Response('Not Found', { status: 404 });
 }
 
-// ── Index sitemap ─────────────────────────────────────────────────────────────
+// -- Index sitemap -------------------------------------------------------------
 
 async function sitemapIndex(cp, siteUrl, url) {
   const entries = [
@@ -68,7 +68,7 @@ ${entries}
   return xmlResponse(xml);
 }
 
-// ── Posts / pages sitemap ─────────────────────────────────────────────────────
+// -- Posts / pages sitemap -----------------------------------------------------
 
 async function postsSitemap(cp, prefix, siteUrl, postType) {
   const rows = await cp.db.prepare(`
@@ -102,7 +102,7 @@ ${urls}
   return xmlResponse(xml);
 }
 
-// ── Terms sitemap ─────────────────────────────────────────────────────────────
+// -- Terms sitemap -------------------------------------------------------------
 
 async function termsSitemap(cp, prefix, siteUrl) {
   const rows = await cp.db.prepare(`
@@ -132,7 +132,7 @@ ${urls}
   return xmlResponse(xml);
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// -- Helpers -------------------------------------------------------------------
 
 function postPermalink(siteUrl, post) {
   if (post.post_name) {
