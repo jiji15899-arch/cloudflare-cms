@@ -5,23 +5,23 @@
  * Called from index.js to route requests to the appropriate handler.
  *
  * Routes:
- *  /                           → Front page / blog
- *  /cp-admin/*                 → Admin panel
- *  /cp-admin/images/*          → Inline static assets (SVG icons, favicon)
- *  /cp-login                   → Login (JWT-based, no wp-login.php)
- *  /cp-activate                → Account activation
- *  /cp-signup                  → Registration
- *  /cp-comments-post           → Comment submission
- *  /cp-cron                    → Cron trigger endpoint
- *  /cp-trackback/[id]          → Trackbacks
- *  /cp-links-opml              → OPML export
- *  /cp-mail                    → Post by email
- *  /cp-sitemap.xml             → XML Sitemap
- *  /feed                       → RSS feed
- *  /cp-includes/*              → Blocked (403)
- *  /uploads/*                  → Media (KV)
- *  /[year]/[month]/[slug]      → Single post
- *  /[slug]                     → Page / archive
+ *  /                           -> Front page / blog
+ *  /cp-admin/*                 -> Admin panel
+ *  /cp-admin/images/*          -> Inline static assets (SVG icons, favicon)
+ *  /cp-login                   -> Login (JWT-based, no wp-login.php)
+ *  /cp-activate                -> Account activation
+ *  /cp-signup                  -> Registration
+ *  /cp-comments-post           -> Comment submission
+ *  /cp-cron                    -> Cron trigger endpoint
+ *  /cp-trackback/[id]          -> Trackbacks
+ *  /cp-links-opml              -> OPML export
+ *  /cp-mail                    -> Post by email
+ *  /cp-sitemap.xml             -> XML Sitemap
+ *  /feed                       -> RSS feed
+ *  /cp-includes/*              -> Blocked (403)
+ *  /uploads/*                  -> Media (KV)
+ *  /[year]/[month]/[slug]      -> Single post
+ *  /[slug]                     -> Page / archive
  *
  * @package CloudPress
  */
@@ -54,7 +54,7 @@ export async function route(request, env, ctx) {
   const path     = url.pathname.replace(/\/+$/, '') || '/';
   const method   = request.method.toUpperCase();
 
-  // ── Security: block direct access to internal directories ─────────────────
+  // -- Security: block direct access to internal directories -----------------
   if (
     path.startsWith('/cp-includes/') ||
     path.startsWith('/cp-config') ||
@@ -65,34 +65,34 @@ export async function route(request, env, ctx) {
     return forbidden();
   }
 
-  // ── Installer (runs before config check) ──────────────────────────────────
+  // -- Installer (runs before config check) ----------------------------------
   if (path === '/cp-admin/setup-config' || path === '/cp-admin/install') {
     return handleInstaller(request, env, ctx);
   }
 
-  // ── Admin static assets (images, icons) ───────────────────────────────────
-  // Workers have no filesystem — static assets are served inline.
+  // -- Admin static assets (images, icons) -----------------------------------
+  // Workers have no filesystem -- static assets are served inline.
   if (path.startsWith('/cp-admin/images/')) {
     return serveAdminAsset(path);
   }
 
-  // ── Static Media (KV store) ───────────────────────────────────────────────
+  // -- Static Media (KV store) -----------------------------------------------
   if (path.startsWith('/uploads/') || path.startsWith('/cp-content/uploads/')) {
     return handleMedia(request, env, ctx);
   }
 
-  // ── Feeds ──────────────────────────────────────────────────────────────────
+  // -- Feeds ------------------------------------------------------------------
   if (path === '/feed' || path === '/feed/rss' || path === '/feed/atom' ||
       path.endsWith('/feed') || path.endsWith('/feed/rss')) {
     return handleFeed(request, env, ctx);
   }
 
-  // ── Sitemap ────────────────────────────────────────────────────────────────
+  // -- Sitemap ----------------------------------------------------------------
   if (path === '/cp-sitemap.xml' || path === '/sitemap.xml') {
     return handleSitemap(request, env, ctx);
   }
 
-  // ── Authentication (JWT-based — no PHP sessions) ───────────────────────────
+  // -- Authentication (JWT-based -- no PHP sessions) ---------------------------
   if (path === '/cp-login') {
     return handleLogin(request, env, ctx);
   }
@@ -100,32 +100,32 @@ export async function route(request, env, ctx) {
     return handleLogout(request, env, ctx);
   }
 
-  // ── Admin Panel ────────────────────────────────────────────────────────────
+  // -- Admin Panel ------------------------------------------------------------
   if (path === '/cp-admin' || path.startsWith('/cp-admin/')) {
     return handleAdmin(request, env, ctx);
   }
 
-  // ── Account Activation ─────────────────────────────────────────────────────
+  // -- Account Activation -----------------------------------------------------
   if (path === '/cp-activate') {
     return handleActivate(request, env, ctx);
   }
 
-  // ── Registration / Signup ──────────────────────────────────────────────────
+  // -- Registration / Signup --------------------------------------------------
   if (path === '/cp-signup') {
     return handleSignup(request, env, ctx);
   }
 
-  // ── Comment Submission ─────────────────────────────────────────────────────
+  // -- Comment Submission -----------------------------------------------------
   if (path === '/cp-comments-post' || path === '/cp-comments-post.js') {
     return handleCommentsPost(request, env, ctx);
   }
 
-  // ── Cron ───────────────────────────────────────────────────────────────────
+  // -- Cron -------------------------------------------------------------------
   if (path === '/cp-cron') {
     return handleCronRequest(request, env, ctx);
   }
 
-  // ── Trackbacks ─────────────────────────────────────────────────────────────
+  // -- Trackbacks -------------------------------------------------------------
   if (path === '/cp-trackback' || path.includes('/trackback')) {
     const parts   = path.split('/').filter(Boolean);
     const postIdx = parts.findIndex(p => /^\d+$/.test(p));
@@ -133,17 +133,17 @@ export async function route(request, env, ctx) {
     return handleTrackback(request, env, ctx, { post_id: postId });
   }
 
-  // ── OPML Link Export ───────────────────────────────────────────────────────
+  // -- OPML Link Export -------------------------------------------------------
   if (path === '/cp-links-opml') {
     return handleLinksOpml(request, env, ctx);
   }
 
-  // ── Post by Email ──────────────────────────────────────────────────────────
+  // -- Post by Email ----------------------------------------------------------
   if (path === '/cp-mail') {
     return handleMail(request, env, ctx);
   }
 
-  // ── Robots.txt ────────────────────────────────────────────────────────────
+  // -- Robots.txt ------------------------------------------------------------
   if (path === '/robots.txt') {
     return new Response(
       `User-agent: *\nDisallow: /cp-admin/\nSitemap: ${url.origin}/sitemap.xml\n`,
@@ -151,7 +151,7 @@ export async function route(request, env, ctx) {
     );
   }
 
-  // ── Favicon ────────────────────────────────────────────────────────────────
+  // -- Favicon ----------------------------------------------------------------
   if (path === '/favicon.ico') {
     // Try KV first, then fall back to inline SVG favicon
     if (env.CP_KV) {
@@ -168,11 +168,11 @@ export async function route(request, env, ctx) {
     return serveAdminAsset('/cp-admin/images/favicon.ico');
   }
 
-  // ── Everything else → Front-end (themes, posts, pages, archives) ───────────
+  // -- Everything else -> Front-end (themes, posts, pages, archives) -----------
   return handleFront(request, env, ctx, { CP_USE_THEMES: true });
 }
 
-// ── Static asset handler (inline, no filesystem required) ─────────────────────
+// -- Static asset handler (inline, no filesystem required) ---------------------
 // Cloudflare Workers have no filesystem access at runtime.
 // All static assets must be embedded as strings or served from KV/R2.
 
