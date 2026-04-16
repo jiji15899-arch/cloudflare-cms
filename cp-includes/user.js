@@ -9,11 +9,11 @@
 
 import { hashPassword, checkPassword } from './crypto.js';
 
-// ── Fetch ──────────────────────────────────────────────────────────────────
+// -- Fetch ------------------------------------------------------------------
 
 /**
  * Get a user by ID.
- * Equivalent to get_user_by('id', …) / get_userdata().
+ * Equivalent to get_user_by('id', ...) / get_userdata().
  *
  * @param {object} cp
  * @param {number} id
@@ -100,7 +100,7 @@ export async function getUsers(cp, args = {}) {
   return users;
 }
 
-// ── Authenticate ───────────────────────────────────────────────────────────
+// -- Authenticate -----------------------------------------------------------
 
 /**
  * Authenticate a user by login + password.
@@ -121,14 +121,14 @@ export async function authenticateUser(cp, login, password) {
   return ok ? user : null;
 }
 
-// ── Insert / Update ────────────────────────────────────────────────────────
+// -- Insert / Update --------------------------------------------------------
 
 /**
  * Insert a new user.
  * Equivalent to wp_insert_user().
  *
  * @param {object} cp
- * @param {object} data  { user_login, user_email, user_pass, display_name, role, … }
+ * @param {object} data  { user_login, user_email, user_pass, display_name, role, ... }
  * @returns {Promise<number>} new user ID
  */
 export async function insertUser(cp, data) {
@@ -212,7 +212,7 @@ export async function deleteUser(cp, userId) {
   return true;
 }
 
-// ── Usermeta ───────────────────────────────────────────────────────────────
+// -- Usermeta ---------------------------------------------------------------
 
 /**
  * Get user meta value.
@@ -260,7 +260,7 @@ export async function setUserMeta(cp, userId, metaKey, metaValue) {
   `).bind(userId, metaKey, serialized).run();
 }
 
-// ── Internal ───────────────────────────────────────────────────────────────
+// -- Internal ---------------------------------------------------------------
 
 async function hydrateUser(cp, row) {
   if (!row) return null;
