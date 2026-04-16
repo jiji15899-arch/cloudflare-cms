@@ -344,3 +344,9 @@ export function currentUserCan(cp, capability) {
   }
   return false;
 }
+
+export function isMultisite() { return false; }
+
+export function cpSafeRedirect(url, status = 302) { return redirect(url, status); }
+
+export function cpRedirect(url, status = 302) { return redirect(url, status); }
