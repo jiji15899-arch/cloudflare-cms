@@ -3,7 +3,7 @@
  * Replaces WordPress auth cookies with stateless JWT tokens.
  *
  * Uses HMAC-SHA256 (HS256) JWTs stored in HttpOnly cookies.
- * No external libraries — uses the Web Crypto API.
+ * No external libraries -- uses the Web Crypto API.
  *
  * @package CloudPress
  */
@@ -31,7 +31,7 @@ async function importHmacKey(secret) {
   );
 }
 
-// ── Sign ───────────────────────────────────────────────────────────────────
+// -- Sign -------------------------------------------------------------------
 
 /**
  * Create a signed JWT.
@@ -63,7 +63,7 @@ export async function signJwt(payload, secret, expiresIn = 86400) {
   return `${data}.${sigB64}`;
 }
 
-// ── Verify ─────────────────────────────────────────────────────────────────
+// -- Verify -----------------------------------------------------------------
 
 /**
  * Verify and decode a JWT.
@@ -110,7 +110,7 @@ export async function verifyJwt(token, secret) {
   return payload;
 }
 
-// ── Cookie helpers ─────────────────────────────────────────────────────────
+// -- Cookie helpers ---------------------------------------------------------
 
 /**
  * Build a Set-Cookie header value for the auth token.
