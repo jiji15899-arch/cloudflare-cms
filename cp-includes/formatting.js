@@ -362,3 +362,7 @@ export function numberFormat(num, decimals = 0) {
 export function stripShortcodes(content) {
   return String(content || '').replace(/\[[^\]]+\]/g, '');
 }
+
+export function isValidEmail(email) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '')); }
+
+export function htmlExcerpt(text, maxLength = 255) { return truncate(stripTags(text), maxLength); }
