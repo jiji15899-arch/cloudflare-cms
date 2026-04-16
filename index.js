@@ -3,9 +3,9 @@
  * Replaces WordPress index.php + .htaccess
  *
  * Exports:
- *   fetch()     → HTTP request handler (all web traffic)
- *   scheduled() → Cloudflare Cron Trigger handler
- *   email()     → Cloudflare Email Workers handler (optional)
+ *   fetch()     -> HTTP request handler (all web traffic)
+ *   scheduled() -> Cloudflare Cron Trigger handler
+ *   email()     -> Cloudflare Email Workers handler (optional)
  *
  * @package CloudPress
  */
