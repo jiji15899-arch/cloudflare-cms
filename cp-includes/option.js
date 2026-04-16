@@ -10,7 +10,7 @@
 
 const KV_TTL = 3600; // 1 hour KV cache for options
 
-// ── Read ───────────────────────────────────────────────────────────────────
+// -- Read -------------------------------------------------------------------
 
 /**
  * Get an option value.
@@ -59,7 +59,7 @@ export async function getOption(cp, name, defaultValue = false) {
  *
  * @param {object}   cp
  * @param {string[]} names
- * @returns {Promise<object>}  { name: value, … }
+ * @returns {Promise<object>}  { name: value, ... }
  */
 export async function getOptions(cp, names) {
   const prefix = cp.db_prefix || 'cp_';
@@ -81,7 +81,7 @@ export async function getOptions(cp, names) {
   return result;
 }
 
-// ── Write ──────────────────────────────────────────────────────────────────
+// -- Write ------------------------------------------------------------------
 
 /**
  * Update (or insert) an option.
@@ -149,7 +149,7 @@ export async function deleteOption(cp, name) {
   return true;
 }
 
-// ── Autoloaded options ─────────────────────────────────────────────────────
+// -- Autoloaded options -----------------------------------------------------
 
 /**
  * Load all autoloaded options into a flat object.
