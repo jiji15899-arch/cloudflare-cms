@@ -2,7 +2,7 @@
  * CloudPress Media Handler
  * Replaces WordPress wp-includes/media.php + upload handling
  *
- * ⚠️  R2 is NOT used.
+ * [!]  R2 is NOT used.
  * Media files are stored as base64 blobs in D1 (cp_media table) for small files,
  * and in KV for files up to ~25 MB.
  * The table must be created by the installer (see cp-admin/installer.js).
@@ -24,14 +24,14 @@
  *     caption       TEXT DEFAULT ''
  *   );
  *
- * KV key pattern: cp:media:<file_path>  → base64 string
+ * KV key pattern: cp:media:<file_path>  -> base64 string
  *
  * @package CloudPress
  */
 
 import { cpLoad } from '../cp-load.js';
 
-// ── Public: serve media ──────────────────────────────────────────────────────
+// -- Public: serve media ------------------------------------------------------
 
 /**
  * Serve a media file from KV/D1.
@@ -91,7 +91,7 @@ export async function handleMedia(request, env, ctx) {
   return new Response('Not Found', { status: 404 });
 }
 
-// ── Upload ────────────────────────────────────────────────────────────────────
+// -- Upload --------------------------------------------------------------------
 
 /**
  * Handle a media file upload from a multipart/form-data request.
@@ -214,13 +214,13 @@ export async function deleteMedia(cp, mediaId) {
   return true;
 }
 
-// ── Allowed types ─────────────────────────────────────────────────────────────
+// -- Allowed types -------------------------------------------------------------
 
 /**
  * Get allowed upload MIME types.
  * Equivalent to get_allowed_mime_types().
  *
- * @returns {object}  { ext: mime, … }
+ * @returns {object}  { ext: mime, ... }
  */
 export function getAllowedMimeTypes() {
   return {
@@ -241,7 +241,7 @@ export function getAllowedMimeTypes() {
   };
 }
 
-// ── Internals ─────────────────────────────────────────────────────────────────
+// -- Internals -----------------------------------------------------------------
 
 function guessMime(filename) {
   const ext = (filename.split('.').pop() || '').toLowerCase();
