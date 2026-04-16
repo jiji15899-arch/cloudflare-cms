@@ -8,7 +8,7 @@
  * @package CloudPress
  */
 
-const KV_TTL = 3600; // 1 hour KV cache for options
+const OPTION_KV_TTL = 3600; // 1 hour KV cache for options
 
 // -- Read -------------------------------------------------------------------
 
@@ -48,7 +48,7 @@ export async function getOption(cp, name, defaultValue = false) {
 
   // Populate KV cache
   try {
-    await cp.kv.put(kvKey, JSON.stringify({ value }), { expirationTtl: KV_TTL });
+    await cp.kv.put(kvKey, JSON.stringify({ value }), { expirationTtl: OPTION_KV_TTL });
   } catch (_) {}
 
   return value;
