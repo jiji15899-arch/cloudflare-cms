@@ -54,7 +54,7 @@ export async function cpQuery(request, cp) {
 
   const q = cp.query;
 
-  // ── Home / blog index ──────────────────────────────────────────────────
+  // -- Home / blog index --------------------------------------------------
   if (path === '/' || (parts.length === 1 && parts[0] === 'page')) {
     q.is_home = true;
     const showOnFront = await getOption(cp, 'show_on_front', 'posts');
@@ -69,7 +69,7 @@ export async function cpQuery(request, cp) {
     return;
   }
 
-  // ── Search ────────────────────────────────────────────────────────────
+  // -- Search ------------------------------------------------------------
   if (url.searchParams.has('s') || parts[0] === 'search') {
     const s = url.searchParams.get('s') || parts[1] || '';
     q.is_search = true;
@@ -78,7 +78,7 @@ export async function cpQuery(request, cp) {
     return;
   }
 
-  // ── Category archive: /category/<slug> ────────────────────────────────
+  // -- Category archive: /category/<slug> --------------------------------
   if (parts[0] === 'category' && parts[1]) {
     q.is_archive  = true;
     q.is_category = true;
@@ -95,7 +95,7 @@ export async function cpQuery(request, cp) {
     return;
   }
 
-  // ── Tag archive: /tag/<slug> ──────────────────────────────────────────
+  // -- Tag archive: /tag/<slug> ------------------------------------------
   if (parts[0] === 'tag' && parts[1]) {
     q.is_archive = true;
     q.is_tag     = true;
@@ -111,7 +111,7 @@ export async function cpQuery(request, cp) {
     return;
   }
 
-  // ── Author archive: /author/<login> ──────────────────────────────────
+  // -- Author archive: /author/<login> ----------------------------------
   if (parts[0] === 'author' && parts[1]) {
     q.is_archive = true;
     q.is_author  = true;
@@ -122,7 +122,7 @@ export async function cpQuery(request, cp) {
     return;
   }
 
-  // ── Date archive: /YYYY or /YYYY/MM ──────────────────────────────────
+  // -- Date archive: /YYYY or /YYYY/MM ----------------------------------
   if (/^\d{4}$/.test(parts[0]) && parts.length <= 2) {
     q.is_archive = true;
     const year   = parts[0];
@@ -141,7 +141,7 @@ export async function cpQuery(request, cp) {
     return;
   }
 
-  // ── Single post: /YYYY/MM/slug ────────────────────────────────────────
+  // -- Single post: /YYYY/MM/slug ----------------------------------------
   if (parts.length === 3 && /^\d{4}$/.test(parts[0]) && /^\d{2}$/.test(parts[1])) {
     const slug = parts[2];
     const post = await cp.db.prepare(`SELECT * FROM ${prefix}posts WHERE post_name=? AND post_type='post' AND post_status='publish' LIMIT 1`).bind(slug).first().catch(() => null);
@@ -152,7 +152,7 @@ export async function cpQuery(request, cp) {
     return;
   }
 
-  // ── ?p=<id> link ──────────────────────────────────────────────────────
+  // -- ?p=<id> link ------------------------------------------------------
   if (url.searchParams.has('p')) {
     const id   = parseInt(url.searchParams.get('p'));
     const post = await getPost(cp, id).catch(() => null);
@@ -163,7 +163,7 @@ export async function cpQuery(request, cp) {
     return;
   }
 
-  // ── ?page_id=<id> ─────────────────────────────────────────────────────
+  // -- ?page_id=<id> -----------------------------------------------------
   if (url.searchParams.has('page_id')) {
     const id   = parseInt(url.searchParams.get('page_id'));
     const page = await getPost(cp, id).catch(() => null);
@@ -174,7 +174,7 @@ export async function cpQuery(request, cp) {
     return;
   }
 
-  // ── Page / single slug: /<slug> ───────────────────────────────────────
+  // -- Page / single slug: /<slug> ---------------------------------------
   if (parts.length >= 1) {
     const slug = parts[parts.length - 1];
     // Try page first
@@ -195,11 +195,11 @@ export async function cpQuery(request, cp) {
     }
   }
 
-  // ── 404 ───────────────────────────────────────────────────────────────
+  // -- 404 ---------------------------------------------------------------
   q.is_404 = true;
 }
 
-// ── Internal ───────────────────────────────────────────────────────────────
+// -- Internal ---------------------------------------------------------------
 
 async function loadArchivePosts(cp, q, args, postsPerPage, paged, prefix) {
   const offset    = (paged - 1) * postsPerPage;
