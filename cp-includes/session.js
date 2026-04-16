@@ -11,7 +11,7 @@ import { verifyJwt } from './jwt.js';
 import { getUserById } from './user.js';
 
 /**
- * Initialize the session — attach cp.currentUser if authenticated.
+ * Initialize the session -- attach cp.currentUser if authenticated.
  *
  * @param {object} cp  CloudPress context
  */
@@ -33,7 +33,7 @@ export async function initSession(cp) {
       cp.currentUser = user;
     }
   } catch (_) {
-    // Invalid token — silently ignore
+    // Invalid token -- silently ignore
   }
 }
 
