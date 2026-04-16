@@ -12,7 +12,7 @@
 import { getOption, updateOption } from './option.js';
 
 const KV_THEME_META_PREFIX = 'cp:theme:meta:';
-const KV_TTL               = 3600;
+const THEME_KV_TTL         = 3600;
 
 // -- Bootstrap -----------------------------------------------------------------
 
@@ -57,7 +57,7 @@ export async function getThemeMeta(cp, slug) {
   const meta = await fetchThemeJson(cp, slug) || { name: slug, version: '1.0.0' };
 
   try {
-    await cp.kv.put(kvKey, JSON.stringify(meta), { expirationTtl: KV_TTL });
+    await cp.kv.put(kvKey, JSON.stringify(meta), { expirationTtl: THEME_KV_TTL });
   } catch (_) {}
 
   return meta;
