@@ -211,3 +211,7 @@ function jsonResponse(data, status = 200) {
     },
   });
 }
+
+export async function handleGithubSync(request, env, ctx) {
+  return handleAjax(request, env, ctx);
+}
