@@ -20,7 +20,7 @@
 import { getOption } from './option.js';
 
 const KV_PREFIX     = 'cp:template:';
-const KV_TTL        = 3600; // 1 hour cache
+const TEMPLATE_KV_TTL  = 3600; // 1 hour cache
 
 // -- Public API ----------------------------------------------------------------
 
@@ -118,7 +118,7 @@ async function fetchTemplate(cp, filename) {
     const content = await res.text();
 
     // Cache in KV
-    try { await cp.kv.put(kvKey, content, { expirationTtl: KV_TTL }); } catch (_) {}
+    try { await cp.kv.put(kvKey, content, { expirationTtl: TEMPLATE_KV_TTL }); } catch (_) {}
 
     return content;
   } catch (_) {
