@@ -54,7 +54,7 @@ export async function loadActivePlugins(cp) {
  * @returns {Promise<void>}
  */
 async function loadPlugin(cp, pluginSlug) {
-  // Fire hook — bundled plugins listen to 'cp_load_plugin' and check slug
+  // Fire hook -- bundled plugins listen to 'cp_load_plugin' and check slug
   cp.hooks.doAction('cp_load_plugin', pluginSlug, cp);
 }
 
@@ -141,7 +141,7 @@ export async function getAvailablePlugins(cp) {
   }
 }
 
-// ── Internal helpers ──────────────────────────────────────────────────────────
+// -- Internal helpers ----------------------------------------------------------
 
 async function updateActivePlugins(cp, list) {
   const prefix = cp.db_prefix || 'cp_';
