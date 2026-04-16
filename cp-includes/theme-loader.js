@@ -4,7 +4,7 @@
  *
  * The active theme is identified by its slug stored in D1 options ('template').
  * Theme files (CSS, templates) are fetched from GitHub and cached in KV.
- * No PHP theme functions — themes expose a `render(cp, query)` export.
+ * No PHP theme functions -- themes expose a `render(cp, query)` export.
  *
  * @package CloudPress
  */
@@ -14,7 +14,7 @@ import { getOption, updateOption } from './option.js';
 const KV_THEME_META_PREFIX = 'cp:theme:meta:';
 const KV_TTL               = 3600;
 
-// ── Bootstrap ─────────────────────────────────────────────────────────────────
+// -- Bootstrap -----------------------------------------------------------------
 
 /**
  * Load the active theme metadata and set it on the cp context.
@@ -36,7 +36,7 @@ export async function loadActiveTheme(cp) {
   cp.hooks.doAction('cp_after_setup_theme', cp);
 }
 
-// ── Theme meta ────────────────────────────────────────────────────────────────
+// -- Theme meta ----------------------------------------------------------------
 
 /**
  * Get theme metadata (name, version, description, author, etc.).
@@ -125,7 +125,7 @@ export async function getTemplateDirectoryUri(cp) {
   return `${siteUrl.replace(/\/$/, '')}/cp-content/themes/${slug}`;
 }
 
-// ── Internal ──────────────────────────────────────────────────────────────────
+// -- Internal ------------------------------------------------------------------
 
 async function fetchThemeJson(cp, slug) {
   const githubRepo  = cp.config?.GITHUB_REPO || await getOption(cp, 'cp_github_repo', '');
