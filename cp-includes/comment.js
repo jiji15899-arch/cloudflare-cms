@@ -356,3 +356,26 @@ function formatCommentDate(dateStr) {
   if (!dateStr) return '';
   try { return new Date(dateStr).toLocaleDateString(); } catch (_) { return dateStr; }
 }
+
+export async function handleCommentSubmission(request, cp) {
+  const data = await request.formData().catch(() => new FormData());
+  const commentPostId = parseInt(data.get('comment_post_ID') || '0');
+  const author  = String(data.get('author')  || '').trim();
+  const email   = String(data.get('email')   || '').trim();
+  const url     = String(data.get('url')     || '').trim();
+  const comment = String(data.get('comment') || '').trim();
+
+  if (!comment) return { error: 'Comment is empty.' };
+
+  const id = await insertComment(cp, {
+    comment_post_ID:    commentPostId,
+    comment_author:     author,
+    comment_author_email: email,
+    comment_author_url: url,
+    comment_content:    comment,
+    comment_approved:   1,
+  });
+  return { id };
+}
+
+export async function newComment(cp, data) { return insertComment(cp, data); }
