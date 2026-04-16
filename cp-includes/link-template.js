@@ -3,14 +3,14 @@
  * Replaces WordPress wp-includes/link-template.php
  *
  * Generates URLs for posts, pages, archives, feeds, admin, etc.
- * No .htaccess — all routing handled by Cloudflare Worker (cp-router.js).
+ * No .htaccess -- all routing handled by Cloudflare Worker (cp-router.js).
  *
  * @package CloudPress
  */
 
 import { getOption } from './option.js';
 
-// ── Post / Page permalinks ────────────────────────────────────────────────────
+// -- Post / Page permalinks ----------------------------------------------------
 
 /**
  * Get the permalink for a post.
@@ -54,7 +54,7 @@ export async function thePermalink(cp, post) {
   return getPermalink(cp, post);
 }
 
-// ── Category / Tag / Author / Date archive URLs ───────────────────────────────
+// -- Category / Tag / Author / Date archive URLs -------------------------------
 
 /**
  * Get a category link.
@@ -112,7 +112,7 @@ export async function getDayLink(cp, year, month, day) {
   return `${siteUrl.replace(/\/$/, '')}/${year}/${m}/${d}/`;
 }
 
-// ── Feed URLs ─────────────────────────────────────────────────────────────────
+// -- Feed URLs -----------------------------------------------------------------
 
 /**
  * Get the feed URL.
@@ -132,7 +132,7 @@ export async function getPostCommentsFeedLink(cp, postId, feedType = 'rss2') {
   return `${postUrl.replace(/\/$/, '')}/feed/${feedType}/`;
 }
 
-// ── Comment links ─────────────────────────────────────────────────────────────
+// -- Comment links -------------------------------------------------------------
 
 /**
  * Get the link to a specific comment.
@@ -155,7 +155,7 @@ export async function getCommentLink(cp, comment) {
   return `${postUrl}#comment-${commentObj.comment_ID}`;
 }
 
-// ── Admin links ───────────────────────────────────────────────────────────────
+// -- Admin links ---------------------------------------------------------------
 
 /**
  * Get the admin URL.
@@ -209,7 +209,7 @@ export async function lostpasswordUrl(cp, redirect = '') {
   return url;
 }
 
-// ── Search link ───────────────────────────────────────────────────────────────
+// -- Search link ---------------------------------------------------------------
 
 /**
  * Get a search link.
@@ -222,7 +222,7 @@ export async function getSearchLink(cp, query = '') {
     : `${siteUrl.replace(/\/$/, '')}/`;
 }
 
-// ── Internal helper ───────────────────────────────────────────────────────────
+// -- Internal helper -----------------------------------------------------------
 
 async function fetchPost(cp, postId) {
   const prefix = cp.db_prefix || 'cp_';
