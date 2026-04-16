@@ -3,12 +3,12 @@
  * Replaces WordPress's sanitize_* and kses functions.
  *
  * Provides input sanitization helpers used throughout the CMS.
- * No external dependencies — runs entirely in the Workers runtime.
+ * No external dependencies -- runs entirely in the Workers runtime.
  *
  * @package CloudPress
  */
 
-// ── Text / HTML ─────────────────────────────────────────────────────────────
+// -- Text / HTML -------------------------------------------------------------
 
 /**
  * Sanitize a plain-text field (strip all tags).
@@ -153,7 +153,7 @@ export function sanitizeMimeType(str) {
     .slice(0, 100);
 }
 
-// ── HTML (kses equivalent) ─────────────────────────────────────────────────
+// -- HTML (kses equivalent) -------------------------------------------------
 
 /**
  * Allowed HTML tags and attributes for post content.
@@ -295,7 +295,7 @@ export function escJs(str) {
   return JSON.stringify(String(str || '')).slice(1, -1);
 }
 
-// ── Internals ────────────────────────────────────────────────────────────────
+// -- Internals ----------------------------------------------------------------
 
 function parseAttrs(attrString) {
   const result = [];
