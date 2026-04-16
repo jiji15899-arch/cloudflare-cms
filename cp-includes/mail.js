@@ -3,7 +3,7 @@
  * Replaces WordPress's pluggable wp_mail() / PHPMailer
  *
  * Uses Cloudflare Workers Email (MailChannels) or a configured SMTP
- * relay via fetch(). No PHPMailer dependency — pure fetch-based.
+ * relay via fetch(). No PHPMailer dependency -- pure fetch-based.
  *
  * Bindings expected in env (set in Cloudflare dashboard or wrangler.toml):
  *   CP_MAIL_FROM        - sender address  (default: noreply@<site-domain>)
@@ -19,7 +19,7 @@
 
 import { getOption } from './option.js';
 
-// ── Public API ────────────────────────────────────────────────────────────────
+// -- Public API ----------------------------------------------------------------
 
 /**
  * Send an email.
@@ -163,7 +163,7 @@ export async function sendPasswordResetEmail(cp, user, resetKey) {
   );
 }
 
-// ── Transports ────────────────────────────────────────────────────────────────
+// -- Transports ----------------------------------------------------------------
 
 /**
  * Send via Cloudflare MailChannels Send API.
