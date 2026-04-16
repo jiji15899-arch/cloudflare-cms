@@ -297,3 +297,15 @@ async function hydrateUser(cp, row) {
     },
   };
 }
+
+export async function getCurrentUser(cp) {
+  if (!cp.user || !cp.user.ID) return null;
+  return getUserById(cp, cp.user.ID);
+}
+
+export async function getUserBy(cp, field, value) {
+  if (field === 'id'    || field === 'ID') return getUserById(cp, value);
+  if (field === 'login' || field === 'user_login') return getUserByLogin(cp, value);
+  if (field === 'email' || field === 'user_email') return getUserByEmail(cp, value);
+  return null;
+}
