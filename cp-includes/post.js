@@ -278,3 +278,8 @@ export function slugify(str) {
     .replace(/-+/g, '-')
     .slice(0, 200);
 }
+
+export async function pingsOpen(cp, postId) {
+  const post = await getPost(cp, postId);
+  return post && post.ping_status === 'open';
+}
