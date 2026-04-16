@@ -170,3 +170,5 @@ export function randomToken(bytes = 32) {
   const arr = crypto.getRandomValues(new Uint8Array(bytes));
   return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
 }
+
+export async function cpHash(data, secret = '') { return hmacHash(data, secret || 'default'); }
