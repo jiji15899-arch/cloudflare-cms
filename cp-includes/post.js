@@ -7,7 +7,7 @@
  * @package CloudPress
  */
 
-// ── Fetch ──────────────────────────────────────────────────────────────────
+// -- Fetch ------------------------------------------------------------------
 
 /**
  * Get a single post by ID.
@@ -98,7 +98,7 @@ export async function countPosts(cp, args = {}) {
   return row?.n ?? 0;
 }
 
-// ── Write ──────────────────────────────────────────────────────────────────
+// -- Write ------------------------------------------------------------------
 
 /**
  * Insert a new post.
@@ -196,7 +196,7 @@ export async function deletePost(cp, postId) {
   return true;
 }
 
-// ── Post Meta ──────────────────────────────────────────────────────────────
+// -- Post Meta --------------------------------------------------------------
 
 /**
  * Get post meta.
@@ -258,7 +258,7 @@ export async function deletePostMeta(cp, postId, key) {
     .bind(postId, key).run();
 }
 
-// ── Utilities ──────────────────────────────────────────────────────────────
+// -- Utilities --------------------------------------------------------------
 
 /**
  * Convert a string to a URL-safe slug.
