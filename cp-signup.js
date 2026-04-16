@@ -10,8 +10,7 @@
  */
 
 import { cpLoad } from './cp-load.js';
-import { isMultisite } from './cp-includes/functions.js';
-import { cpRedirect } from './cp-includes/functions.js';
+import { isMultisite, cpRedirect } from './cp-includes/functions.js';
 import { sanitizeTextField, sanitizeEmail, sanitizeUrl } from './cp-includes/sanitize.js';
 import { isValidEmail } from './cp-includes/formatting.js';
 import { cpmuValidateUserSignup, cpmuValidateBlogSignup, cpmuRegisterUser, cpmuRegisterBlog } from './cp-includes/ms-functions.js';
