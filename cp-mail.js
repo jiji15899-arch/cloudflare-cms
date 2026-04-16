@@ -23,7 +23,7 @@ const MAIL_INTERVAL = 5 * 60; // 5 minutes in seconds
 
 /**
  * Handle post-by-email via HTTP request.
- * Should be secured — only accessible from trusted IPs or via cron.
+ * Should be secured -- only accessible from trusted IPs or via cron.
  *
  * @param {Request} request
  * @param {object}  env
@@ -45,7 +45,7 @@ export async function handleMail(request, env, ctx) {
     return cpDie(cp, 'This action has been disabled by the administrator.', 403);
   }
 
-  // Fire hook — allow plugins to completely take over post-by-email
+  // Fire hook -- allow plugins to completely take over post-by-email
   // (equivalent to do_action('wp-mail.php'))
   cp.hooks.doAction('cp_mail');
 
@@ -89,7 +89,7 @@ export async function handleMail(request, env, ctx) {
  * Process the mailbox and create posts.
  * On Cloudflare Workers, POP3/IMAP connections aren't directly possible
  * (no raw TCP sockets in standard Workers). This uses an Email Routing
- * webhook approach instead — emails are forwarded to a Worker endpoint.
+ * webhook approach instead -- emails are forwarded to a Worker endpoint.
  *
  * For direct POP3, use a relay service or Cloudflare Email Workers.
  */
