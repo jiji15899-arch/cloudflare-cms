@@ -9,7 +9,7 @@
  */
 
 import { cpLoad } from './cp-load.js';
-import { getCategories } from './cp-includes/category.js';
+import { getTerms as getCategories } from './cp-includes/category.js';
 import { getBookmarks } from './cp-includes/bookmark.js';
 import { getOption } from './cp-includes/option.js';
 
