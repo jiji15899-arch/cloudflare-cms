@@ -14,7 +14,7 @@ import { hashPassword } from './crypto.js';
 import { sanitizeEmail } from './sanitize.js';
 import { getOption } from './option.js';
 
-// ── Validation ────────────────────────────────────────────────────────────────
+// -- Validation ----------------------------------------------------------------
 
 /**
  * Validate a user signup.
@@ -84,7 +84,7 @@ export async function cpmuValidateBlogSignup(cp, blogname, blogTitle, user = nul
   return { blogname, blog_title: blogTitle, errors };
 }
 
-// ── Registration ──────────────────────────────────────────────────────────────
+// -- Registration --------------------------------------------------------------
 
 /**
  * Register a new user (creates signup record; not activated yet).
@@ -138,7 +138,7 @@ export async function cpmuRegisterBlog(cp, domain, path, title, userId, meta = {
   return { activation_key: key };
 }
 
-// ── Activation ────────────────────────────────────────────────────────────────
+// -- Activation ----------------------------------------------------------------
 
 /**
  * Activate a signup by activation key.
@@ -201,7 +201,7 @@ export async function cpmuActivateSignup(cp, key) {
   return { user_id: userId, blog_id: blogId, password };
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// -- Helpers -------------------------------------------------------------------
 
 async function userExistsByLogin(cp, login) {
   const prefix = cp.db_prefix || 'cp_';
