@@ -15,6 +15,7 @@ import { cpmuActivateSignup } from './cp-includes/ms-functions.js';
 import { isMultisite } from './cp-includes/functions.js';
 import { cpRedirect } from './cp-includes/functions.js';
 import { getRegistrationUrl } from './cp-includes/link-template.js';
+import { escHtml } from './cp-includes/formatting.js';
 
 /**
  * Handle activation request.
@@ -190,15 +191,6 @@ async function renderActivatePage(cp, key, result, url) {
 </div>
 </body>
 </html>`;
-}
-
-function escHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }
 
 function cpDie(cp, message, title = 'Error', status = 500) {
