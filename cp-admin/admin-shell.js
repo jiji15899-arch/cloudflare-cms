@@ -266,3 +266,5 @@ document.querySelectorAll('[data-confirm]').forEach(el => {
 });
 `;
 }
+
+
