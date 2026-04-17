@@ -12,7 +12,7 @@
 import { cpLoad } from './cp-load.js';
 import { isMultisite, cpRedirect } from './cp-includes/functions.js';
 import { sanitizeTextField, sanitizeEmail, sanitizeUrl } from './cp-includes/sanitize.js';
-import { isValidEmail } from './cp-includes/formatting.js';
+import { isValidEmail, escHtml } from './cp-includes/formatting.js';
 import { cpmuValidateUserSignup, cpmuValidateBlogSignup, cpmuRegisterUser, cpmuRegisterBlog } from './cp-includes/ms-functions.js';
 import { sendActivationEmail } from './cp-includes/mail.js';
 
@@ -189,11 +189,4 @@ function renderSignupComplete(cp, email) {
   return renderLayout(cp, 'Registration Complete', content);
 }
 
-function escHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
+
