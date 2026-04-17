@@ -9,6 +9,7 @@
  */
 
 import { getOption } from '../cp-includes/option.js';
+import { escHtml }   from '../cp-includes/formatting.js';
 
 /**
  * Render a full admin page.
@@ -264,13 +265,4 @@ document.querySelectorAll('[data-confirm]').forEach(el => {
   });
 });
 `;
-}
-
-function escHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }
