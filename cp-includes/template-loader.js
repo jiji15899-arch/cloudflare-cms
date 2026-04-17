@@ -18,6 +18,7 @@
  */
 
 import { getOption } from './option.js';
+import { escHtml }   from './formatting.js';
 
 const KV_PREFIX     = 'cp:template:';
 const TEMPLATE_KV_TTL  = 3600; // 1 hour cache
@@ -182,6 +183,4 @@ function defaultTemplate(templateName, context) {
 </html>`;
 }
 
-function escHtml(str) {
-  return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
+
