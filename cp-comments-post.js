@@ -14,6 +14,7 @@ import { getCurrentUser } from './cp-includes/user.js';
 import { cpSafeRedirect } from './cp-includes/functions.js';
 import { getCommentLink } from './cp-includes/link-template.js';
 import { cpHash } from './cp-includes/crypto.js';
+import { escHtml } from './cp-includes/formatting.js';
 
 /**
  * Handle comment POST request.
@@ -92,14 +93,6 @@ export async function handleCommentsPost(request, env, ctx) {
   return cpSafeRedirect(location, responseHeaders);
 }
 
-function escHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
 
 function cpDie(cp, message, title = 'Error', status = 500, backLink = false) {
   const back = backLink ? '<p><a href="javascript:history.back()">&larr; Go back</a></p>' : '';
