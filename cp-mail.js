@@ -18,6 +18,7 @@ import { insertPost } from './cp-includes/post.js';
 import { getUserBy } from './cp-includes/user.js';
 import { sanitizeEmail } from './cp-includes/sanitize.js';
 import { setTransient, getTransient } from './cp-includes/transient.js';
+import { escHtml } from './cp-includes/formatting.js';
 
 const MAIL_INTERVAL = 5 * 60; // 5 minutes in seconds
 
@@ -210,10 +211,4 @@ function cpDie(cp, message, status = 500) {
     status,
     headers: { 'Content-Type': 'text/html; charset=utf-8' },
   });
-}
-
-function escHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
