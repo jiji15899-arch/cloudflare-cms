@@ -8,6 +8,8 @@
  * @package CloudPress
  */
 
+import { escHtml } from './formatting.js';
+
 // -- Term fetch ----------------------------------------------------------------
 
 /**
@@ -332,6 +334,4 @@ export function renderTermOptions(tree, selected = 0, depth = 0) {
   }).join('');
 }
 
-function escHtml(str) {
-  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
+
