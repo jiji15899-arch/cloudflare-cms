@@ -7353,6 +7353,17 @@ var worker_default = {
     return handleScheduled(event, env, ctx);
   }
 };
-export {
-  worker_default as default
-};
+
+// ── Service Worker Entry Point ──────────────────────────────────────────────
+// Cloudflare Service Worker 포맷: env 바인딩은 globalThis에 자동으로 붙음
+addEventListener('fetch', function(event) {
+  event.respondWith(
+    worker_default.fetch(event.request, globalThis, event)
+  );
+});
+
+addEventListener('scheduled', function(event) {
+  event.waitUntil(
+    worker_default.scheduled(event, globalThis, event)
+  );
+});
