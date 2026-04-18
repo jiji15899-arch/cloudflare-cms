@@ -7,6 +7,8 @@
  * @package CloudPress
  */
 
+import { slugify as _slugify } from './formatting.js';
+
 // -- Fetch ------------------------------------------------------------------
 
 /**
@@ -267,17 +269,7 @@ export async function deletePostMeta(cp, postId, key) {
  * @param {string} str
  * @returns {string}
  */
-export function slugify(str) {
-  return String(str || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9\s-]/g, '')
-    .trim()
-    .replace(/[\s_]+/g, '-')
-    .replace(/-+/g, '-')
-    .slice(0, 200);
-}
+export { _slugify as slugify };
 
 export async function pingsOpen(cp, postId) {
   const post = await getPost(cp, postId);
