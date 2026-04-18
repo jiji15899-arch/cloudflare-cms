@@ -9,6 +9,7 @@
 
 import { getOption } from './option.js';
 import { escHtml }   from './formatting.js';
+export { adminUrl }  from './link-template.js';
 
 // -- URL helpers ---------------------------------------------------------------
 
@@ -40,19 +41,6 @@ export async function getSiteUrl(cp, path = '', scheme = null) {
 export async function getHomeUrl(cp, path = '') {
   const base = await getOption(cp, 'home', await getSiteUrl(cp));
   return path ? `${base.replace(/\/$/, '')}/${path.replace(/^\//, '')}` : base;
-}
-
-/**
- * Get the admin URL.
- * Equivalent to admin_url().
- *
- * @param {object} cp
- * @param {string} [path]
- * @returns {Promise<string>}
- */
-export async function adminUrl(cp, path = '') {
-  const base = await getSiteUrl(cp, 'cp-admin');
-  return path ? `${base}/${path.replace(/^\//, '')}` : base;
 }
 
 /**
