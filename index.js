@@ -19,7 +19,7 @@ import { handleDashboard }         from './pages/dashboard.js';
 import { handlePosts }             from './pages/posts.js';
 import { handlePostEdit }          from './pages/post-edit.js';
 import { handlePages }             from './pages/pages.js';
-import { handleMedia }             from './pages/media.js';
+import { handleMediaPage }             from './pages/media.js';
 import { handleComments }          from './pages/comments.js';
 import { handleThemes }            from './pages/themes.js';
 import { handlePlugins }           from './pages/plugins.js';
@@ -48,7 +48,7 @@ import { handleGithubSync }        from './github-sync.js';
  * @param {object}  ctx
  * @returns {Promise<Response>}
  */
-export async function handleAdmin(request, env, ctx) {
+export async function handleAdminLegacy(request, env, ctx) {
   const url    = new URL(request.url);
   const path   = url.pathname.replace(/\/+$/, '') || '/cp-admin';
   const method = request.method.toUpperCase();
@@ -107,7 +107,7 @@ async function dispatchAdmin(request, env, ctx, cp, path, method, url) {
 
   // Media
   if (path === '/cp-admin/upload' || path === '/cp-admin/media-new') {
-    return handleMedia(request, cp);
+    return handleMediaPage(request, cp);
   }
 
   // Comments
