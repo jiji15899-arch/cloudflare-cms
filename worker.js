@@ -1,5 +1,6 @@
 var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
+var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
@@ -69,6 +70,9 @@ function mergeWithDefaults(stored, env) {
 var CP_VERSION, CPINC, CPADMIN;
 var init_cp_config = __esm({
   "cp-config.js"() {
+    __name(loadConfig, "loadConfig");
+    __name(saveConfig, "saveConfig");
+    __name(mergeWithDefaults, "mergeWithDefaults");
     CP_VERSION = "1.0.0";
     CPINC = "cp-includes";
     CPADMIN = "cp-admin";
@@ -81,11 +85,13 @@ async function getOption(cp, name, defaultValue = false) {
   const kvKey = `cp:option:${name}`;
   try {
     const cached = await cp.kv.get(kvKey, { type: "json" });
-    if (cached !== null) return cached.value;
+    if (cached !== null)
+      return cached.value;
   } catch (_) {
   }
   const row = await cp.db.prepare(`SELECT option_value FROM ${prefix}options WHERE option_name=? LIMIT 1`).bind(name).first();
-  if (!row) return defaultValue;
+  if (!row)
+    return defaultValue;
   let value;
   try {
     value = JSON.parse(row.option_value);
@@ -116,6 +122,8 @@ var OPTION_KV_TTL;
 var init_option = __esm({
   "cp-includes/option.js"() {
     OPTION_KV_TTL = 3600;
+    __name(getOption, "getOption");
+    __name(updateOption, "updateOption");
   }
 });
 
@@ -128,7 +136,8 @@ async function loadActivePlugins(cp) {
   } catch (_) {
     activePlugins = [];
   }
-  if (!Array.isArray(activePlugins) || activePlugins.length === 0) return;
+  if (!Array.isArray(activePlugins) || activePlugins.length === 0)
+    return;
   for (const pluginSlug of activePlugins) {
     try {
       await loadPlugin(cp, pluginSlug);
@@ -145,6 +154,8 @@ async function loadPlugin(cp, pluginSlug) {
 var init_plugin_loader = __esm({
   "cp-includes/plugin-loader.js"() {
     init_option();
+    __name(loadActivePlugins, "loadActivePlugins");
+    __name(loadPlugin, "loadPlugin");
   }
 });
 
@@ -163,7 +174,8 @@ async function getThemeMeta(cp, slug) {
   const kvKey = KV_THEME_META_PREFIX + slug;
   try {
     const cached = await cp.kv.get(kvKey, { type: "json" });
-    if (cached) return cached;
+    if (cached)
+      return cached;
   } catch (_) {
   }
   const meta = await fetchThemeJson(cp, slug) || { name: slug, version: "1.0.0" };
@@ -176,7 +188,8 @@ async function getThemeMeta(cp, slug) {
 async function getThemes(cp) {
   try {
     const cached = await cp.kv.get("cp:themes:list", { type: "json" });
-    if (cached) return cached;
+    if (cached)
+      return cached;
   } catch (_) {
   }
   return [];
@@ -194,13 +207,16 @@ async function switchTheme(cp, slug) {
 async function fetchThemeJson(cp, slug) {
   const githubRepo = cp.config?.GITHUB_REPO || await getOption(cp, "cp_github_repo", "");
   const githubToken = cp.config?.GITHUB_TOKEN || cp.env?.CP_GITHUB_TOKEN || "";
-  if (!githubRepo) return null;
+  if (!githubRepo)
+    return null;
   const url = `https://api.github.com/repos/${githubRepo}/contents/themes/${slug}/theme.json`;
   try {
     const headers = { "User-Agent": "CloudPress/1.0", "Accept": "application/vnd.github.v3.raw" };
-    if (githubToken) headers["Authorization"] = `Bearer ${githubToken}`;
+    if (githubToken)
+      headers["Authorization"] = `Bearer ${githubToken}`;
     const res = await fetch(url, { headers });
-    if (!res.ok) return null;
+    if (!res.ok)
+      return null;
     return await res.json();
   } catch (_) {
     return null;
@@ -212,12 +228,18 @@ var init_theme_loader = __esm({
     init_option();
     KV_THEME_META_PREFIX = "cp:theme:meta:";
     THEME_KV_TTL = 3600;
+    __name(loadActiveTheme, "loadActiveTheme");
+    __name(getThemeMeta, "getThemeMeta");
+    __name(getThemes, "getThemes");
+    __name(switchTheme, "switchTheme");
+    __name(fetchThemeJson, "fetchThemeJson");
   }
 });
 
 // cp-includes/formatting.js
 function wptexturize(text) {
-  if (!text) return "";
+  if (!text)
+    return "";
   return text.replace(/---/g, "\u2014").replace(/--/g, "\u2013").replace(/(^|[\s(])"(\S)/g, "$1\u201C$2").replace(/(\S)"([\s,.]|$)/g, "$1\u201D$2").replace(/(^|[\s(])'(\S)/g, "$1\u2018$2").replace(/(\S)'([\s,.]|$)/g, "$1\u2019$2").replace(/\.\.\./g, "\u2026");
 }
 function stripTags(str) {
@@ -232,7 +254,8 @@ function truncate(str, length = 100, suffix = "...") {
 }
 function trimWords(str, count = 55, more = "...") {
   const words = String(str || "").trim().split(/\s+/).filter(Boolean);
-  if (words.length <= count) return str;
+  if (words.length <= count)
+    return str;
   return words.slice(0, count).join(" ") + more;
 }
 function htmlExcerpt(text, maxLength = 255) {
@@ -240,6 +263,12 @@ function htmlExcerpt(text, maxLength = 255) {
 }
 var init_formatting = __esm({
   "cp-includes/formatting.js"() {
+    __name(wptexturize, "wptexturize");
+    __name(stripTags, "stripTags");
+    __name(escHtml, "escHtml");
+    __name(truncate, "truncate");
+    __name(trimWords, "trimWords");
+    __name(htmlExcerpt, "htmlExcerpt");
   }
 });
 
@@ -250,8 +279,10 @@ function registerCoreHooks(cp) {
   hooks.addFilter("the_content", (content) => wptexturize(content), 20);
   hooks.addFilter("the_title", (title) => title ? String(title).replace(/<[^>]+>/g, "") : "", 10);
   hooks.addFilter("get_the_excerpt", (excerpt, post) => {
-    if (excerpt) return excerpt;
-    if (!post?.post_content) return "";
+    if (excerpt)
+      return excerpt;
+    if (!post?.post_content)
+      return "";
     return trimWords(stripTags(post.post_content), 55) + "\u2026";
   }, 10);
   hooks.addFilter("comment_text", (text) => wpAutoP(escHtml(text || "")), 10);
@@ -260,14 +291,17 @@ function registerCoreHooks(cp) {
   }, 1);
 }
 function wpAutoP(text) {
-  if (!text) return "";
+  if (!text)
+    return "";
   const blocks = /^(address|article|aside|blockquote|canvas|dd|div|dl|dt|fieldset|figcaption|figure|footer|form|h[1-6]|header|hr|li|main|nav|noscript|ol|p|pre|section|table|tfoot|thead|tbody|tr|td|th|ul|video)/i;
   text = text.replace(/\r\n|\r/g, "\n");
   const parts = text.split(/\n\n+/);
   const result = parts.map((part) => {
     const trimmed = part.trim();
-    if (!trimmed) return "";
-    if (blocks.test(trimmed)) return trimmed;
+    if (!trimmed)
+      return "";
+    if (blocks.test(trimmed))
+      return trimmed;
     const inner = trimmed.replace(/\n/g, "<br />\n");
     return `<p>${inner}</p>`;
   });
@@ -276,6 +310,8 @@ function wpAutoP(text) {
 var init_hooks = __esm({
   "cp-includes/hooks.js"() {
     init_formatting();
+    __name(registerCoreHooks, "registerCoreHooks");
+    __name(wpAutoP, "wpAutoP");
   }
 });
 
@@ -316,9 +352,11 @@ async function signJwt(payload, secret, expiresIn = 86400) {
   return `${data}.${sigB64}`;
 }
 async function verifyJwt(token, secret) {
-  if (!token || typeof token !== "string") return null;
+  if (!token || typeof token !== "string")
+    return null;
   const parts = token.split(".");
-  if (parts.length !== 3) return null;
+  if (parts.length !== 3)
+    return null;
   const [headerB64, payloadB64, sigB64] = parts;
   try {
     const key = await importHmacKey(secret);
@@ -330,7 +368,8 @@ async function verifyJwt(token, secret) {
       sigBytes,
       new TextEncoder().encode(data)
     );
-    if (!valid) return null;
+    if (!valid)
+      return null;
   } catch (_) {
     return null;
   }
@@ -341,7 +380,8 @@ async function verifyJwt(token, secret) {
     return null;
   }
   const now = Math.floor(Date.now() / 1e3);
-  if (payload.exp && payload.exp < now) return null;
+  if (payload.exp && payload.exp < now)
+    return null;
   return payload;
 }
 function buildAuthCookie(token, maxAge = 86400, secure = true) {
@@ -360,6 +400,13 @@ function clearAuthCookie() {
 }
 var init_jwt = __esm({
   "cp-includes/jwt.js"() {
+    __name(base64urlEncode, "base64urlEncode");
+    __name(base64urlDecode, "base64urlDecode");
+    __name(importHmacKey, "importHmacKey");
+    __name(signJwt, "signJwt");
+    __name(verifyJwt, "verifyJwt");
+    __name(buildAuthCookie, "buildAuthCookie");
+    __name(clearAuthCookie, "clearAuthCookie");
   }
 });
 
@@ -390,12 +437,14 @@ async function hashPassword(password) {
   return `$cp$${HASH_ITERATIONS}$${b64encode(salt)}$${b64encode(derived)}`;
 }
 async function checkPassword(password, storedHash) {
-  if (!storedHash) return false;
+  if (!storedHash)
+    return false;
   if (storedHash.startsWith("$P$") || storedHash.startsWith("$H$")) {
     return false;
   }
   const parts = storedHash.split("$");
-  if (parts.length < 5 || parts[1] !== "cp") return false;
+  if (parts.length < 5 || parts[1] !== "cp")
+    return false;
   const iterations = parseInt(parts[2], 10);
   const salt = b64decode(parts[3]);
   const expected = b64decode(parts[4]);
@@ -413,9 +462,11 @@ async function checkPassword(password, storedHash) {
   );
   const a = new Uint8Array(derived);
   const b = expected;
-  if (a.length !== b.length) return false;
+  if (a.length !== b.length)
+    return false;
   let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  for (let i = 0; i < a.length; i++)
+    diff |= a[i] ^ b[i];
   return diff === 0;
 }
 async function hmacHash(data, key) {
@@ -435,8 +486,15 @@ async function cpHash(data, secret = "") {
 var HASH_ALGORITHM, HASH_ITERATIONS;
 var init_crypto = __esm({
   "cp-includes/crypto.js"() {
+    __name(b64encode, "b64encode");
+    __name(b64decode, "b64decode");
+    __name(strToBytes, "strToBytes");
     HASH_ALGORITHM = "SHA-256";
     HASH_ITERATIONS = 1e5;
+    __name(hashPassword, "hashPassword");
+    __name(checkPassword, "checkPassword");
+    __name(hmacHash, "hmacHash");
+    __name(cpHash, "cpHash");
   }
 });
 
@@ -444,29 +502,34 @@ var init_crypto = __esm({
 async function getUserById(cp, id) {
   const prefix = cp.db_prefix || "cp_";
   const row = await cp.db.prepare(`SELECT * FROM ${prefix}users WHERE ID=? LIMIT 1`).bind(id).first();
-  if (!row) return null;
+  if (!row)
+    return null;
   return hydrateUser(cp, row);
 }
 async function getUserByLogin(cp, login) {
   const prefix = cp.db_prefix || "cp_";
   const row = await cp.db.prepare(`SELECT * FROM ${prefix}users WHERE user_login=? LIMIT 1`).bind(login).first();
-  if (!row) return null;
+  if (!row)
+    return null;
   return hydrateUser(cp, row);
 }
 async function getUserByEmail(cp, email) {
   const prefix = cp.db_prefix || "cp_";
   const row = await cp.db.prepare(`SELECT * FROM ${prefix}users WHERE user_email=? LIMIT 1`).bind(email).first();
-  if (!row) return null;
+  if (!row)
+    return null;
   return hydrateUser(cp, row);
 }
 async function authenticateUser(cp, login, password) {
   const user = login.includes("@") ? await getUserByEmail(cp, login) : await getUserByLogin(cp, login);
-  if (!user) return null;
+  if (!user)
+    return null;
   const ok = await checkPassword(password, user.user_pass);
   return ok ? user : null;
 }
 async function hydrateUser(cp, row) {
-  if (!row) return null;
+  if (!row)
+    return null;
   const prefix = cp.db_prefix || "cp_";
   let roles = ["subscriber"];
   try {
@@ -496,31 +559,45 @@ async function hydrateUser(cp, row) {
   };
 }
 async function getCurrentUser(cp) {
-  if (!cp.user || !cp.user.ID) return null;
+  if (!cp.user || !cp.user.ID)
+    return null;
   return getUserById(cp, cp.user.ID);
 }
 async function getUserBy(cp, field, value) {
-  if (field === "id" || field === "ID") return getUserById(cp, value);
-  if (field === "login" || field === "user_login") return getUserByLogin(cp, value);
-  if (field === "email" || field === "user_email") return getUserByEmail(cp, value);
+  if (field === "id" || field === "ID")
+    return getUserById(cp, value);
+  if (field === "login" || field === "user_login")
+    return getUserByLogin(cp, value);
+  if (field === "email" || field === "user_email")
+    return getUserByEmail(cp, value);
   return null;
 }
 var init_user = __esm({
   "cp-includes/user.js"() {
     init_crypto();
+    __name(getUserById, "getUserById");
+    __name(getUserByLogin, "getUserByLogin");
+    __name(getUserByEmail, "getUserByEmail");
+    __name(authenticateUser, "authenticateUser");
+    __name(hydrateUser, "hydrateUser");
+    __name(getCurrentUser, "getCurrentUser");
+    __name(getUserBy, "getUserBy");
   }
 });
 
 // cp-includes/session.js
 async function initSession(cp) {
   const token = extractToken(cp.request);
-  if (!token) return;
+  if (!token)
+    return;
   try {
     const payload = await verifyJwt(token, cp.config.AUTH_KEY);
-    if (!payload || !payload.sub) return;
+    if (!payload || !payload.sub)
+      return;
     const jti = payload.jti || payload.sub;
     const revoked = await cp.kv.get(`cp:token_revoked:${jti}`).catch(() => null);
-    if (revoked) return;
+    if (revoked)
+      return;
     const user = await getUserById(cp, Number(payload.sub));
     if (user) {
       cp.currentUser = user;
@@ -531,16 +608,20 @@ async function initSession(cp) {
 function extractToken(request) {
   const cookie = request.headers.get("Cookie") || "";
   const match = cookie.match(/cp_token=([^;]+)/);
-  if (match) return match[1];
+  if (match)
+    return match[1];
   const auth = request.headers.get("Authorization") || "";
   const bearer = auth.match(/^Bearer\s+(.+)$/i);
-  if (bearer) return bearer[1];
+  if (bearer)
+    return bearer[1];
   return null;
 }
 var init_session = __esm({
   "cp-includes/session.js"() {
     init_jwt();
     init_user();
+    __name(initSession, "initSession");
+    __name(extractToken, "extractToken");
   }
 });
 
@@ -566,6 +647,7 @@ var init_cp_settings = __esm({
     init_theme_loader();
     init_hooks();
     init_session();
+    __name(cpSettings, "cpSettings");
   }
 });
 
@@ -621,7 +703,8 @@ function createHookSystem() {
   const filters = {};
   return {
     addAction(hook, callback, priority = 10) {
-      if (!actions[hook]) actions[hook] = [];
+      if (!actions[hook])
+        actions[hook] = [];
       actions[hook].push({ callback, priority });
       actions[hook].sort((a, b) => a.priority - b.priority);
     },
@@ -629,7 +712,8 @@ function createHookSystem() {
       (actions[hook] || []).forEach(({ callback }) => callback(...args));
     },
     addFilter(hook, callback, priority = 10) {
-      if (!filters[hook]) filters[hook] = [];
+      if (!filters[hook])
+        filters[hook] = [];
       filters[hook].push({ callback, priority });
       filters[hook].sort((a, b) => a.priority - b.priority);
     },
@@ -669,6 +753,9 @@ var init_cp_load = __esm({
   "cp-load.js"() {
     init_cp_config();
     init_cp_settings();
+    __name(cpLoad, "cpLoad");
+    __name(createHookSystem, "createHookSystem");
+    __name(errorResponse, "errorResponse");
   }
 });
 
@@ -687,7 +774,8 @@ async function handleCronRequest(request, env, ctx) {
     return new Response("", { status: 405 });
   }
   const cp = await cpLoad(request, env, ctx, { DOING_CRON: true });
-  if (cp.__cpError) return cp.response;
+  if (cp.__cpError)
+    return cp.response;
   ctx.waitUntil(runCronJobs(cp));
   return new Response("", {
     status: 200,
@@ -717,7 +805,8 @@ async function runCronJobs(cp) {
   const lockToken = `${gmtNow}.${Math.random()}`;
   await kv.put(CRON_LOCK_KEY, lockToken, { expirationTtl: CRON_LOCK_TTL });
   const acquiredLock = await kv.get(CRON_LOCK_KEY);
-  if (acquiredLock !== lockToken) return;
+  if (acquiredLock !== lockToken)
+    return;
   try {
     const { results: dueEvents } = await db.prepare(`
       SELECT * FROM ${prefix}cron_events
@@ -802,6 +891,13 @@ var init_cp_cron = __esm({
     init_cp_load();
     CRON_LOCK_KEY = "cp:doing_cron";
     CRON_LOCK_TTL = 60;
+    __name(handleCronRequest, "handleCronRequest");
+    __name(handleScheduled, "handleScheduled");
+    __name(runCronJobs, "runCronJobs");
+    __name(getCronInterval, "getCronInterval");
+    __name(cpScheduleEvent, "cpScheduleEvent");
+    __name(cpUnscheduleEvent, "cpUnscheduleEvent");
+    __name(cpClearScheduledHook, "cpClearScheduledHook");
   }
 });
 
@@ -814,6 +910,7 @@ async function getPost(cp, id) {
   const prefix = cp.db_prefix || "cp_";
   return cp.db.prepare(`SELECT * FROM ${prefix}posts WHERE ID=? LIMIT 1`).bind(id).first();
 }
+__name(getPost, "getPost");
 async function getPosts(cp, args = {}) {
   const prefix = cp.db_prefix || "cp_";
   const postType = args.post_type || "post";
@@ -857,6 +954,7 @@ async function getPosts(cp, args = {}) {
   const rows = await cp.db.prepare(sql).bind(...params, limit, offset).all();
   return rows.results || [];
 }
+__name(getPosts, "getPosts");
 async function insertPost(cp, data) {
   const prefix = cp.db_prefix || "cp_";
   const now = (/* @__PURE__ */ new Date()).toISOString().replace("T", " ").slice(0, 19);
@@ -879,10 +977,12 @@ async function insertPost(cp, data) {
   `).bind(author, date, date, content, title, excerpt, status, type, slug, parent, order, now, now).run();
   return result.meta?.last_row_id;
 }
+__name(insertPost, "insertPost");
 async function pingsOpen(cp, postId) {
   const post = await getPost(cp, postId);
   return post && post.ping_status === "open";
 }
+__name(pingsOpen, "pingsOpen");
 
 // cp-includes/query.js
 init_option();
@@ -1060,6 +1160,7 @@ async function cpQuery(request, cp) {
   }
   q.is_404 = true;
 }
+__name(cpQuery, "cpQuery");
 async function loadArchivePosts(cp, q, args, postsPerPage, paged, prefix) {
   const offset = (paged - 1) * postsPerPage;
   const postType = args.post_type || "post";
@@ -1086,6 +1187,7 @@ async function loadArchivePosts(cp, q, args, postsPerPage, paged, prefix) {
   q.max_num_pages = Math.ceil(q.found_posts / postsPerPage) || 1;
   q.posts = rows.results || [];
 }
+__name(loadArchivePosts, "loadArchivePosts");
 
 // cp-includes/template-loader.js
 init_option();
@@ -1132,6 +1234,7 @@ async function loadTemplate(requestOrCp, cpOrTemplateName, context = {}) {
     { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }
+__name(loadTemplate, "loadTemplate");
 async function renderApiResponse(request, cp) {
   const url = new URL(request.url);
   const reqPath = url.searchParams.get("path") || "/";
@@ -1153,54 +1256,73 @@ async function renderApiResponse(request, cp) {
   }
   const templateName = resolveTemplateFromPath(reqPath);
   const result = await loadTemplate(cp, templateName, { post, path: reqPath });
-  if (result instanceof Response) return result;
+  if (result instanceof Response)
+    return result;
   return new Response(String(result), {
     headers: { "Content-Type": "text/html; charset=utf-8" }
   });
 }
+__name(renderApiResponse, "renderApiResponse");
 function resolveTemplateName(request, cp) {
-  if (!request) return "index";
+  if (!request)
+    return "index";
   const url = new URL(request.url);
   const path = url.pathname;
   return resolveTemplateFromPath(path, cp);
 }
+__name(resolveTemplateName, "resolveTemplateName");
 function resolveTemplateFromPath(path, cp) {
-  if (path === "/" || path === "") return "index";
-  if (path.startsWith("/cp-admin")) return "index";
-  if (/^\/\d{4}\/\d{2}\//.test(path)) return "single";
+  if (path === "/" || path === "")
+    return "index";
+  if (path.startsWith("/cp-admin"))
+    return "index";
+  if (/^\/\d{4}\/\d{2}\//.test(path))
+    return "single";
   if (path.startsWith("/category/") || path.startsWith("/tag/") || path.startsWith("/author/")) {
     return "archive";
   }
-  if (path.startsWith("/search") || path.includes("?s=")) return "search";
-  if (path.endsWith("/feed") || path.endsWith("/feed/rss")) return "feed";
+  if (path.startsWith("/search") || path.includes("?s="))
+    return "search";
+  if (path.endsWith("/feed") || path.endsWith("/feed/rss"))
+    return "feed";
   if (/^\/[a-z0-9\-_]+\/?$/.test(path)) {
     return cp?.query?.is_page ? "page" : "page";
   }
   return "index";
 }
+__name(resolveTemplateFromPath, "resolveTemplateFromPath");
 function buildHierarchy(templateName, context) {
   const base = (templateName || "index").replace(/\.html$/, "");
   const list = [];
   list.push(`${base}.html`);
-  if (base === "single") list.push("singular.html");
-  if (base === "page") list.push("singular.html");
-  if (base.startsWith("archive")) list.push("archive.html");
-  if (context.taxonomy) list.push(`taxonomy-${context.taxonomy}.html`);
-  if (context.term) list.push("taxonomy.html");
-  if (base !== "index") list.push("index.html");
+  if (base === "single")
+    list.push("singular.html");
+  if (base === "page")
+    list.push("singular.html");
+  if (base.startsWith("archive"))
+    list.push("archive.html");
+  if (context.taxonomy)
+    list.push(`taxonomy-${context.taxonomy}.html`);
+  if (context.term)
+    list.push("taxonomy.html");
+  if (base !== "index")
+    list.push("index.html");
   return [...new Set(list)];
 }
+__name(buildHierarchy, "buildHierarchy");
 async function fetchTemplate(cp, filename) {
   const kvKey = KV_PREFIX + filename;
   try {
     const cached = await cp?.kv?.get(kvKey);
-    if (cached !== null && cached !== void 0) return cached;
+    if (cached !== null && cached !== void 0)
+      return cached;
   } catch (_) {
   }
   const githubRepo = cp?.config?.GITHUB_REPO || await getOption(cp, "cp_github_repo", "");
   const githubToken = cp?.config?.GITHUB_TOKEN || cp?.env?.CP_GITHUB_TOKEN || "";
   const activeTheme = await getOption(cp, "template", "");
-  if (!githubRepo) return null;
+  if (!githubRepo)
+    return null;
   const themePath = activeTheme ? `themes/${activeTheme}/${filename}` : `templates/${filename}`;
   const apiUrl = `https://api.github.com/repos/${githubRepo}/contents/${themePath}`;
   try {
@@ -1208,9 +1330,11 @@ async function fetchTemplate(cp, filename) {
       "User-Agent": "CloudPress/2.0",
       "Accept": "application/vnd.github.v3.raw"
     };
-    if (githubToken) headers["Authorization"] = `Bearer ${githubToken}`;
+    if (githubToken)
+      headers["Authorization"] = `Bearer ${githubToken}`;
     const res = await fetch(apiUrl, { headers });
-    if (!res.ok) return null;
+    if (!res.ok)
+      return null;
     const content = await res.text();
     if (cp?.kv) {
       cp.kv.put(kvKey, content, { expirationTtl: TEMPLATE_KV_TTL }).catch(() => {
@@ -1221,20 +1345,24 @@ async function fetchTemplate(cp, filename) {
     return null;
   }
 }
+__name(fetchTemplate, "fetchTemplate");
 async function renderTemplateContent(template, context) {
   return interpolate(template, context);
 }
+__name(renderTemplateContent, "renderTemplateContent");
 function interpolate(template, context) {
   return template.replace(/\{\{(\s*[\w.]+\s*)\}\}/g, (_, key) => {
     const parts = key.trim().split(".");
     let val = context;
     for (const p of parts) {
-      if (val == null) return "";
+      if (val == null)
+        return "";
       val = val[p];
     }
     return val != null ? String(val) : "";
   });
 }
+__name(interpolate, "interpolate");
 function wrapInFullPage(content, cp, templateName) {
   const siteName = cp?.config?.SITE_NAME || "CloudPress";
   const siteUrl = cp?.config?.SITE_URL || "";
@@ -1294,6 +1422,7 @@ function wrapInFullPage(content, cp, templateName) {
 </body>
 </html>`;
 }
+__name(wrapInFullPage, "wrapInFullPage");
 function defaultTemplate(templateName, context) {
   const cp = context.cp;
   const post = context.post;
@@ -1313,6 +1442,7 @@ function defaultTemplate(templateName, context) {
     templateName
   );
 }
+__name(defaultTemplate, "defaultTemplate");
 
 // cp-blog-header.js
 async function handleRequest(request, env, ctx, options = {}) {
@@ -1348,6 +1478,7 @@ async function handleRequest(request, env, ctx, options = {}) {
     return errorPage("\uB80C\uB354\uB9C1 \uC624\uB958", e?.message || "\uD15C\uD50C\uB9BF \uB85C\uB4DC \uC2E4\uD328");
   }
 }
+__name(handleRequest, "handleRequest");
 function errorPage(title, detail) {
   return new Response(
     `<!DOCTYPE html>
@@ -1368,9 +1499,11 @@ function errorPage(title, detail) {
     { status: 500, headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }
+__name(errorPage, "errorPage");
 function escHtml2(s) {
   return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+__name(escHtml2, "escHtml");
 
 // cp-activate.js
 init_cp_load();
@@ -1380,23 +1513,29 @@ init_formatting();
 function sanitizeTextField(str) {
   return String(str || "").replace(/<[^>]+>/g, "").replace(/[\r\n\t]+/g, " ").trim();
 }
+__name(sanitizeTextField, "sanitizeTextField");
 function sanitizeEmail(str) {
   const s = String(str || "").trim().toLowerCase();
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s) ? s : "";
 }
+__name(sanitizeEmail, "sanitizeEmail");
 function sanitizeUrl(str, allowedSchemes = ["http", "https", "mailto"]) {
   const s = String(str || "").trim();
-  if (!s) return "";
+  if (!s)
+    return "";
   try {
     const u = new URL(s);
     const scheme = u.protocol.replace(":", "");
-    if (!allowedSchemes.includes(scheme)) return "";
+    if (!allowedSchemes.includes(scheme))
+      return "";
     return u.href;
   } catch (_) {
-    if (s.startsWith("/")) return s;
+    if (s.startsWith("/"))
+      return s;
     return "";
   }
 }
+__name(sanitizeUrl, "sanitizeUrl");
 
 // cp-includes/ms-functions.js
 init_crypto();
@@ -1409,19 +1548,23 @@ async function cpmuValidateUserSignup(cp, userLogin, userEmail) {
     errors.push("Username may only contain lowercase letters, numbers, hyphens, underscores, and periods.");
   } else {
     const existing = await userExistsByLogin(cp, userLogin);
-    if (existing) errors.push("That username is already registered.");
+    if (existing)
+      errors.push("That username is already registered.");
     const signup = await signupExistsByLogin(cp, userLogin);
-    if (signup) errors.push("That username is already pending activation.");
+    if (signup)
+      errors.push("That username is already pending activation.");
   }
   const cleanEmail = sanitizeEmail(userEmail);
   if (!cleanEmail) {
     errors.push("Invalid email address.");
   } else {
     const existing = await userExistsByEmail(cp, cleanEmail);
-    if (existing) errors.push("That email address is already registered.");
+    if (existing)
+      errors.push("That email address is already registered.");
   }
   return { user_name: userLogin, user_email: cleanEmail || userEmail, errors };
 }
+__name(cpmuValidateUserSignup, "cpmuValidateUserSignup");
 async function cpmuValidateBlogSignup(cp, blogname, blogTitle, user = null) {
   const errors = [];
   const reserved = ["www", "web", "root", "admin", "main", "invite", "blogs", "cp-admin", "cp-login"];
@@ -1433,13 +1576,15 @@ async function cpmuValidateBlogSignup(cp, blogname, blogTitle, user = null) {
     errors.push("That site name is not allowed.");
   } else {
     const existing = await blogExistsBySlug(cp, blogname);
-    if (existing) errors.push("That site name is already taken.");
+    if (existing)
+      errors.push("That site name is already taken.");
   }
   if (!blogTitle || blogTitle.trim().length < 1) {
     errors.push("Please provide a site title.");
   }
   return { blogname, blog_title: blogTitle, errors };
 }
+__name(cpmuValidateBlogSignup, "cpmuValidateBlogSignup");
 async function cpmuRegisterUser(cp, userLogin, userEmail, meta = {}) {
   const prefix = cp.db_prefix || "cp_";
   const key = await generateActivationKey(userLogin);
@@ -1452,6 +1597,7 @@ async function cpmuRegisterUser(cp, userLogin, userEmail, meta = {}) {
   `).bind(userLogin, userEmail, now, key, metaJson).run();
   return { activation_key: key };
 }
+__name(cpmuRegisterUser, "cpmuRegisterUser");
 async function cpmuRegisterBlog(cp, domain, path, title, userId, meta = {}) {
   const prefix = cp.db_prefix || "cp_";
   const key = await generateActivationKey(`${domain}${path}`);
@@ -1464,12 +1610,14 @@ async function cpmuRegisterBlog(cp, domain, path, title, userId, meta = {}) {
   `).bind(domain, path, title, now, key, metaJson).run();
   return { activation_key: key };
 }
+__name(cpmuRegisterBlog, "cpmuRegisterBlog");
 async function cpmuActivateSignup(cp, key) {
   const prefix = cp.db_prefix || "cp_";
   const signup = await cp.db.prepare(`
     SELECT * FROM ${prefix}signups WHERE activation_key=? AND active=0 LIMIT 1
   `).bind(key).first();
-  if (!signup) return { error: "Invalid or already used activation key." };
+  if (!signup)
+    return { error: "Invalid or already used activation key." };
   const now = (/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace("T", " ");
   const meta = JSON.parse(signup.meta || "{}");
   let password = meta.password || generateRandomPassword();
@@ -1503,31 +1651,38 @@ async function cpmuActivateSignup(cp, key) {
   `).bind(now, key).run();
   return { user_id: userId, blog_id: blogId, password };
 }
+__name(cpmuActivateSignup, "cpmuActivateSignup");
 async function userExistsByLogin(cp, login) {
   const prefix = cp.db_prefix || "cp_";
   return cp.db.prepare(`SELECT ID FROM ${prefix}users WHERE user_login=? LIMIT 1`).bind(login).first();
 }
+__name(userExistsByLogin, "userExistsByLogin");
 async function userExistsByEmail(cp, email) {
   const prefix = cp.db_prefix || "cp_";
   return cp.db.prepare(`SELECT ID FROM ${prefix}users WHERE user_email=? LIMIT 1`).bind(email).first();
 }
+__name(userExistsByEmail, "userExistsByEmail");
 async function signupExistsByLogin(cp, login) {
   const prefix = cp.db_prefix || "cp_";
   return cp.db.prepare(`SELECT signup_id FROM ${prefix}signups WHERE user_login=? AND active=0 LIMIT 1`).bind(login).first();
 }
+__name(signupExistsByLogin, "signupExistsByLogin");
 async function blogExistsBySlug(cp, slug) {
   const prefix = cp.db_prefix || "cp_";
   return cp.db.prepare(`SELECT blog_id FROM ${prefix}blogs WHERE domain LIKE ? OR path=? LIMIT 1`).bind(`${slug}.%`, `/${slug}/`).first();
 }
+__name(blogExistsBySlug, "blogExistsBySlug");
 async function generateActivationKey(seed) {
   const data = new TextEncoder().encode(seed + Date.now() + Math.random());
   const hash = await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
 }
+__name(generateActivationKey, "generateActivationKey");
 function generateRandomPassword(length = 12) {
   const chars = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$";
   return Array.from({ length }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
 }
+__name(generateRandomPassword, "generateRandomPassword");
 
 // cp-includes/functions.js
 init_option();
@@ -1539,7 +1694,8 @@ async function getPermalink(cp, post) {
   const siteUrl = await getOption(cp, "siteurl", cp.config?.SITE_URL || cp.url.origin);
   const permalinks = await getOption(cp, "permalink_structure", "/%year%/%monthnum%/%postname%/");
   const postObj = typeof post === "object" ? post : await fetchPost(cp, post);
-  if (!postObj) return siteUrl;
+  if (!postObj)
+    return siteUrl;
   if (postObj.post_type === "page") {
     return `${siteUrl.replace(/\/$/, "")}/${postObj.post_name}/`;
   }
@@ -1550,6 +1706,7 @@ async function getPermalink(cp, post) {
   const slug = (permalinks || "/%postname%/").replace("%year%", year).replace("%monthnum%", month).replace("%day%", day).replace("%postname%", postObj.post_name || String(postObj.ID)).replace("%post_id%", String(postObj.ID)).replace("%author%", postObj.post_author || "1");
   return `${siteUrl.replace(/\/$/, "")}${slug}`;
 }
+__name(getPermalink, "getPermalink");
 async function getCommentLink(cp, comment) {
   const prefix = cp.db_prefix || "cp_";
   let commentObj = comment;
@@ -1558,18 +1715,22 @@ async function getCommentLink(cp, comment) {
       `SELECT * FROM ${prefix}comments WHERE comment_ID=? LIMIT 1`
     ).bind(comment).first();
   }
-  if (!commentObj) return "";
+  if (!commentObj)
+    return "";
   const postUrl = await getPermalink(cp, commentObj.comment_post_ID);
   return `${postUrl}#comment-${commentObj.comment_ID}`;
 }
+__name(getCommentLink, "getCommentLink");
 async function getRegistrationUrl(cp) {
   const siteUrl = await getOption(cp, "siteurl", cp.config?.SITE_URL || cp.url.origin);
   return `${siteUrl.replace(/\/$/, "")}/cp-signup`;
 }
+__name(getRegistrationUrl, "getRegistrationUrl");
 async function fetchPost(cp, postId) {
   const prefix = cp.db_prefix || "cp_";
   return cp.db.prepare(`SELECT * FROM ${prefix}posts WHERE ID=? LIMIT 1`).bind(postId).first();
 }
+__name(fetchPost, "fetchPost");
 
 // cp-includes/functions.js
 function jsonResponse(data, status = 200) {
@@ -1578,24 +1739,30 @@ function jsonResponse(data, status = 200) {
     headers: { "Content-Type": "application/json; charset=utf-8" }
   });
 }
+__name(jsonResponse, "jsonResponse");
 function redirect(url, status = 302) {
   return new Response(null, { status, headers: { Location: url } });
 }
+__name(redirect, "redirect");
 function isMultisite() {
   return false;
 }
+__name(isMultisite, "isMultisite");
 function cpSafeRedirect(url, status = 302) {
   return redirect(url, status);
 }
+__name(cpSafeRedirect, "cpSafeRedirect");
 function cpRedirect(url, status = 302) {
   return redirect(url, status);
 }
+__name(cpRedirect, "cpRedirect");
 
 // cp-activate.js
 init_formatting();
 async function handleActivate(request, env, ctx) {
   const cp = await cpLoad(request, env, ctx, { CP_INSTALLING: true });
-  if (cp.__cpError) return cp.response;
+  if (cp.__cpError)
+    return cp.response;
   if (!isMultisite(cp)) {
     return cpRedirect(await getRegistrationUrl(cp));
   }
@@ -1670,6 +1837,7 @@ async function handleActivate(request, env, ctx) {
   }
   return response;
 }
+__name(handleActivate, "handleActivate");
 async function renderActivatePage(cp, key, result, url) {
   const siteName = cp.config.SITE_NAME || "CloudPress";
   let bodyContent = "";
@@ -1731,6 +1899,7 @@ async function renderActivatePage(cp, key, result, url) {
 </body>
 </html>`;
 }
+__name(renderActivatePage, "renderActivatePage");
 function cpDie(cp, message, title = "Error", status = 500) {
   const html = `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><title>${escHtml(title)}</title></head>
@@ -1740,6 +1909,7 @@ function cpDie(cp, message, title = "Error", status = 500) {
     headers: { "Content-Type": "text/html; charset=utf-8" }
   });
 }
+__name(cpDie, "cpDie");
 
 // cp-signup.js
 init_cp_load();
@@ -1777,6 +1947,7 @@ async function cpMail(cp, to, subject, message, headers = {}, attachments = []) 
     return false;
   }
 }
+__name(cpMail, "cpMail");
 async function sendActivationEmail(cp, email, activationKey) {
   const siteName = await getOption(cp, "blogname", cp.config?.SITE_NAME || "CloudPress");
   const siteUrl = await getOption(cp, "siteurl", cp.config?.SITE_URL || cp.url?.origin || "");
@@ -1788,6 +1959,7 @@ async function sendActivationEmail(cp, email, activationKey) {
     `<p>Thank you for registering at <strong>${siteName}</strong>.</p><p>Please click the link below to activate your account:</p><p><a href="${activateUrl}">${activateUrl}</a></p><p>If you did not register, you can ignore this email.</p>`
   );
 }
+__name(sendActivationEmail, "sendActivationEmail");
 async function sendViaMailChannels(cp, payload) {
   const body = {
     personalizations: [
@@ -1808,11 +1980,13 @@ async function sendViaMailChannels(cp, payload) {
   });
   return res.status === 202 || res.status === 200;
 }
+__name(sendViaMailChannels, "sendViaMailChannels");
 
 // cp-signup.js
 async function handleSignup(request, env, ctx) {
   const cp = await cpLoad(request, env, ctx);
-  if (cp.__cpError) return cp.response;
+  if (cp.__cpError)
+    return cp.response;
   if (!isMultisite(cp)) {
     return cpRedirect("/");
   }
@@ -1880,6 +2054,7 @@ async function handleSignup(request, env, ctx) {
     }
   });
 }
+__name(handleSignup, "handleSignup");
 function renderLayout(cp, title, content) {
   const siteName = cp.config.SITE_NAME || "CloudPress";
   return `<!DOCTYPE html>
@@ -1900,6 +2075,7 @@ function renderLayout(cp, title, content) {
 </body>
 </html>`;
 }
+__name(renderLayout, "renderLayout");
 function renderUserForm(cp, errors, values) {
   const errorHtml = Object.values(errors).length ? `<ul class="error-list">${Object.values(errors).map((e) => `<li>${escHtml(e)}</li>`).join("")}</ul>` : "";
   const content = `
@@ -1916,6 +2092,7 @@ function renderUserForm(cp, errors, values) {
     </form>`;
   return renderLayout(cp, "Sign Up", content);
 }
+__name(renderUserForm, "renderUserForm");
 function renderBlogForm(cp, errors, values) {
   const errorHtml = Object.values(errors).length ? `<ul class="error-list">${Object.values(errors).map((e) => `<li>${escHtml(e)}</li>`).join("")}</ul>` : "";
   const content = `
@@ -1934,6 +2111,7 @@ function renderBlogForm(cp, errors, values) {
     </form>`;
   return renderLayout(cp, "Create Site", content);
 }
+__name(renderBlogForm, "renderBlogForm");
 function renderSignupComplete(cp, email) {
   const content = `
     <div class="success">
@@ -1943,6 +2121,7 @@ function renderSignupComplete(cp, email) {
     </div>`;
   return renderLayout(cp, "Registration Complete", content);
 }
+__name(renderSignupComplete, "renderSignupComplete");
 
 // cp-comments-post.js
 init_cp_load();
@@ -1981,11 +2160,13 @@ async function insertComment(cp, data) {
   }
   return result.meta?.last_row_id || 0;
 }
+__name(insertComment, "insertComment");
 async function updateCommentCount(cp, postId) {
   const prefix = cp.db_prefix || "cp_";
   const row = await cp.db.prepare(`SELECT COUNT(*) as n FROM ${prefix}comments WHERE comment_post_ID=? AND comment_approved='1'`).bind(postId).first();
   await cp.db.prepare(`UPDATE ${prefix}posts SET comment_count=? WHERE ID=?`).bind(row?.n ?? 0, postId).run();
 }
+__name(updateCommentCount, "updateCommentCount");
 async function handleCommentSubmission(request, cp) {
   const data = await request.formData().catch(() => new FormData());
   const commentPostId = parseInt(data.get("comment_post_ID") || "0");
@@ -1993,7 +2174,8 @@ async function handleCommentSubmission(request, cp) {
   const email = String(data.get("email") || "").trim();
   const url = String(data.get("url") || "").trim();
   const comment = String(data.get("comment") || "").trim();
-  if (!comment) return { error: "Comment is empty." };
+  if (!comment)
+    return { error: "Comment is empty." };
   const id = await insertComment(cp, {
     comment_post_ID: commentPostId,
     comment_author: author,
@@ -2004,9 +2186,11 @@ async function handleCommentSubmission(request, cp) {
   });
   return { id };
 }
+__name(handleCommentSubmission, "handleCommentSubmission");
 async function newComment(cp, data) {
   return insertComment(cp, data);
 }
+__name(newComment, "newComment");
 
 // cp-comments-post.js
 init_user();
@@ -2023,7 +2207,8 @@ async function handleCommentsPost(request, env, ctx) {
     });
   }
   const cp = await cpLoad(request, env, ctx);
-  if (cp.__cpError) return cp.response;
+  if (cp.__cpError)
+    return cp.response;
   let postData = {};
   try {
     const formData = await request.formData();
@@ -2057,6 +2242,7 @@ async function handleCommentsPost(request, env, ctx) {
   location = cp.hooks.applyFilters("comment_post_redirect", location, comment);
   return cpSafeRedirect(location, responseHeaders);
 }
+__name(handleCommentsPost, "handleCommentsPost");
 function cpDie2(cp, message, title = "Error", status = 500, backLink = false) {
   const back = backLink ? '<p><a href="javascript:history.back()">&larr; Go back</a></p>' : "";
   const html = `<!DOCTYPE html>
@@ -2080,6 +2266,7 @@ function cpDie2(cp, message, title = "Error", status = 500, backLink = false) {
     headers: { "Content-Type": "text/html; charset=utf-8" }
   });
 }
+__name(cpDie2, "cpDie");
 
 // cp-router.js
 init_cp_cron();
@@ -2089,7 +2276,8 @@ init_cp_load();
 init_formatting();
 async function handleTrackback(request, env, ctx, routeParams = {}) {
   const cp = await cpLoad(request, env, ctx);
-  if (cp.__cpError) return cp.response;
+  if (cp.__cpError)
+    return cp.response;
   cp.currentUser = null;
   const url = new URL(request.url);
   const method = request.method.toUpperCase();
@@ -2122,7 +2310,8 @@ async function handleTrackback(request, env, ctx, routeParams = {}) {
   if (charset) {
     charset = charset.replace(/[, ]/g, "").toUpperCase().trim();
     const allowedCharsets = ["UTF-8", "ASCII", "ISO-8859-1", "EUC-JP", "SJIS"];
-    if (!allowedCharsets.includes(charset)) charset = "";
+    if (!allowedCharsets.includes(charset))
+      charset = "";
   }
   if (charset.includes("UTF-7")) {
     return new Response("", { status: 400 });
@@ -2174,6 +2363,7 @@ ${excerpt}`,
   }
   return trackbackResponse(true, "Missing trackback URL or title.");
 }
+__name(handleTrackback, "handleTrackback");
 function trackbackResponse(error, errorMessage = "") {
   let xml = '<?xml version="1.0" encoding="utf-8"?>\n<response>\n';
   if (error) {
@@ -2189,9 +2379,11 @@ function trackbackResponse(error, errorMessage = "") {
     headers: { "Content-Type": "text/xml; charset=utf-8" }
   });
 }
+__name(trackbackResponse, "trackbackResponse");
 function escXml(str) {
   return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
+__name(escXml, "escXml");
 
 // cp-links-opml.js
 init_cp_load();
@@ -2229,6 +2421,7 @@ async function getTerms(cp, args = {}) {
   `).bind(...params, limit).all();
   return rows.results || [];
 }
+__name(getTerms, "getTerms");
 
 // cp-includes/bookmark.js
 async function getBookmarks(cp, args = {}) {
@@ -2261,11 +2454,13 @@ async function getBookmarks(cp, args = {}) {
   }
   if (include) {
     const ids = include.split(",").map((s) => parseInt(s.trim())).filter(Boolean);
-    if (ids.length) where.push(`l.link_id IN (${ids.join(",")})`);
+    if (ids.length)
+      where.push(`l.link_id IN (${ids.join(",")})`);
   }
   if (exclude) {
     const ids = exclude.split(",").map((s) => parseInt(s.trim())).filter(Boolean);
-    if (ids.length) where.push(`l.link_id NOT IN (${ids.join(",")})`);
+    if (ids.length)
+      where.push(`l.link_id NOT IN (${ids.join(",")})`);
   }
   if (category) {
     where.push(`t.term_id=?`);
@@ -2280,7 +2475,8 @@ async function getBookmarks(cp, args = {}) {
     const q = `%${search}%`;
     params.push(q, q, q);
   }
-  if (where.length) sql += " WHERE " + where.join(" AND ");
+  if (where.length)
+    sql += " WHERE " + where.join(" AND ");
   sql += ` ORDER BY ${safeOrderby} ${safeOrder}`;
   if (limit > 0) {
     sql += " LIMIT ?";
@@ -2290,17 +2486,20 @@ async function getBookmarks(cp, args = {}) {
   const { results } = await stmt.all();
   return results || [];
 }
+__name(getBookmarks, "getBookmarks");
 
 // cp-links-opml.js
 init_option();
 async function handleLinksOpml(request, env, ctx) {
   const cp = await cpLoad(request, env, ctx);
-  if (cp.__cpError) return cp.response;
+  if (cp.__cpError)
+    return cp.response;
   const url = new URL(request.url);
   let linkCat = url.searchParams.get("link_cat") || "";
   if (linkCat && !["all", "0"].includes(linkCat)) {
     linkCat = parseInt(linkCat, 10);
-    if (isNaN(linkCat) || linkCat <= 0) linkCat = "";
+    if (isNaN(linkCat) || linkCat <= 0)
+      linkCat = "";
   }
   const blogCharset = await getOption(cp, "blogcharset") || "UTF-8";
   const blogName = await getOption(cp, "blogname") || (cp.config.SITE_NAME || "CloudPress");
@@ -2337,7 +2536,8 @@ async function handleLinksOpml(request, env, ctx) {
       xml += `	<outline text="${escXml2(title)}" type="link" `;
       xml += `xmlUrl="${escXml2(bookmark.link_rss || "")}" `;
       xml += `htmlUrl="${escXml2(bookmark.link_url || "")}" `;
-      if (updated) xml += `updated="${escXml2(updated)}" `;
+      if (updated)
+        xml += `updated="${escXml2(updated)}" `;
       xml += `/>
 `;
     }
@@ -2354,9 +2554,11 @@ async function handleLinksOpml(request, env, ctx) {
     }
   });
 }
+__name(handleLinksOpml, "handleLinksOpml");
 function escXml2(str) {
   return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
+__name(escXml2, "escXml");
 
 // cp-mail.js
 init_cp_load();
@@ -2376,11 +2578,13 @@ async function setTransient(cp, key, value, expiration = 3600) {
     return false;
   }
 }
+__name(setTransient, "setTransient");
 async function getTransient(cp, key) {
   const kvKey = KEY_PREFIX + key;
   try {
     const raw = await cp.kv.get(kvKey);
-    if (raw === null) return false;
+    if (raw === null)
+      return false;
     try {
       return JSON.parse(raw);
     } catch (_) {
@@ -2390,13 +2594,15 @@ async function getTransient(cp, key) {
     return false;
   }
 }
+__name(getTransient, "getTransient");
 
 // cp-mail.js
 init_formatting();
 var MAIL_INTERVAL = 5 * 60;
 async function handleMail(request, env, ctx) {
   const cp = await cpLoad(request, env, ctx);
-  if (cp.__cpError) return cp.response;
+  if (cp.__cpError)
+    return cp.response;
   const enablePostByEmail = cp.hooks.applyFilters("enable_post_by_email_configuration", true);
   if (!enablePostByEmail) {
     return cpDie3(cp, "This action has been disabled by the administrator.", 403);
@@ -2434,6 +2640,7 @@ async function handleMail(request, env, ctx) {
     }
   );
 }
+__name(handleMail, "handleMail");
 async function processMailbox(cp, output) {
   const pendingEmails = await cp.kv.list({ prefix: "cp:pending_email:" });
   if (!pendingEmails.keys || pendingEmails.keys.length === 0) {
@@ -2447,7 +2654,8 @@ async function processMailbox(cp, output) {
     let emailData;
     try {
       emailData = await cp.kv.get(kvKey, { type: "json" });
-      if (!emailData) continue;
+      if (!emailData)
+        continue;
     } catch (_) {
       continue;
     }
@@ -2488,11 +2696,15 @@ async function processMailbox(cp, output) {
   }
   return { success: true };
 }
+__name(processMailbox, "processMailbox");
 function formatDuration(seconds) {
-  if (seconds < 60) return `${seconds} seconds`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} minutes`;
+  if (seconds < 60)
+    return `${seconds} seconds`;
+  if (seconds < 3600)
+    return `${Math.floor(seconds / 60)} minutes`;
   return `${Math.floor(seconds / 3600)} hours`;
 }
+__name(formatDuration, "formatDuration");
 function cpDie3(cp, message, status = 500) {
   const html = `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><title>CloudPress Mail</title></head>
@@ -2502,6 +2714,7 @@ function cpDie3(cp, message, status = 500) {
     headers: { "Content-Type": "text/html; charset=utf-8" }
   });
 }
+__name(cpDie3, "cpDie");
 
 // cp-admin/index.js
 init_cp_load();
@@ -2525,25 +2738,32 @@ async function requireAdmin(cp) {
   cp.currentUser = user;
   return null;
 }
+__name(requireAdmin, "requireAdmin");
 async function getAdminUser(cp) {
   const token = extractToken(cp.request);
-  if (!token) return null;
+  if (!token)
+    return null;
   try {
     const payload = await verifyJwt(token, cp.config.AUTH_KEY);
-    if (!payload || !payload.sub) return null;
+    if (!payload || !payload.sub)
+      return null;
     const revoked = await cp.kv.get(`cp:token_revoked:${payload.jti || payload.sub}`);
-    if (revoked) return null;
+    if (revoked)
+      return null;
     const user = await getUserById(cp, payload.sub);
     return user || null;
   } catch (_) {
     return null;
   }
 }
+__name(getAdminUser, "getAdminUser");
 function userHasRole(user, roles) {
-  if (!user) return false;
+  if (!user)
+    return false;
   const userRoles = user.roles || [];
   return roles.some((r) => userRoles.includes(r));
 }
+__name(userHasRole, "userHasRole");
 
 // cp-admin/admin-shell.js
 init_option();
@@ -2639,6 +2859,7 @@ async function renderAdminShell(cp, content, opts = {}) {
 </body>
 </html>`;
 }
+__name(renderAdminShell, "renderAdminShell");
 function buildNavItems(cp, currentPath) {
   return [
     {
@@ -2747,6 +2968,7 @@ function buildNavItems(cp, currentPath) {
     }
   ];
 }
+__name(buildNavItems, "buildNavItems");
 function renderNav(items, currentPath) {
   return `<ul class="cp-nav-list">
     ${items.map((item) => {
@@ -2770,6 +2992,7 @@ function renderNav(items, currentPath) {
   }).join("")}
   </ul>`;
 }
+__name(renderNav, "renderNav");
 function getAdminJS() {
   return `
 // Close dropdowns on outside click
@@ -2806,14 +3029,17 @@ document.querySelectorAll('[data-confirm]').forEach(el => {
 });
 `;
 }
+__name(getAdminJS, "getAdminJS");
 
 // cp-admin/installer.js
 init_cp_config();
 init_crypto();
 var SCHEMA_VERSION = 1;
 async function handleInstaller(request, env, ctx) {
-  if (!env.CP_DB) return bindingError("CP_DB", "D1 database");
-  if (!env.CP_KV) return bindingError("CP_KV", "KV namespace");
+  if (!env.CP_DB)
+    return bindingError("CP_DB", "D1 database");
+  if (!env.CP_KV)
+    return bindingError("CP_KV", "KV namespace");
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, "");
   const method = request.method.toUpperCase();
@@ -2831,6 +3057,7 @@ async function handleInstaller(request, env, ctx) {
   }
   return new Response("Not found", { status: 404 });
 }
+__name(handleInstaller, "handleInstaller");
 async function handleSetupConfig(request, env, method, isInstalled) {
   if (isInstalled) {
     return htmlResponse(renderAlreadyInstalled(), 200);
@@ -2846,8 +3073,10 @@ async function handleSetupConfig(request, env, method, isInstalled) {
       db_prefix: (fd.get("db_prefix") || "cp_").trim(),
       github_repo: (fd.get("github_repo") || "").trim()
     };
-    if (!values.site_name) errors.site_name = "Site name is required.";
-    if (!values.admin_email || !values.admin_email.includes("@")) errors.admin_email = "Valid email required.";
+    if (!values.site_name)
+      errors.site_name = "Site name is required.";
+    if (!values.admin_email || !values.admin_email.includes("@"))
+      errors.admin_email = "Valid email required.";
     if (!/^[a-zA-Z][a-zA-Z0-9_]*_$/.test(values.db_prefix)) {
       errors.db_prefix = "Prefix must start with a letter, contain only letters/numbers/underscores, and end with _.";
     }
@@ -2858,6 +3087,7 @@ async function handleSetupConfig(request, env, method, isInstalled) {
   }
   return htmlResponse(renderSetupForm(errors, values), 200);
 }
+__name(handleSetupConfig, "handleSetupConfig");
 async function handleInstall(request, env, method, isInstalled, url) {
   if (isInstalled && !url.searchParams.has("force")) {
     return htmlResponse(renderAlreadyInstalled(), 200);
@@ -2897,6 +3127,7 @@ async function handleInstall(request, env, method, isInstalled, url) {
   }
   return htmlResponse(renderInstallForm(errors, values, step1), 200);
 }
+__name(handleInstall, "handleInstall");
 async function runInstall(env, step1, adminInfo) {
   const prefix = step1.db_prefix || "cp_";
   const siteUrl = step1.site_url || "";
@@ -2993,6 +3224,7 @@ async function runInstall(env, step1, adminInfo) {
     return { success: false, message: `Install failed: ${err.message}` };
   }
 }
+__name(runInstall, "runInstall");
 async function createSchema(db, prefix) {
   const tables = [
     `CREATE TABLE IF NOT EXISTS ${prefix}posts (
@@ -3137,6 +3369,7 @@ async function createSchema(db, prefix) {
     });
   }
 }
+__name(createSchema, "createSchema");
 function renderSetupForm(errors, values) {
   return layout("CloudPress Setup -- Step 1: Configuration", `
     <div class="install-card">
@@ -3191,6 +3424,7 @@ function renderSetupForm(errors, values) {
     </div>
   `);
 }
+__name(renderSetupForm, "renderSetupForm");
 function renderInstallForm(errors, values, step1) {
   return layout("CloudPress Setup -- Step 2: Create Admin User", `
     <div class="install-card">
@@ -3231,6 +3465,7 @@ function renderInstallForm(errors, values, step1) {
     </div>
   `);
 }
+__name(renderInstallForm, "renderInstallForm");
 function renderInstallSuccess(result) {
   return layout("CloudPress Installed!", `
     <div class="install-card success-card">
@@ -3254,6 +3489,7 @@ function renderInstallSuccess(result) {
     </div>
   `);
 }
+__name(renderInstallSuccess, "renderInstallSuccess");
 function renderAlreadyInstalled() {
   return layout("Already Installed", `
     <div class="install-card">
@@ -3266,11 +3502,14 @@ function renderAlreadyInstalled() {
     </div>
   `);
 }
+__name(renderAlreadyInstalled, "renderAlreadyInstalled");
 function renderErrors(errors) {
   const msgs = Object.values(errors);
-  if (!msgs.length) return "";
+  if (!msgs.length)
+    return "";
   return `<div class="notice-error"><ul>${msgs.map((m) => `<li>${esc(m)}</li>`).join("")}</ul></div>`;
 }
+__name(renderErrors, "renderErrors");
 function layout(title, content) {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -3290,18 +3529,22 @@ function layout(title, content) {
 </body>
 </html>`;
 }
+__name(layout, "layout");
 function htmlResponse(html, status = 200) {
   return new Response(html, { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
+__name(htmlResponse, "htmlResponse");
 function esc(str) {
   return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+__name(esc, "esc");
 function bindingError(binding, name) {
   return new Response(
     `<!DOCTYPE html><html><body><h1>CloudPress Install Error</h1><p>Cloudflare binding <strong>${binding}</strong> (${name}) is not configured. Please add it in the Cloudflare Workers dashboard before installing.</p></body></html>`,
     { status: 500, headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }
+__name(bindingError, "bindingError");
 
 // cp-admin/pages/dashboard.js
 init_option();
@@ -3436,21 +3679,27 @@ async function handleDashboard(request, cp) {
   const html = await renderAdminShell(cp, content, { title: "Dashboard" });
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
+__name(handleDashboard, "handleDashboard");
 function esc2(str) {
   return String(str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+__name(esc2, "esc");
 function formatDate(dateStr) {
-  if (!dateStr) return "";
+  if (!dateStr)
+    return "";
   try {
     return new Date(dateStr).toLocaleDateString();
   } catch (_) {
     return dateStr;
   }
 }
+__name(formatDate, "formatDate");
 function truncate2(str, n) {
-  if (!str) return "";
+  if (!str)
+    return "";
   return str.length > n ? str.slice(0, n) + "..." : str;
 }
+__name(truncate2, "truncate");
 
 // cp-admin/pages/posts.js
 async function handlePosts(request, cp, opts = {}) {
@@ -3604,20 +3853,25 @@ ${totalPages > 1 ? `
   const html = await renderAdminShell(cp, content, { title: typeLabel });
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
+__name(handlePosts, "handlePosts");
 function esc3(s) {
   return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+__name(esc3, "esc");
 function formatDate2(d) {
-  if (!d) return "";
+  if (!d)
+    return "";
   try {
     return new Date(d).toLocaleDateString();
   } catch (_) {
     return d;
   }
 }
+__name(formatDate2, "formatDate");
 function capitalize(s) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
+__name(capitalize, "capitalize");
 
 // cp-admin/pages/post-edit.js
 async function handlePostEdit(request, cp, opts = {}) {
@@ -3670,7 +3924,8 @@ async function handlePostEdit(request, cp, opts = {}) {
     }
   }
   const msg = url.searchParams.get("message");
-  if (msg === "1") notices.push({ type: "success", message: "Post published." });
+  if (msg === "1")
+    notices.push({ type: "success", message: "Post published." });
   let categories = [];
   if (postType === "post") {
     const cats = await cp.db.prepare(
@@ -3869,25 +4124,31 @@ document.getElementById('post_title').addEventListener('blur', function() {
   const html = await renderAdminShell(cp, content, { title: isNew ? `New ${typeLabel}` : `Edit ${typeLabel}`, notices });
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
+__name(handlePostEdit, "handlePostEdit");
 function esc4(s) {
   return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+__name(esc4, "esc");
 function formatDate3(d) {
-  if (!d) return "";
+  if (!d)
+    return "";
   try {
     return new Date(d).toLocaleString();
   } catch (_) {
     return d;
   }
 }
+__name(formatDate3, "formatDate");
 function slugify3(str) {
   return (str || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
+__name(slugify3, "slugify");
 
 // cp-admin/pages/pages.js
 function esc5(str) {
   return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+__name(esc5, "esc");
 async function handlePages(request, cp) {
   const prefix = cp.db_prefix || "cp_";
   const url = new URL(request.url);
@@ -3990,6 +4251,7 @@ async function handlePages(request, cp) {
     { headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }
+__name(handlePages, "handlePages");
 
 // cp-includes/media-handler.js
 init_cp_load();
@@ -4034,10 +4296,13 @@ async function handleMedia(request, env, ctx) {
   }
   return new Response("Not Found", { status: 404 });
 }
+__name(handleMedia, "handleMedia");
 async function handleUpload(cp, file, postId = 0) {
   const MAX_SIZE = 5 * 1024 * 1024;
-  if (!file || !file.name) return { error: "No file provided." };
-  if (file.size > MAX_SIZE) return { error: `File too large. Maximum size is ${MAX_SIZE / 1024 / 1024} MB.` };
+  if (!file || !file.name)
+    return { error: "No file provided." };
+  if (file.size > MAX_SIZE)
+    return { error: `File too large. Maximum size is ${MAX_SIZE / 1024 / 1024} MB.` };
   const allowed = getAllowedMimeTypes();
   const mime = file.type || guessMime(file.name);
   if (!Object.values(allowed).includes(mime) && !mime.startsWith("image/")) {
@@ -4081,6 +4346,7 @@ async function handleUpload(cp, file, postId = 0) {
     file_size: file.size
   };
 }
+__name(handleUpload, "handleUpload");
 async function getMediaItems(cp, args = {}) {
   const prefix = cp.db_prefix || "cp_";
   const limit = Math.min(parseInt(args.limit || 40), 200);
@@ -4111,10 +4377,12 @@ async function getMediaItems(cp, args = {}) {
     url: `${siteUrl}/uploads/${m.file_path}`
   }));
 }
+__name(getMediaItems, "getMediaItems");
 async function deleteMedia(cp, mediaId) {
   const prefix = cp.db_prefix || "cp_";
   const row = await cp.db.prepare(`SELECT file_path FROM ${prefix}media WHERE media_id=? LIMIT 1`).bind(mediaId).first();
-  if (!row) return false;
+  if (!row)
+    return false;
   try {
     await cp.kv.delete(`cp:media:${row.file_path}`);
   } catch (_) {
@@ -4122,6 +4390,7 @@ async function deleteMedia(cp, mediaId) {
   await cp.db.prepare(`DELETE FROM ${prefix}media WHERE media_id=?`).bind(mediaId).run();
   return true;
 }
+__name(deleteMedia, "deleteMedia");
 function getAllowedMimeTypes() {
   return {
     jpg: "image/jpeg",
@@ -4140,14 +4409,17 @@ function getAllowedMimeTypes() {
     zip: "application/zip"
   };
 }
+__name(getAllowedMimeTypes, "getAllowedMimeTypes");
 function guessMime(filename) {
   const ext = (filename.split(".").pop() || "").toLowerCase();
   const map = getAllowedMimeTypes();
   return map[ext] || "application/octet-stream";
 }
+__name(guessMime, "guessMime");
 function sanitizeFileName(name) {
   return name.replace(/[^a-zA-Z0-9._-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").toLowerCase();
 }
+__name(sanitizeFileName, "sanitizeFileName");
 function binaryToBase64(buffer) {
   const bytes = new Uint8Array(buffer);
   let binary = "";
@@ -4156,6 +4428,7 @@ function binaryToBase64(buffer) {
   }
   return btoa(binary);
 }
+__name(binaryToBase64, "binaryToBase64");
 function base64ToBinary(b64) {
   const binary = atob(b64);
   const bytes = new Uint8Array(binary.length);
@@ -4164,11 +4437,13 @@ function base64ToBinary(b64) {
   }
   return bytes.buffer;
 }
+__name(base64ToBinary, "base64ToBinary");
 
 // cp-admin/pages/media.js
 function esc6(str) {
   return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+__name(esc6, "esc");
 async function handleMediaPage(request, cp) {
   const method = request.method.toUpperCase();
   const url = new URL(request.url);
@@ -4252,6 +4527,7 @@ async function handleMediaPage(request, cp) {
     { headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }
+__name(handleMediaPage, "handleMediaPage");
 
 // cp-admin/pages/comments.js
 async function handleComments(request, cp) {
@@ -4268,7 +4544,8 @@ async function handleComments(request, cp) {
     const fd = await request.formData().catch(() => new FormData());
     const bulkAction = fd.get("action") || action;
     const ids = fd.getAll("delete_comments[]").map(Number).filter(Boolean);
-    if (cid && !ids.length) ids.push(cid);
+    if (cid && !ids.length)
+      ids.push(cid);
     if (ids.length) {
       if (bulkAction === "approve") {
         for (const id of ids)
@@ -4297,9 +4574,12 @@ async function handleComments(request, cp) {
   ]);
   const [total, approved, pending, spam] = counts.map((r) => r?.n ?? 0);
   let whereSql = "";
-  if (status === "approved") whereSql = `WHERE c.comment_approved='1'`;
-  else if (status === "pending") whereSql = `WHERE c.comment_approved='0'`;
-  else if (status === "spam") whereSql = `WHERE c.comment_approved='spam'`;
+  if (status === "approved")
+    whereSql = `WHERE c.comment_approved='1'`;
+  else if (status === "pending")
+    whereSql = `WHERE c.comment_approved='0'`;
+  else if (status === "spam")
+    whereSql = `WHERE c.comment_approved='spam'`;
   const offset = (page - 1) * perPage;
   const { results: comments } = await cp.db.prepare(`
     SELECT c.*, p.post_title
@@ -4395,12 +4675,15 @@ ${noticeHtml}
   const html = await renderAdminShell(cp, content, { title: "Comments" });
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
+__name(handleComments, "handleComments");
 function esc7(str) {
   return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+__name(esc7, "esc");
 function truncate3(str, n) {
   return str && str.length > n ? str.slice(0, n) + "..." : str || "";
 }
+__name(truncate3, "truncate");
 function formatDate4(d) {
   try {
     return new Date(d).toLocaleString();
@@ -4408,6 +4691,7 @@ function formatDate4(d) {
     return d || "";
   }
 }
+__name(formatDate4, "formatDate");
 
 // cp-admin/pages/themes.js
 init_theme_loader();
@@ -4415,6 +4699,7 @@ init_option();
 function esc8(str) {
   return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+__name(esc8, "esc");
 async function handleThemes(request, cp) {
   const method = request.method.toUpperCase();
   let notice = null;
@@ -4476,12 +4761,14 @@ async function handleThemes(request, cp) {
     { headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }
+__name(handleThemes, "handleThemes");
 
 // cp-admin/pages/plugins.js
 init_option();
 function esc9(str) {
   return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+__name(esc9, "esc");
 async function getPlugins(cp) {
   try {
     const raw = await cp.kv.get("cp:plugins:list", { type: "json" });
@@ -4490,6 +4777,7 @@ async function getPlugins(cp) {
     return [];
   }
 }
+__name(getPlugins, "getPlugins");
 async function getActivePlugins(cp) {
   try {
     const raw = await cp.kv.get("cp:plugins:active", { type: "json" });
@@ -4498,6 +4786,7 @@ async function getActivePlugins(cp) {
     return [];
   }
 }
+__name(getActivePlugins, "getActivePlugins");
 async function handlePlugins(request, cp) {
   const method = request.method.toUpperCase();
   let notice = null;
@@ -4597,12 +4886,14 @@ async function handlePlugins(request, cp) {
     { headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }
+__name(handlePlugins, "handlePlugins");
 
 // cp-admin/pages/users.js
 init_crypto();
 function esc10(str) {
   return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+__name(esc10, "esc");
 async function handleUsers(request, cp) {
   const prefix = cp.db_prefix || "cp_";
   const method = request.method.toUpperCase();
@@ -4674,6 +4965,7 @@ async function handleUsers(request, cp) {
       return "subscriber";
     }
   }
+  __name(parseRole, "parseRole");
   const tableRows = users.map((u) => {
     const userRole = parseRole(u.caps);
     const isSelf = u.ID === me;
@@ -4754,12 +5046,14 @@ async function handleUsers(request, cp) {
     { headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }
+__name(handleUsers, "handleUsers");
 
 // cp-admin/pages/user-edit.js
 init_crypto();
 function esc11(str) {
   return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+__name(esc11, "esc");
 async function handleUserEdit(request, cp) {
   const prefix = cp.db_prefix || "cp_";
   const url = new URL(request.url);
@@ -4814,7 +5108,8 @@ async function handleUserEdit(request, cp) {
      LEFT JOIN ${prefix}usermeta m ON m.user_id=u.ID AND m.meta_key='${prefix}capabilities'
      WHERE u.ID=? LIMIT 1`
   ).bind(userId).first();
-  if (!user) return new Response("User not found", { status: 404 });
+  if (!user)
+    return new Response("User not found", { status: 404 });
   function getRole(caps) {
     try {
       const obj = typeof caps === "string" ? JSON.parse(caps) : caps || {};
@@ -4823,6 +5118,7 @@ async function handleUserEdit(request, cp) {
       return "subscriber";
     }
   }
+  __name(getRole, "getRole");
   const currentRole = getRole(user.caps);
   const roles = ["subscriber", "contributor", "author", "editor", "administrator"];
   const content = `
@@ -4875,12 +5171,14 @@ async function handleUserEdit(request, cp) {
     { headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }
+__name(handleUserEdit, "handleUserEdit");
 
 // cp-admin/pages/profile.js
 init_crypto();
 function esc12(str) {
   return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+__name(esc12, "esc");
 async function handleProfile(request, cp) {
   const prefix = cp.db_prefix || "cp_";
   const method = request.method.toUpperCase();
@@ -5003,6 +5301,7 @@ async function handleProfile(request, cp) {
     { headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }
+__name(handleProfile, "handleProfile");
 
 // cp-admin/pages/options.js
 async function handleOptions(request, cp) {
@@ -5055,6 +5354,7 @@ async function handleOptions(request, cp) {
     { headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }
+__name(handleOptions, "handleOptions");
 
 // cp-admin/pages/options-general.js
 init_option();
@@ -5251,6 +5551,7 @@ async function handleOptionsGeneral(request, cp) {
   const html = await renderAdminShell(cp, content, { title: "General Settings", notices });
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
+__name(handleOptionsGeneral, "handleOptionsGeneral");
 function getTimezones() {
   return [
     "UTC",
@@ -5273,18 +5574,22 @@ function getTimezones() {
     "Pacific/Auckland"
   ];
 }
+__name(getTimezones, "getTimezones");
 function esc13(s) {
   return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+__name(esc13, "esc");
 function capitalize2(s) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
+__name(capitalize2, "capitalize");
 
 // cp-admin/pages/options-writing.js
 init_option();
 function esc14(str) {
   return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+__name(esc14, "esc");
 async function handleOptionsWriting(request, cp) {
   const method = request.method.toUpperCase();
   let notice = null;
@@ -5301,7 +5606,8 @@ async function handleOptionsWriting(request, cp) {
     const fd = await request.formData().catch(() => new FormData());
     for (const key of keys) {
       const val = fd.get(key);
-      if (val !== null) await updateOption(cp, key, val.trim());
+      if (val !== null)
+        await updateOption(cp, key, val.trim());
     }
     notice = { type: "success", message: "Settings saved." };
   }
@@ -5395,12 +5701,14 @@ async function handleOptionsWriting(request, cp) {
     { headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }
+__name(handleOptionsWriting, "handleOptionsWriting");
 
 // cp-admin/pages/options-reading.js
 init_option();
 function esc15(str) {
   return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+__name(esc15, "esc");
 async function handleOptionsReading(request, cp) {
   const method = request.method.toUpperCase();
   let notice = null;
@@ -5410,7 +5718,8 @@ async function handleOptionsReading(request, cp) {
     const fd = await request.formData().catch(() => new FormData());
     for (const key of keys) {
       const val = fd.get(key);
-      if (val !== null) await updateOption(cp, key, val.trim());
+      if (val !== null)
+        await updateOption(cp, key, val.trim());
     }
     await updateOption(cp, "blog_public", fd.get("blog_public") ? "1" : "0");
     await updateOption(cp, "rss_use_excerpt", fd.get("rss_use_excerpt") ? "1" : "0");
@@ -5428,9 +5737,9 @@ async function handleOptionsReading(request, cp) {
     pages = res.results || [];
   } catch (_) {
   }
-  const pageOpts = (selected) => pages.map(
+  const pageOpts = /* @__PURE__ */ __name((selected) => pages.map(
     (p) => `<option value="${esc15(p.ID)}"${String(selected) === String(p.ID) ? " selected" : ""}>${esc15(p.post_title)}</option>`
-  ).join("");
+  ).join(""), "pageOpts");
   const showOnFront = vals.show_on_front || "posts";
   const content = `
 <div class="cp-card" style="max-width:700px">
@@ -5523,12 +5832,14 @@ async function handleOptionsReading(request, cp) {
     { headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }
+__name(handleOptionsReading, "handleOptionsReading");
 
 // cp-admin/pages/options-discussion.js
 init_option();
 function esc16(str) {
   return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+__name(esc16, "esc");
 var KEYS_DISCUSSION = [
   "default_pingback_flag",
   "default_ping_status",
@@ -5579,7 +5890,8 @@ async function handleOptionsDiscussion(request, cp) {
         await updateOption(cp, key, fd.get(key) ? "1" : "0");
       } else {
         const val = fd.get(key);
-        if (val !== null) await updateOption(cp, key, val.trim());
+        if (val !== null)
+          await updateOption(cp, key, val.trim());
       }
     }
     notice = { type: "success", message: "Settings saved." };
@@ -5591,6 +5903,7 @@ async function handleOptionsDiscussion(request, cp) {
   function chk(key) {
     return v[key] === "1" ? "checked" : "";
   }
+  __name(chk, "chk");
   const content = `
 <div class="cp-card" style="max-width:720px">
   <h1>Discussion Settings</h1>
@@ -5687,12 +6000,14 @@ async function handleOptionsDiscussion(request, cp) {
     { headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }
+__name(handleOptionsDiscussion, "handleOptionsDiscussion");
 
 // cp-admin/pages/options-media.js
 init_option();
 function esc17(str) {
   return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+__name(esc17, "esc");
 var KEYS_MEDIA = [
   "thumbnail_size_w",
   "thumbnail_size_h",
@@ -5713,7 +6028,8 @@ async function handleOptionsMedia(request, cp) {
         await updateOption(cp, key, fd.get(key) ? "1" : "0");
       } else {
         const val = fd.get(key);
-        if (val !== null) await updateOption(cp, key, val.trim());
+        if (val !== null)
+          await updateOption(cp, key, val.trim());
       }
     }
     notice = { type: "success", message: "Settings saved." };
@@ -5793,12 +6109,14 @@ async function handleOptionsMedia(request, cp) {
     { headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }
+__name(handleOptionsMedia, "handleOptionsMedia");
 
 // cp-admin/pages/options-permalink.js
 init_option();
 function esc18(str) {
   return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+__name(esc18, "esc");
 async function handleOptionsPermalink(request, cp) {
   const method = request.method.toUpperCase();
   let notice = null;
@@ -5894,12 +6212,14 @@ async function handleOptionsPermalink(request, cp) {
     { headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }
+__name(handleOptionsPermalink, "handleOptionsPermalink");
 
 // cp-admin/pages/import.js
 init_crypto();
 function esc19(str) {
   return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+__name(esc19, "esc");
 async function handleImport(request, cp) {
   const method = request.method.toUpperCase();
   const prefix = cp.db_prefix || "cp_";
@@ -6025,6 +6345,7 @@ async function handleImport(request, cp) {
     { headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }
+__name(handleImport, "handleImport");
 async function importWXR(cp, prefix, xml) {
   const log = { posts: 0, pages: 0, users: 0, comments: 0, categories: 0, tags: 0, errors: [] };
   const now = (/* @__PURE__ */ new Date()).toISOString().replace("T", " ").slice(0, 19);
@@ -6032,6 +6353,7 @@ async function importWXR(cp, prefix, xml) {
     const m = str.match(new RegExp(`<${tag}(?:[^>]*)><!\\[CDATA\\[([\\s\\S]*?)\\]\\]></${tag}>|<${tag}(?:[^>]*)>([\\s\\S]*?)</${tag}>`, "i"));
     return m ? (m[1] ?? m[2] ?? "").trim() : "";
   }
+  __name(extractTag, "extractTag");
   const catMatches = xml.matchAll(/<wp:category>([\s\S]*?)<\/wp:category>/g);
   for (const m of catMatches) {
     try {
@@ -6096,11 +6418,13 @@ async function importWXR(cp, prefix, xml) {
       const postName = extractTag(itemXml, "wp:post_name");
       const postDate = (extractTag(itemXml, "wp:post_date") || now).replace("T", " ").slice(0, 19);
       const authorLogin = extractTag(itemXml, "dc:creator");
-      if (postType === "attachment" || postType === "nav_menu_item") continue;
+      if (postType === "attachment" || postType === "nav_menu_item")
+        continue;
       let authorId = 1;
       if (authorLogin) {
         const au = await cp.db.prepare(`SELECT ID FROM ${prefix}users WHERE user_login=? LIMIT 1`).bind(authorLogin).first();
-        if (au) authorId = au.ID;
+        if (au)
+          authorId = au.ID;
       }
       const res = await cp.db.prepare(
         `INSERT INTO ${prefix}posts
@@ -6108,8 +6432,10 @@ async function importWXR(cp, prefix, xml) {
          VALUES (?,?,?,?,?,?,?,?,?,?,?)`
       ).bind(title, content, excerpt, status || "draft", postType || "post", postName || "", postDate, postDate, authorId, "open", "open").run();
       const newPostId = res.meta?.last_row_id;
-      if (postType === "page") log.pages++;
-      else log.posts++;
+      if (postType === "page")
+        log.pages++;
+      else
+        log.posts++;
       if (newPostId) {
         const commentMatches = itemXml.matchAll(/<wp:comment>([\s\S]*?)<\/wp:comment>/g);
         for (const cm of commentMatches) {
@@ -6140,14 +6466,17 @@ async function importWXR(cp, prefix, xml) {
   }
   return log;
 }
+__name(importWXR, "importWXR");
 
 // cp-admin/pages/export.js
 function escXml3(str) {
   return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
+__name(escXml3, "escXml");
 function cdata(str) {
   return `<![CDATA[${String(str ?? "")}]]>`;
 }
+__name(cdata, "cdata");
 async function handleExport(request, cp) {
   const url = new URL(request.url);
   const format = url.searchParams.get("format") || "";
@@ -6208,7 +6537,8 @@ async function handleExport(request, cp) {
     const commentsById = {};
     for (const c of allComments) {
       const pid = c.comment_post_ID;
-      if (!commentsById[pid]) commentsById[pid] = [];
+      if (!commentsById[pid])
+        commentsById[pid] = [];
       commentsById[pid].push(c);
     }
     const userXml = users.map((u) => `
@@ -6356,6 +6686,7 @@ async function handleExport(request, cp) {
     { headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }
+__name(handleExport, "handleExport");
 
 // cp-admin/pages/tools.js
 async function handleTools(request, cp) {
@@ -6516,12 +6847,14 @@ async function handleTools(request, cp) {
     { headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }
+__name(handleTools, "handleTools");
 
 // cp-admin/pages/upgrade.js
 init_cp_config();
 function esc20(str) {
   return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+__name(esc20, "esc");
 async function handleUpgrade(request, cp) {
   const method = request.method.toUpperCase();
   let notice = null;
@@ -6532,7 +6865,8 @@ async function handleUpgrade(request, cp) {
     ).first().then((r) => r?.option_value || "").catch(() => "");
     if (githubRepo) {
       const headers = { "User-Agent": "CloudPress/1.0" };
-      if (cp.config?.GITHUB_TOKEN) headers["Authorization"] = `Bearer ${cp.config.GITHUB_TOKEN}`;
+      if (cp.config?.GITHUB_TOKEN)
+        headers["Authorization"] = `Bearer ${cp.config.GITHUB_TOKEN}`;
       const res = await fetch(`https://api.github.com/repos/${githubRepo}/releases/latest`, { headers });
       if (res.ok) {
         const data = await res.json();
@@ -6613,6 +6947,7 @@ npx wrangler deploy</pre>
     { headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }
+__name(handleUpgrade, "handleUpgrade");
 
 // cp-admin/ajax.js
 init_cp_load();
@@ -6632,13 +6967,15 @@ async function handleAjax(request, env, ctx) {
     return jsonResponse({ success: false, data: "No action specified" }, 400);
   }
   const cp = await cpLoad(request, env, ctx);
-  if (cp.__cpError) return jsonResponse({ success: false, data: "Server error" }, 500);
+  if (cp.__cpError)
+    return jsonResponse({ success: false, data: "Server error" }, 500);
   const user = await getAdminUser(cp);
   cp.currentUser = user;
   const entry = AJAX_ACTIONS.get(action);
   if (!entry) {
     const builtinResult = await handleBuiltinAction(action, cp, formData, user);
-    if (builtinResult !== null) return builtinResult;
+    if (builtinResult !== null)
+      return builtinResult;
     return jsonResponse({ success: false, data: `Unknown action: ${action}` }, 400);
   }
   if (!entry.nopriv && !user) {
@@ -6652,17 +6989,18 @@ async function handleAjax(request, env, ctx) {
     return jsonResponse({ success: false, data: err.message }, 500);
   }
 }
+__name(handleAjax, "handleAjax");
 async function handleBuiltinAction(action, cp, formData, user) {
   switch (action) {
-    // Heartbeat (keep session alive)
     case "heartbeat": {
-      if (!user) return jsonResponse({ success: false, data: "-1" }, 401);
+      if (!user)
+        return jsonResponse({ success: false, data: "-1" }, 401);
       return jsonResponse({ success: true, data: { nonce: await generateNonce(cp), time: Date.now() } });
     }
-    // Save post (autosave)
     case "autosave":
     case "cp_autosave": {
-      if (!user) return jsonResponse({ success: false, data: "-1" }, 401);
+      if (!user)
+        return jsonResponse({ success: false, data: "-1" }, 401);
       const postId = parseInt(formData.get("post_id") || "0");
       const content = formData.get("post_content") || "";
       const title = formData.get("post_title") || "";
@@ -6674,22 +7012,24 @@ async function handleBuiltinAction(action, cp, formData, user) {
       }
       return jsonResponse({ success: true, data: { saved: true, postId } });
     }
-    // Delete post
     case "delete_post":
     case "cp_delete_post": {
-      if (!user) return jsonResponse({ success: false, data: "-1" }, 401);
+      if (!user)
+        return jsonResponse({ success: false, data: "-1" }, 401);
       const id = parseInt(formData.get("id") || "0");
-      if (!id) return jsonResponse({ success: false, data: "Invalid ID" }, 400);
+      if (!id)
+        return jsonResponse({ success: false, data: "Invalid ID" }, 400);
       const prefix = cp.config.DB_PREFIX || "cp_";
       await cp.db.prepare(`UPDATE ${prefix}posts SET post_status='trash' WHERE ID=?`).bind(id).run();
       return jsonResponse({ success: true, data: { deleted: true } });
     }
-    // Quick save option
     case "cp_save_option": {
-      if (!user) return jsonResponse({ success: false, data: "-1" }, 401);
+      if (!user)
+        return jsonResponse({ success: false, data: "-1" }, 401);
       const key = formData.get("key") || "";
       const val = formData.get("value") || "";
-      if (!key) return jsonResponse({ success: false, data: "No key" }, 400);
+      if (!key)
+        return jsonResponse({ success: false, data: "No key" }, 400);
       const prefix = cp.config.DB_PREFIX || "cp_";
       await cp.db.prepare(
         `INSERT INTO ${prefix}options (option_name, option_value, autoload)
@@ -6698,18 +7038,18 @@ async function handleBuiltinAction(action, cp, formData, user) {
       ).bind(key, val).run();
       return jsonResponse({ success: true, data: { saved: true } });
     }
-    // GitHub sync status
     case "cp_github_status": {
-      if (!user) return jsonResponse({ success: false, data: "-1" }, 401);
+      if (!user)
+        return jsonResponse({ success: false, data: "-1" }, 401);
       const prefix = cp.config.DB_PREFIX || "cp_";
       const repoRow = await cp.db.prepare(
         `SELECT option_value FROM ${prefix}options WHERE option_name='cp_github_repo' LIMIT 1`
       ).first();
       return jsonResponse({ success: true, data: { repo: repoRow?.option_value || "" } });
     }
-    // Approve comment
     case "approve-comment": {
-      if (!user) return jsonResponse({ success: false, data: "-1" }, 401);
+      if (!user)
+        return jsonResponse({ success: false, data: "-1" }, 401);
       const id = parseInt(formData.get("id") || "0");
       const prefix = cp.config.DB_PREFIX || "cp_";
       await cp.db.prepare(
@@ -6717,9 +7057,9 @@ async function handleBuiltinAction(action, cp, formData, user) {
       ).bind(id).run();
       return jsonResponse({ success: true, data: { approved: true } });
     }
-    // Trash comment
     case "trash-comment": {
-      if (!user) return jsonResponse({ success: false, data: "-1" }, 401);
+      if (!user)
+        return jsonResponse({ success: false, data: "-1" }, 401);
       const id = parseInt(formData.get("id") || "0");
       const prefix = cp.config.DB_PREFIX || "cp_";
       await cp.db.prepare(
@@ -6727,12 +7067,13 @@ async function handleBuiltinAction(action, cp, formData, user) {
       ).bind(id).run();
       return jsonResponse({ success: true, data: { trashed: true } });
     }
-    // Plugin toggle
     case "cp_toggle_plugin": {
-      if (!user) return jsonResponse({ success: false, data: "-1" }, 401);
+      if (!user)
+        return jsonResponse({ success: false, data: "-1" }, 401);
       const plugin = formData.get("plugin") || "";
       const enable = formData.get("enable") === "1";
-      if (!plugin) return jsonResponse({ success: false, data: "No plugin specified" }, 400);
+      if (!plugin)
+        return jsonResponse({ success: false, data: "No plugin specified" }, 400);
       const prefix = cp.config.DB_PREFIX || "cp_";
       const row = await cp.db.prepare(
         `SELECT option_value FROM ${prefix}options WHERE option_name='active_plugins' LIMIT 1`
@@ -6742,8 +7083,10 @@ async function handleBuiltinAction(action, cp, formData, user) {
         plugins = JSON.parse(row?.option_value || "[]");
       } catch (_) {
       }
-      if (enable && !plugins.includes(plugin)) plugins.push(plugin);
-      if (!enable) plugins = plugins.filter((p) => p !== plugin);
+      if (enable && !plugins.includes(plugin))
+        plugins.push(plugin);
+      if (!enable)
+        plugins = plugins.filter((p) => p !== plugin);
       await cp.db.prepare(
         `UPDATE ${prefix}options SET option_value=? WHERE option_name='active_plugins'`
       ).bind(JSON.stringify(plugins)).run();
@@ -6753,6 +7096,7 @@ async function handleBuiltinAction(action, cp, formData, user) {
       return null;
   }
 }
+__name(handleBuiltinAction, "handleBuiltinAction");
 async function generateNonce(cp) {
   const key = `${cp.currentUser?.ID || "anon"}:${Math.floor(Date.now() / 864e5)}`;
   const encoder = new TextEncoder();
@@ -6760,6 +7104,7 @@ async function generateNonce(cp) {
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 10);
 }
+__name(generateNonce, "generateNonce");
 
 // cp-admin/index.js
 async function handleAdmin(request, env, ctx) {
@@ -6776,11 +7121,14 @@ async function handleAdmin(request, env, ctx) {
     return handleAjax(request, env, ctx);
   }
   const cp = await cpLoad(request, env, ctx);
-  if (cp.__cpError) return cp.response;
+  if (cp.__cpError)
+    return cp.response;
   const authResult = await requireAdmin(cp);
-  if (authResult) return authResult;
+  if (authResult)
+    return authResult;
   return dispatchAdmin(request, env, ctx, cp, path, method, url);
 }
+__name(handleAdmin, "handleAdmin");
 async function dispatchAdmin(request, env, ctx, cp, path, method, url) {
   if (path === "/cp-admin" || path === "/cp-admin/index") {
     return handleDashboard(request, cp);
@@ -6856,6 +7204,7 @@ async function dispatchAdmin(request, env, ctx, cp, path, method, url) {
     { status: 404, headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }
+__name(dispatchAdmin, "dispatchAdmin");
 
 // cp-includes/auth.js
 init_cp_load();
@@ -6863,7 +7212,8 @@ init_user();
 init_jwt();
 async function handleLogin(request, env, ctx) {
   const cp = await cpLoad(request, env, ctx);
-  if (cp.__cpError) return cp.response;
+  if (cp.__cpError)
+    return cp.response;
   const url = cp.url;
   const method = request.method.toUpperCase();
   if (cp.currentUser) {
@@ -6901,6 +7251,7 @@ async function handleLogin(request, env, ctx) {
   const html = renderLoginPage(error, redirectTo, cp.config.SITE_NAME || "CloudPress");
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
+__name(handleLogin, "handleLogin");
 async function handleLogout(request, env, ctx) {
   return new Response(null, {
     status: 302,
@@ -6910,8 +7261,9 @@ async function handleLogout(request, env, ctx) {
     }
   });
 }
+__name(handleLogout, "handleLogout");
 function renderLoginPage(error, redirectTo, siteName) {
-  const esc22 = (s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const esc22 = /* @__PURE__ */ __name((s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"), "esc");
   return `<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -6958,13 +7310,15 @@ function renderLoginPage(error, redirectTo, siteName) {
 </body>
 </html>`;
 }
+__name(renderLoginPage, "renderLoginPage");
 
 // cp-includes/feed.js
 init_cp_load();
 init_option();
 async function handleFeed(request, env, ctx) {
   const cp = await cpLoad(request, env, ctx);
-  if (cp.__cpError) return cp.response;
+  if (cp.__cpError)
+    return cp.response;
   const url = new URL(request.url);
   const path = url.pathname;
   const isAtom = path.endsWith("/atom");
@@ -6987,6 +7341,7 @@ async function handleFeed(request, env, ctx) {
   }
   return rssFeed({ posts, blogname, tagline, siteurl, feedUrl, cp });
 }
+__name(handleFeed, "handleFeed");
 function rssFeed({ posts, blogname, tagline, siteurl, feedUrl, cp }) {
   const lastBuild = posts[0]?.post_modified || (/* @__PURE__ */ new Date()).toUTCString();
   const pubDate = new Date(lastBuild).toUTCString();
@@ -7029,6 +7384,7 @@ ${items}
     }
   });
 }
+__name(rssFeed, "rssFeed");
 function atomFeed({ posts, blogname, tagline, siteurl, feedUrl, cp }) {
   const updated = posts[0]?.post_modified ? new Date(posts[0].post_modified).toISOString() : (/* @__PURE__ */ new Date()).toISOString();
   const entries = posts.map((post) => {
@@ -7063,6 +7419,7 @@ ${entries}
     }
   });
 }
+__name(atomFeed, "atomFeed");
 function postLink(siteurl, post) {
   const base = String(siteurl || "").replace(/\/$/, "");
   if (post.post_name) {
@@ -7073,21 +7430,25 @@ function postLink(siteurl, post) {
   }
   return `${base}/?p=${post.ID}`;
 }
+__name(postLink, "postLink");
 function escXml4(str) {
   return String(str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
+__name(escXml4, "escXml");
 function trimExcerpt(content, wordCount) {
   const text = content.replace(/<[^>]+>/g, "").trim();
   const words = text.split(/\s+/).filter(Boolean);
   return words.length > wordCount ? words.slice(0, wordCount).join(" ") + "\u2026" : text;
 }
+__name(trimExcerpt, "trimExcerpt");
 
 // cp-includes/sitemap.js
 init_cp_load();
 init_option();
 async function handleSitemap(request, env, ctx) {
   const cp = await cpLoad(request, env, ctx);
-  if (cp.__cpError) return cp.response;
+  if (cp.__cpError)
+    return cp.response;
   const url = new URL(request.url);
   const path = url.pathname;
   const prefix = cp.db_prefix || "cp_";
@@ -7106,6 +7467,7 @@ async function handleSitemap(request, env, ctx) {
   }
   return new Response("Not Found", { status: 404 });
 }
+__name(handleSitemap, "handleSitemap");
 async function sitemapIndex(cp, siteUrl, url) {
   const entries = [
     `${siteUrl}/sitemap-posts.xml`,
@@ -7122,6 +7484,7 @@ ${entries}
 </sitemapindex>`;
   return xmlResponse(xml);
 }
+__name(sitemapIndex, "sitemapIndex");
 async function postsSitemap(cp, prefix, siteUrl, postType) {
   const rows = await cp.db.prepare(`
     SELECT ID, post_name, post_date, post_modified, post_type
@@ -7149,6 +7512,7 @@ ${urls}
 </urlset>`;
   return xmlResponse(xml);
 }
+__name(postsSitemap, "postsSitemap");
 async function termsSitemap(cp, prefix, siteUrl) {
   const rows = await cp.db.prepare(`
     SELECT t.term_id, t.slug, tt.taxonomy, tt.count
@@ -7173,24 +7537,31 @@ ${urls}
 </urlset>`;
   return xmlResponse(xml);
 }
+__name(termsSitemap, "termsSitemap");
 function postPermalink(siteUrl, post) {
   if (post.post_name) {
     const d = post.post_date ? new Date(post.post_date) : /* @__PURE__ */ new Date();
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, "0");
-    if (post.post_type === "page") return `${siteUrl}/${post.post_name}/`;
+    if (post.post_type === "page")
+      return `${siteUrl}/${post.post_name}/`;
     return `${siteUrl}/${y}/${m}/${post.post_name}/`;
   }
   return `${siteUrl}/?p=${post.ID}`;
 }
+__name(postPermalink, "postPermalink");
 function termPermalink(siteUrl, term) {
-  if (term.taxonomy === "category") return `${siteUrl}/category/${term.slug}/`;
-  if (term.taxonomy === "post_tag") return `${siteUrl}/tag/${term.slug}/`;
+  if (term.taxonomy === "category")
+    return `${siteUrl}/category/${term.slug}/`;
+  if (term.taxonomy === "post_tag")
+    return `${siteUrl}/tag/${term.slug}/`;
   return `${siteUrl}/${term.taxonomy}/${term.slug}/`;
 }
+__name(termPermalink, "termPermalink");
 function esc21(str) {
   return String(str || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 }
+__name(esc21, "esc");
 function xmlResponse(xml) {
   return new Response(xml, {
     headers: {
@@ -7199,6 +7570,7 @@ function xmlResponse(xml) {
     }
   });
 }
+__name(xmlResponse, "xmlResponse");
 
 // cp-router.js
 async function route(request, env, ctx) {
@@ -7281,6 +7653,7 @@ Sitemap: ${url.origin}/sitemap.xml
   }
   return handleRequest(request, env, ctx, { CP_USE_THEMES: true });
 }
+__name(route, "route");
 function serveAdminAsset(path) {
   const file = path.replace("/cp-admin/images/", "");
   switch (file) {
@@ -7330,12 +7703,14 @@ function serveAdminAsset(path) {
       return new Response("Not found", { status: 404 });
   }
 }
+__name(serveAdminAsset, "serveAdminAsset");
 function forbidden() {
   return new Response("Forbidden", {
     status: 403,
     headers: { "Content-Type": "text/plain" }
   });
 }
+__name(forbidden, "forbidden");
 
 // worker.js
 init_cp_cron();
