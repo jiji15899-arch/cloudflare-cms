@@ -14,6 +14,7 @@
 
 import { saveConfig } from '../cp-config.js';
 import { hashPassword } from '../cp-includes/crypto.js';
+import { redirect } from '../cp-includes/functions.js';
 
 const SCHEMA_VERSION = 1;
 
@@ -582,10 +583,6 @@ function layout(title, content) {
 
 function htmlResponse(html, status = 200) {
   return new Response(html, { status, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
-}
-
-function redirect(location) {
-  return Response.redirect(location, 302);
 }
 
 function esc(str) {
