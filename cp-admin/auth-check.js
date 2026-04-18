@@ -10,6 +10,7 @@
 
 import { verifyJwt } from '../cp-includes/jwt.js';
 import { getUserById } from '../cp-includes/user.js';
+import { extractToken } from '../cp-includes/session.js';
 
 /**
  * Verify the request has a valid admin JWT.
@@ -62,23 +63,6 @@ export async function getAdminUser(cp) {
   } catch (_) {
     return null;
   }
-}
-
-/**
- * Extract JWT from cookie or Authorization header.
- */
-function extractToken(request) {
-  // 1. Try cookie
-  const cookieHeader = request.headers.get('Cookie') || '';
-  const cookieMatch  = cookieHeader.match(/cp_token=([^;]+)/);
-  if (cookieMatch) return cookieMatch[1];
-
-  // 2. Try Authorization header
-  const authHeader = request.headers.get('Authorization') || '';
-  const bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
-  if (bearerMatch) return bearerMatch[1];
-
-  return null;
 }
 
 /**
