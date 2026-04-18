@@ -131,7 +131,7 @@ export async function sha256(data) {
  * @param {string} secret
  * @returns {Promise<string>}
  */
-export async function createNonce(action, userId, secret) {
+export async function createNonceRaw(action, userId, secret) {
   const tick = Math.floor(Date.now() / 1000 / 86400); // daily tick
   const raw  = `${tick}|${action}|${userId}`;
   const hash = await hmacHash(raw, secret);
@@ -148,7 +148,7 @@ export async function createNonce(action, userId, secret) {
  * @param {string} secret
  * @returns {Promise<boolean>}
  */
-export async function verifyNonce(nonce, action, userId, secret) {
+export async function verifyNonceRaw(nonce, action, userId, secret) {
   const tick = Math.floor(Date.now() / 1000 / 86400);
   for (const t of [tick, tick - 1]) {
     const raw      = `${t}|${action}|${userId}`;
