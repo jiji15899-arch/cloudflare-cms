@@ -11,7 +11,7 @@ function esc(str) {
   return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-const KEYS = [
+const KEYS_DISCUSSION = [
   'default_pingback_flag','default_ping_status','default_comment_status',
   'require_name_email','comment_registration','close_comments_for_old_posts',
   'close_comments_days_old','thread_comments','thread_comments_depth',
@@ -35,7 +35,7 @@ export async function handleOptionsDiscussion(request, cp) {
 
   if (method === 'POST') {
     const fd = await request.formData().catch(() => new FormData());
-    for (const key of KEYS) {
+    for (const key of KEYS_DISCUSSION) {
       if (CHECKBOX_KEYS.includes(key)) {
         await updateOption(cp, key, fd.get(key) ? '1' : '0');
       } else {
@@ -47,7 +47,7 @@ export async function handleOptionsDiscussion(request, cp) {
   }
 
   const v = {};
-  for (const key of KEYS) {
+  for (const key of KEYS_DISCUSSION) {
     v[key] = await getOption(cp, key, '').catch(() => '');
   }
 
