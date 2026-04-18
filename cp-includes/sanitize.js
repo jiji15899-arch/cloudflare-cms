@@ -270,20 +270,7 @@ export function escAttr(str) {
     .replace(/>/g, '&gt;');
 }
 
-/**
- * Escape HTML for output.
- *
- * @param {string} str
- * @returns {string}
- */
-export function escHtml(str) {
-  return String(str || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
+export { escHtml } from './formatting.js';
 
 /**
  * Escape for use in a JavaScript string.
