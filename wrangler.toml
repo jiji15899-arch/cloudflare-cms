@@ -1,70 +1,49 @@
 # CloudPress CMS — Cloudflare Workers 배포 설정
 # wrangler.toml
 #
-# ── 최초 배포 순서 ─────────────────────────────────────────────────────────
-#  1. D1 생성:  npx wrangler d1 create cloudpress-db
-#               → 출력된 database_id를 아래 database_id에 붙여넣기
+# ── 배포 방법 (반드시 이 방법만 사용) ──────────────────────────────────────
 #
-#  2. KV 생성:  npx wrangler kv:namespace create CP_KV
-#               → 출력된 id를 아래 id에 붙여넣기
+#  ※ 주의: Cloudflare 대시보드에서 파일을 직접 업로드하지 마세요.
+#           반드시 아래 CLI 명령으로 배포하세요.
 #
-#  3. 스키마 적용:
-#               npx wrangler d1 execute cloudpress-db --file=schema.sql --remote
+#  1. D1 생성:   npx wrangler d1 create cloudpress-db
+#                → 출력된 database_id를 아래 database_id에 붙여넣기
 #
-#  4. 비밀값 설정:
-#               npx wrangler secret put CP_AUTH_KEY
-#               npx wrangler secret put CP_ADMIN_EMAIL
+#  2. KV 생성:   npx wrangler kv:namespace create CP_KV
+#                → 출력된 id를 아래 id에 붙여넣기
 #
-#  5. 배포:     npx wrangler deploy
+#  3. 스키마:    npx wrangler d1 execute cloudpress-db --file=schema.sql --remote
 #
-#  6. 브라우저에서 https://<worker>.workers.dev/cp-admin/setup-config 접속
+#  4. 시크릿:    npx wrangler secret put CP_AUTH_KEY
+#                npx wrangler secret put CP_ADMIN_EMAIL
+#
+#  5. 배포:      npx wrangler deploy
+#
+#  6. 접속:      https://<worker>.workers.dev/cp-admin/setup-config
 
 name               = "cloudflare-cms"
-main               = "dist/worker.js"
+main               = "worker.js"
 compatibility_date = "2024-09-23"
 
-# ── Build ─────────────────────────────────────────────────────────────────────
-# worker.js가 여러 파일을 import하므로 esbuild로 단일 ESM 번들 생성
-# 이 설정이 없으면 "Unexpected token 'export'" (error 10021) 발생
-[build]
-command = "npx esbuild worker.js --bundle --format=esm --target=es2022 --platform=browser --outfile=dist/worker.js --log-level=warning"
-
-# ── Routes ────────────────────────────────────────────────────────────────────
-# 사용자 도메인 연결 후 아래 주석 해제
-# routes = [
-#   { pattern = "yourdomain.com/*", zone_name = "yourdomain.com" }
-# ]
-
 # ── D1 Database ───────────────────────────────────────────────────────────────
-# Create: npx wrangler d1 create cloudpress-db
 [[d1_databases]]
 binding       = "CP_DB"
 database_name = "cloudpress-db"
 database_id   = "YOUR_D1_DATABASE_ID_HERE"
 
 # ── KV Namespace ──────────────────────────────────────────────────────────────
-# Create: npx wrangler kv:namespace create CP_KV
 [[kv_namespaces]]
 binding = "CP_KV"
 id      = "YOUR_KV_NAMESPACE_ID_HERE"
-# preview_id = "YOUR_KV_PREVIEW_ID_HERE"   # wrangler dev 전용
 
 # ── Environment Variables ──────────────────────────────────────────────────────
 [vars]
 CP_SITE_NAME    = "My CloudPress Site"
 CP_SITE_TAGLINE = "Just another CloudPress site"
-# CP_DEBUG = "true"
 
 # ── Cron Triggers ─────────────────────────────────────────────────────────────
 [triggers]
-crons = [
-  "*/5 * * * *",
-]
-
-# ── Secrets (CLI로만 설정) ────────────────────────────────────────────────────
-#   CP_AUTH_KEY        — JWT 서명 키 (필수, 32자 이상)
-#   CP_ADMIN_EMAIL     — 관리자 이메일 (필수)
-#   CP_GITHUB_TOKEN    — GitHub PAT (비공개 레포용, 선택)
+crons = ["*/5 * * * *"]
 
 # ── Per-environment overrides ──────────────────────────────────────────────────
 [env.production]
