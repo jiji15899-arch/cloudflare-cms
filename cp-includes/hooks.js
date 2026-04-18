@@ -1,3 +1,5 @@
+import { wptexturize, stripTags, trimWords, escHtml } from './formatting.js';
+
 /**
  * CloudPress Hook System
  * Replaces WordPress's plugin API (add_action, do_action, add_filter, apply_filters).
@@ -36,7 +38,7 @@ export function registerCoreHooks(cp) {
   }, 10);
 
   // ── Comment text ─────────────────────────────────────────────────────────
-  hooks.addFilter('comment_text', text => wpAutoP(escapeHtml(text || '')), 10);
+  hooks.addFilter('comment_text', text => wpAutoP(escHtml(text || '')), 10);
 
   // ── Head actions ─────────────────────────────────────────────────────────
   hooks.addAction('cp_head', cp => {
@@ -73,63 +75,4 @@ export function wpAutoP(text) {
   return result.filter(Boolean).join('\n\n');
 }
 
-// ── wptexturize ────────────────────────────────────────────────────────────
 
-/**
- * Replace plain quotes and dashes with typographic equivalents.
- * Simplified port of WordPress wptexturize().
- *
- * @param {string} text
- * @returns {string}
- */
-export function wptexturize(text) {
-  if (!text) return '';
-  return text
-    .replace(/---/g, '\u2014')           // em dash
-    .replace(/--/g,  '\u2013')           // en dash
-    .replace(/(^|[\s(])"(\S)/g,  '$1\u201c$2')  // opening double quote
-    .replace(/(\S)"([\s,.]|$)/g, '$1\u201d$2')  // closing double quote
-    .replace(/(^|[\s(])'(\S)/g,  '$1\u2018$2')  // opening single quote
-    .replace(/(\S)'([\s,.]|$)/g, '$1\u2019$2')  // closing single quote
-    .replace(/\.\.\./g, '\u2026');       // ellipsis
-}
-
-// ── Utilities ──────────────────────────────────────────────────────────────
-
-/**
- * Strip HTML tags from a string.
- *
- * @param {string} str
- * @returns {string}
- */
-export function stripTags(str) {
-  return String(str || '').replace(/<[^>]+>/g, '');
-}
-
-/**
- * Trim a string to N words.
- *
- * @param {string} str
- * @param {number} count
- * @returns {string}
- */
-export function trimWords(str, count = 55) {
-  const words = str.trim().split(/\s+/);
-  if (words.length <= count) return str;
-  return words.slice(0, count).join(' ');
-}
-
-/**
- * Escape HTML entities.
- *
- * @param {string} str
- * @returns {string}
- */
-export function escapeHtml(str) {
-  return String(str || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
