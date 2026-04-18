@@ -24,7 +24,8 @@ export async function handleOptionsMedia(request, cp) {
 
   if (method === 'POST') {
     const fd = await request.formData().catch(() => new FormData());
-    for (const key of KEYS_MEDIA) { || key === 'uploads_use_yearmonth_folders') {
+    for (const key of KEYS_MEDIA) {
+      if (key === 'thumbnail_crop' || key === 'uploads_use_yearmonth_folders') {
         await updateOption(cp, key, fd.get(key) ? '1' : '0');
       } else {
         const val = fd.get(key);
@@ -35,7 +36,7 @@ export async function handleOptionsMedia(request, cp) {
   }
 
   const v = {};
-  for (const key of KEYS) {
+  for (const key of KEYS_MEDIA) {
     v[key] = await getOption(cp, key, '').catch(() => '');
   }
 
