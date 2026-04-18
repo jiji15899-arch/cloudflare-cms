@@ -18,7 +18,7 @@ function humanSize(bytes) {
   return `${(bytes/1048576).toFixed(1)} MB`;
 }
 
-export async function handleMedia(request, cp) {
+export async function handleMediaPage(request, cp) {
   const method = request.method.toUpperCase();
   const url    = new URL(request.url);
   let notice   = null;
