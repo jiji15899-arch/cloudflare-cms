@@ -2,18 +2,20 @@
   "name": "cloudflare-cms",
   "version": "1.0.0",
   "description": "CloudPress CMS — WordPress-compatible CMS for Cloudflare Workers",
-  "main": "index.js",
+  "main": "dist/worker.js",
   "type": "module",
   "scripts": {
-    "dev":              "wrangler dev",
-    "deploy":           "wrangler deploy",
-    "deploy:production":"wrangler deploy --env production",
-    "db:init":          "wrangler d1 execute cloudpress-db --file=schema.sql --remote",
-    "db:init:local":    "wrangler d1 execute cloudpress-db --file=schema.sql",
-    "db:migrate":       "wrangler d1 migrations apply cloudpress-db --remote",
-    "secrets:gen":      "node scripts/generate-secrets.js | wrangler secret bulk"
+    "build": "npx esbuild worker.js --bundle --format=esm --target=es2022 --platform=browser --outfile=dist/worker.js --log-level=warning",
+    "dev": "npm run build && wrangler dev",
+    "deploy": "npm run build && wrangler deploy",
+    "deploy:production": "npm run build && wrangler deploy --env production",
+    "db:init": "wrangler d1 execute cloudpress-db --file=schema.sql --remote",
+    "db:init:local": "wrangler d1 execute cloudpress-db --file=schema.sql",
+    "db:migrate": "wrangler d1 migrations apply cloudpress-db --remote",
+    "secrets:gen": "node scripts/generate-secrets.js | wrangler secret bulk"
   },
   "devDependencies": {
+    "esbuild": "^0.28.0",
     "wrangler": "^3.0.0"
   },
   "engines": {
