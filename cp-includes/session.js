@@ -37,7 +37,7 @@ export async function initSession(cp) {
   }
 }
 
-function extractToken(request) {
+export function extractToken(request) {
   // 1. HttpOnly cookie
   const cookie = request.headers.get('Cookie') || '';
   const match  = cookie.match(/cp_token=([^;]+)/);
