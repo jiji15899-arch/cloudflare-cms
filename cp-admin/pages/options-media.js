@@ -11,7 +11,7 @@ function esc(str) {
   return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-const KEYS = [
+const KEYS_MEDIA = [
   'thumbnail_size_w','thumbnail_size_h','thumbnail_crop',
   'medium_size_w','medium_size_h',
   'large_size_w','large_size_h',
@@ -24,8 +24,7 @@ export async function handleOptionsMedia(request, cp) {
 
   if (method === 'POST') {
     const fd = await request.formData().catch(() => new FormData());
-    for (const key of KEYS) {
-      if (key === 'thumbnail_crop' || key === 'uploads_use_yearmonth_folders') {
+    for (const key of KEYS_MEDIA) { || key === 'uploads_use_yearmonth_folders') {
         await updateOption(cp, key, fd.get(key) ? '1' : '0');
       } else {
         const val = fd.get(key);
