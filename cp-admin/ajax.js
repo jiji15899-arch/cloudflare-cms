@@ -10,6 +10,7 @@
 
 import { cpLoad }         from '../cp-load.js';
 import { getAdminUser }   from './auth-check.js';
+import { jsonResponse }   from '../cp-includes/functions.js';
 
 /** Registered AJAX action handlers (action -> { handler, nopriv }) */
 const AJAX_ACTIONS = new Map();
@@ -201,13 +202,4 @@ async function generateNonce(cp) {
   return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 10);
 }
 
-function jsonResponse(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      'Content-Type': 'application/json',
-      'Cache-Control': 'no-store',
-      'X-Content-Type-Options': 'nosniff',
-    },
-  });
-}
+
