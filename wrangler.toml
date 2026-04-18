@@ -14,16 +14,20 @@
 #  4. 비밀값 설정:
 #               npx wrangler secret put CP_AUTH_KEY
 #               npx wrangler secret put CP_ADMIN_EMAIL
-#               (나머지 secrets도 아래 목록 참고)
 #
 #  5. 배포:     npx wrangler deploy
 #
 #  6. 브라우저에서 https://<worker>.workers.dev/cp-admin/setup-config 접속
-#     → 인스톨러에서 사이트 설정 & 관리자 계정 생성
 
 name               = "cloudflare-cms"
-main               = "worker.js"
+main               = "dist/worker.js"
 compatibility_date = "2024-09-23"
+
+# ── Build ─────────────────────────────────────────────────────────────────────
+# worker.js가 여러 파일을 import하므로 esbuild로 단일 ESM 번들 생성
+# 이 설정이 없으면 "Unexpected token 'export'" (error 10021) 발생
+[build]
+command = "npx esbuild worker.js --bundle --format=esm --target=es2022 --platform=browser --outfile=dist/worker.js --log-level=warning"
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 # 사용자 도메인 연결 후 아래 주석 해제
@@ -49,33 +53,22 @@ id      = "YOUR_KV_NAMESPACE_ID_HERE"
 [vars]
 CP_SITE_NAME    = "My CloudPress Site"
 CP_SITE_TAGLINE = "Just another CloudPress site"
-# CP_DEBUG = "true"   # 디버그 모드 활성화
+# CP_DEBUG = "true"
 
 # ── Cron Triggers ─────────────────────────────────────────────────────────────
 [triggers]
 crons = [
-  "*/5 * * * *",    # 5분마다 (예약 게시, 만료 처리 등)
+  "*/5 * * * *",
 ]
 
-# ── Secrets (CLI로만 설정 — 여기에 직접 입력 금지) ───────────────────────────
-# npx wrangler secret put <SECRET_NAME>
-#
-#   CP_AUTH_KEY            — JWT 서명 키 (필수, 32자 이상 무작위 문자열)
-#   CP_SECURE_AUTH_KEY     — (선택)
-#   CP_LOGGED_IN_KEY       — (선택)
-#   CP_NONCE_KEY           — (선택)
-#   CP_AUTH_SALT           — (선택)
-#   CP_SECURE_AUTH_SALT    — (선택)
-#   CP_LOGGED_IN_SALT      — (선택)
-#   CP_NONCE_SALT          — (선택)
-#   CP_ADMIN_EMAIL         — 관리자 이메일 (필수)
-#   CP_GITHUB_TOKEN        — GitHub Personal Access Token (테마/플러그인 비공개 레포용, 선택)
+# ── Secrets (CLI로만 설정) ────────────────────────────────────────────────────
+#   CP_AUTH_KEY        — JWT 서명 키 (필수, 32자 이상)
+#   CP_ADMIN_EMAIL     — 관리자 이메일 (필수)
+#   CP_GITHUB_TOKEN    — GitHub PAT (비공개 레포용, 선택)
 
 # ── Per-environment overrides ──────────────────────────────────────────────────
 [env.production]
 name = "cloudflare-cms-production"
-# routes = [{ pattern = "yourdomain.com/*", zone_name = "yourdomain.com" }]
 
 [env.staging]
 name = "cloudflare-cms-staging"
-# routes = [{ pattern = "staging.yourdomain.com/*", zone_name = "yourdomain.com" }]
