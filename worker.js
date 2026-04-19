@@ -5017,11 +5017,8 @@ function submitPublish() {
 // ---------------------------------------------------------------------------
 // 카테고리 저장 헬퍼 (term_relationships + term_taxonomy count 갱신)
 // ---------------------------------------------------------------------------
-
 async function savePostCategories(cp, prefix, postId, categoryIds) {
   if (!postId) return;
-
-  // 기존 카테고리 관계 삭제
   try {
     await cp.db.prepare(
       `DELETE FROM ${prefix}term_relationships
@@ -5032,39 +5029,35 @@ async function savePostCategories(cp, prefix, postId, categoryIds) {
     ).bind(postId).run();
   } catch (_) {}
 
-  // 새 카테고리 관계 삽입
-  for (const catId of (categoryIds || [])) {
-    const id = parseInt(catId);
-    if (!id) continue;
-    try {
-      const tt = await cp.db.prepare(
-        `SELECT term_taxonomy_id FROM ${prefix}term_taxonomy WHERE term_id = ? AND taxonomy = 'category' LIMIT 1`
-      ).bind(id).first();
-      if (!tt) continue;
-      await cp.db.prepare(
-        `INSERT OR IGNORE INTO ${prefix}term_relationships (object_id, term_taxonomy_id) VALUES (?, ?)`
-      ).bind(postId, tt.term_taxonomy_id).run();
-    } catch (_) {}
+  const ids = (categoryIds || []).map(c => parseInt(c)).filter(Boolean);
+  if (!ids.length) return;
+
+  // 한 번에 모든 term_taxonomy 조회
+  const placeholders = ids.map(() => '?').join(',');
+  const ttRows = await cp.db.prepare(
+    `SELECT term_id, term_taxonomy_id FROM ${prefix}term_taxonomy
+     WHERE term_id IN (${placeholders}) AND taxonomy = 'category'`
+  ).bind(...ids).all().catch(() => ({ results: [] }));
+
+  // 배치 INSERT
+  for (const tt of (ttRows.results || [])) {
+    await cp.db.prepare(
+      `INSERT OR IGNORE INTO ${prefix}term_relationships (object_id, term_taxonomy_id) VALUES (?, ?)`
+    ).bind(postId, tt.term_taxonomy_id).run().catch(() => {});
   }
 
-  // term_taxonomy.count 갱신
-  try {
-    const tts = await cp.db.prepare(
-      `SELECT term_taxonomy_id FROM ${prefix}term_taxonomy WHERE taxonomy = 'category'`
-    ).all();
-    for (const row of (tts?.results || [])) {
-      const cnt = await cp.db.prepare(
-        `SELECT COUNT(*) as n FROM ${prefix}term_relationships tr
-         JOIN ${prefix}posts p ON p.ID = tr.object_id
-         WHERE tr.term_taxonomy_id = ? AND p.post_status = 'publish'`
-      ).bind(row.term_taxonomy_id).first();
-      await cp.db.prepare(
-        `UPDATE ${prefix}term_taxonomy SET count = ? WHERE term_taxonomy_id = ?`
-      ).bind(cnt?.n || 0, row.term_taxonomy_id).run();
-    }
-  } catch (_) {}
+  // count 갱신: 개별 루프 대신 단일 UPDATE로 처리
+  await cp.db.prepare(
+    `UPDATE ${prefix}term_taxonomy
+     SET count = (
+       SELECT COUNT(*) FROM ${prefix}term_relationships tr
+       JOIN ${prefix}posts p ON p.ID = tr.object_id
+       WHERE tr.term_taxonomy_id = ${prefix}term_taxonomy.term_taxonomy_id
+         AND p.post_status = 'publish'
+     )
+     WHERE taxonomy = 'category'`
+  ).run().catch(() => {});
 }
-
 // ---------------------------------------------------------------------------
 // 태그 저장 헬퍼
 // ---------------------------------------------------------------------------
