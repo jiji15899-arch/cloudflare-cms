@@ -197,7 +197,7 @@ export async function route(request, env, ctx) {
         const stored = await env.CP_KV.get('cp:favicon', { type: 'arrayBuffer' });
         if (stored) {
           return new Response(stored, {
-            headers: { 'Content-Type': 'image/x-icon', 'Cache-Control': 'public, max-age=86400' },
+            headers: { 'Content-Type': 'image/x-icon', 'Cache-Control': 'public, max-age=31536000, immutable', 'ETag': '"cp-1.2.0"' },
           });
         }
       } catch (_) {}
@@ -217,7 +217,8 @@ function cssResponse(css) {
   return new Response(css, {
     headers: {
       'Content-Type': 'text/css; charset=utf-8',
-      'Cache-Control': 'public, max-age=3600',
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'ETag': '"cp-1.2.0"',
     },
   });
 }
@@ -460,7 +461,7 @@ function serveAdminAsset(path) {
       return new Response(svg, {
         headers: {
           'Content-Type':  'image/svg+xml',
-          'Cache-Control': 'public, max-age=86400',
+          'Cache-Control': 'public, max-age=31536000, immutable', 'ETag': '"cp-1.2.0"',
         },
       });
     }
@@ -475,7 +476,7 @@ function serveAdminAsset(path) {
       return new Response(svg, {
         headers: {
           'Content-Type':  'image/svg+xml',
-          'Cache-Control': 'public, max-age=86400',
+          'Cache-Control': 'public, max-age=31536000, immutable', 'ETag': '"cp-1.2.0"',
         },
       });
     }
