@@ -8,11 +8,12 @@
  * @package CloudPress
  */
 
-import { getOption } from '../cp-includes/option.js';
-import { escHtml }   from '../cp-includes/formatting.js';
+import { getOption }          from '../cp-includes/option.js';
+import { escHtml }             from '../cp-includes/formatting.js';
+import { checkForUpdates, buildUpdateNoticeHtml } from '../cp-includes/updater.js';
 
 export async function renderAdminShell(cp, content, opts = {}) {
-  const { title = '대시보드', bodyClass = '', notices = [] } = opts;
+  const { title = '대시보드', bodyClass = '', notices = [], skipUpdateCheck = false } = opts;
 
   const siteName    = await getOption(cp, 'blogname').catch(() => cp.config.SITE_NAME || 'CloudPress');
   const siteUrl     = cp.config.SITE_URL || cp.url.origin;
@@ -23,7 +24,18 @@ export async function renderAdminShell(cp, content, opts = {}) {
   try { const s = await cp.kv?.get('cp:admin_slug'); if (s) adminSlug = s; } catch (_) {}
   const adminVersion = cp.version || '1.0.0';
 
-  const navItems = buildNavItems(cp, currentPath, adminSlug);
+  // -- 업데이트 알림 (백그라운드 체크, 캐시 우선) --------------------------------
+  let updateNoticeHtml = '';
+  if (!skipUpdateCheck && cp.config?.GITHUB_REPO) {
+    try {
+      const updateInfo = await checkForUpdates(cp);
+      if (updateInfo) {
+        updateNoticeHtml = buildUpdateNoticeHtml(updateInfo, adminSlug);
+      }
+    } catch (_) {}
+  }
+
+  const navItems = buildNavItems(cp, currentPath, adminSlug, !!updateInfo);
   const navHtml  = renderNav(navItems, currentPath);
 
   const noticeHtml = notices.map(n =>
@@ -98,6 +110,7 @@ export async function renderAdminShell(cp, content, opts = {}) {
 
   <!-- Main Content -->
   <main id="cp-main">
+    ${updateNoticeHtml}
     <div class="cp-page-header">
       <h1 class="cp-page-title">${escHtml(title)}</h1>
     </div>
@@ -123,8 +136,11 @@ export async function renderAdminShell(cp, content, opts = {}) {
 // Navigation Builder - 한국어
 // ---------------------------------------------------------------------------
 
-function buildNavItems(cp, currentPath, adminSlug = 'cp-admin') {
+function buildNavItems(cp, currentPath, adminSlug = 'cp-admin', hasUpdate = false) {
   const A = (p) => `/${adminSlug}${p}`;
+  const updateBadge = hasUpdate
+    ? ' <span style="background:#f6821f;color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px;vertical-align:middle">NEW</span>'
+    : '';
   return [
     {
       id: 'dashboard', label: '대시보드', icon: '&#9635;', href: A(''),
@@ -198,6 +214,11 @@ function buildNavItems(cp, currentPath, adminSlug = 'cp-admin') {
         { label: '고유주소',   href: A('/options-permalink') },
       ],
     },
+    {
+      id: 'upgrade', label: `업데이트${updateBadge}`, icon: '&#11014;', href: A('/update-core'),
+      exact: true,
+      rawLabel: true,
+    },
   ];
 }
 
@@ -213,7 +234,7 @@ function renderNav(items, currentPath) {
       return `<li class="cp-nav-item ${isActive ? 'active' : ''} ${hasChildren ? 'has-children' : ''}">
         <a href="${escHtml(item.href)}" class="cp-nav-link">
           <span class="cp-nav-icon">${item.icon}</span>
-          <span class="cp-nav-label">${escHtml(item.label)}</span>
+          <span class="cp-nav-label">${item.rawLabel ? item.label : escHtml(item.label)}</span>
           ${hasChildren ? '<span class="cp-nav-arrow">&#9660;</span>' : ''}
         </a>
         ${hasChildren ? `
