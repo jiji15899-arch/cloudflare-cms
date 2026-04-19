@@ -99,6 +99,19 @@ export async function runCronJobs(cp) {
   if (acquiredLock !== lockToken) return;
 
   try {
+    // -- Publish future posts that are due --------------------------------------
+    const nowStr = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    try {
+      await db.prepare(`
+        UPDATE ${prefix}posts
+           SET post_status = 'publish'
+         WHERE post_status = 'future'
+           AND post_date <= ?
+      `).bind(nowStr).run();
+    } catch (e) {
+      console.error('[CloudPress Cron] Future post publish failed:', e?.message);
+    }
+
     // -- Fetch due cron events from D1 -----------------------------------------
     const { results: dueEvents } = await db.prepare(`
       SELECT * FROM ${prefix}cron_events
