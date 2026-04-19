@@ -326,8 +326,8 @@ html,body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Noto 
 .cp-subnav li a:hover,.cp-subnav li.active a{color:var(--cp-white);background:rgba(255,255,255,.07)}
 
 /* ── 메인 콘텐츠 ── */
-#cp-main{flex:1;margin-left:var(--cp-sidebar-w);padding:20px 24px 24px;min-height:calc(100vh - var(--cp-topbar-h))}
-.cp-page-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:12px;flex-wrap:wrap}
+#cp-main{flex:1;margin-left:var(--cp-sidebar-w);padding:16px 24px 24px;min-height:calc(100vh - var(--cp-topbar-h))}
+.cp-page-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:10px;flex-wrap:wrap}
 .cp-page-title{font-size:22px;font-weight:400;margin:0;color:var(--cp-text);line-height:1.3}
 
 /* ── 알림 ── */
@@ -407,6 +407,6 @@ html,body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Noto 
 }
 @media(max-width:480px){
   .cp-dash-grid{grid-template-columns:1fr}
-  #cp-main{padding:14px 16px 20px}
+  #cp-main{padding:12px 14px 20px}
 }
 `;
