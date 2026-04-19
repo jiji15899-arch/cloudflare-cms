@@ -16,7 +16,7 @@ import { saveConfig } from '../cp-config.js';
 import { hashPassword } from '../cp-includes/crypto.js';
 import { redirect } from '../cp-includes/functions.js';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 /**
  * Handle installer requests.
@@ -93,7 +93,7 @@ async function handleSetupConfig(request, env, method, isInstalled) {
 // -- Step 2: Install ------------------------------------------------------
 
 async function handleInstall(request, env, method, isInstalled, url) {
-  if (isInstalled && !url.searchParams.has('force')) {
+  if (isInstalled) {
     return htmlResponse(renderAlreadyInstalled(), 200);
   }
 
@@ -247,13 +247,15 @@ async function runInstall(env, step1, adminInfo) {
 
     // Save full config to KV
     await saveConfig(env, {
-      SITE_URL:    siteUrl,
-      SITE_NAME:   siteName,
-      ADMIN_EMAIL: step1.admin_email || '',
-      DB_PREFIX:   prefix,
-      GITHUB_REPO: step1.github_repo || '',
-      ADMIN_SLUG:  adminSlug,
-      installed:   true,
+      SITE_URL:          siteUrl,
+      SITE_NAME:         siteName,
+      ADMIN_EMAIL:       step1.admin_email || '',
+      DB_PREFIX:         prefix,
+      GITHUB_REPO:       step1.github_repo || '',
+      ADMIN_SLUG:        adminSlug,
+      installed:         true,
+      installed_version: '1.2.0',
+      installed_at:      new Date().toISOString(),
     });
 
     return { success: true, admin_user: adminInfo.admin_user, admin_slug: adminSlug };
@@ -554,13 +556,13 @@ function renderInstallSuccess(result) {
 }
 
 function renderAlreadyInstalled() {
-  return layout('Already Installed', `
+  return layout('이미 설치됨', `
     <div class="install-card">
-      <h2>CloudPress is already installed.</h2>
-      <p>If you need to reinstall, add <code>?force=1</code> to the URL (this will reset your database).</p>
+      <h2>CloudPress가 이미 설치되어 있습니다.</h2>
+      <p>설치는 한 번만 실행할 수 있습니다. 재설치는 지원되지 않습니다.</p>
       <p>
-        <a href="/cp-login" class="btn btn-primary">Log In</a>
-        <a href="/" class="btn btn-secondary">Visit Site</a>
+        <a href="/cp-login" class="btn btn-primary">로그인</a>
+        <a href="/" class="btn btn-secondary">사이트 방문</a>
       </p>
     </div>
   `);
