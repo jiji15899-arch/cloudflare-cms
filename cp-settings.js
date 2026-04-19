@@ -1,51 +1,44 @@
 /**
  * CloudPress Settings & Runtime Initialization
- * Replaces WordPress wp-settings.php
  *
- * Loads:
- *  - Core includes (functions, hooks, query, users, etc.)
- *  - Active plugins (from D1)
- *  - Active theme (from D1/KV)
- *  - Fires init hooks
+ * [v3.1 성능 개선]
+ * - preloadOptions(): 부트 시 autoload 옵션 1회 배치 로드
+ * - parallel 초기화: 세션 + 플러그인 로드 병렬 실행
  *
  * @package CloudPress
  */
 
 import { CP_VERSION, CPINC, CPADMIN } from './cp-config.js';
-import { loadActivePlugins } from './cp-includes/plugin-loader.js';
-import { loadActiveTheme } from './cp-includes/theme-loader.js';
-import { registerCoreHooks } from './cp-includes/hooks.js';
-import { initSession } from './cp-includes/session.js';
+import { loadActivePlugins }           from './cp-includes/plugin-loader.js';
+import { loadActiveTheme }             from './cp-includes/theme-loader.js';
+import { registerCoreHooks }           from './cp-includes/hooks.js';
+import { initSession }                 from './cp-includes/session.js';
+import { preloadOptions }              from './cp-includes/option.js';
 
-/**
- * Initialize the CloudPress runtime on the `cp` context object.
- *
- * @param {object} cp - The CloudPress context (from cp-load.js)
- */
 export async function cpSettings(cp) {
-  // Expose version & paths on cp context
-  cp.version   = CP_VERSION;
-  cp.cpinc     = CPINC;
-  cp.cpadmin   = CPADMIN;
+  cp.version = CP_VERSION;
+  cp.cpinc   = CPINC;
+  cp.cpadmin = CPADMIN;
 
-  // Register core action/filter hooks
+  // 코어 훅 등록
   registerCoreHooks(cp);
 
-  // Initialize session (JWT-based, stored in KV)
-  await initSession(cp);
+  // 성능: autoload 옵션 사전 로드 (이후 getOption이 DB를 치지 않음)
+  await preloadOptions(cp);
 
-  // Fire 'plugins_loaded' equivalent: load active plugins from D1
+  // 세션 초기화 + 플러그인 로드 병렬 실행
+  await Promise.allSettled([
+    initSession(cp),
+    cp.config.installed ? loadActivePlugins(cp) : Promise.resolve(),
+  ]);
+
   if (cp.config.installed) {
-    await loadActivePlugins(cp);
     cp.hooks.doAction('cp_plugins_loaded', cp);
   }
 
-  // Load the active theme
+  // 테마 로드
   await loadActiveTheme(cp);
 
-  // Fire init
   cp.hooks.doAction('cp_init', cp);
-
-  // Fire wp_loaded equivalent
   cp.hooks.doAction('cp_loaded', cp);
 }
