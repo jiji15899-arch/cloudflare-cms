@@ -239,6 +239,12 @@ async function runInstall(env, step1, adminInfo) {
       now
     ).run();
 
+    // Generate randomized admin slug: cp-admin-XXXXXX
+    const adminSlug = 'cp-admin-' + Array.from(
+      crypto.getRandomValues(new Uint8Array(3))
+    ).map(b => String(b % 10)).join('').padStart(6, '0');
+    await env.CP_KV.put('cp:admin_slug', adminSlug);
+
     // Save full config to KV
     await saveConfig(env, {
       SITE_URL:    siteUrl,
@@ -246,10 +252,11 @@ async function runInstall(env, step1, adminInfo) {
       ADMIN_EMAIL: step1.admin_email || '',
       DB_PREFIX:   prefix,
       GITHUB_REPO: step1.github_repo || '',
+      ADMIN_SLUG:  adminSlug,
       installed:   true,
     });
 
-    return { success: true, admin_user: adminInfo.admin_user };
+    return { success: true, admin_user: adminInfo.admin_user, admin_slug: adminSlug };
   } catch (err) {
     console.error('[CloudPress Install]', err);
     return { success: false, message: `Install failed: ${err.message}` };
@@ -531,9 +538,15 @@ function renderInstallSuccess(result) {
           <th>Password</th>
           <td><em>The password you chose during installation.</em></td>
         </tr>
+        <tr>
+          <th>Admin URL</th>
+          <td><code>/${esc(result.admin_slug || 'cp-admin')}/</code>
+            <small style="color:#e74c3c;display:block;margin-top:4px">⚠ Save this URL — it is unique to your installation.</small>
+          </td>
+        </tr>
       </table>
       <p class="submit">
-        <a href="/cp-login" class="btn btn-primary">Log In to CloudPress Admin</a>
+        <a href="/${esc(result.admin_slug || 'cp-admin')}/" class="btn btn-primary">Log In to CloudPress Admin</a>
         <a href="/" class="btn btn-secondary">Visit Site</a>
       </p>
     </div>
