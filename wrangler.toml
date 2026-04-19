@@ -1,24 +1,12 @@
-# CloudPress CMS — Cloudflare Workers 배포 설정
+# CloudPress CMS — Cloudflare Workers 배포 설정 v4.0
 # wrangler.toml
 #
-# ── 배포 방법 (반드시 이 방법만 사용) ──────────────────────────────────────
-#
-#  ※ 주의: Cloudflare 대시보드에서 파일을 직접 업로드하지 마세요.
-#           반드시 아래 CLI 명령으로 배포하세요.
-#
+# ── 배포 방법 ──────────────────────────────────────────────────────────────
 #  1. D1 생성:   npx wrangler d1 create cloudpress-db
-#                → 출력된 database_id를 아래 database_id에 붙여넣기
-#
 #  2. KV 생성:   npx wrangler kv:namespace create CP_KV
-#                → 출력된 id를 아래 id에 붙여넣기
-#
 #  3. 스키마:    npx wrangler d1 execute cloudpress-db --file=schema.sql --remote
-#
 #  4. 시크릿:    npx wrangler secret put CP_AUTH_KEY
-#                npx wrangler secret put CP_ADMIN_EMAIL
-#
 #  5. 배포:      npx wrangler deploy
-#
 #  6. 접속:      https://<worker>.workers.dev/cp-admin/setup-config
 
 name               = "cloudflare-cms"
@@ -41,6 +29,11 @@ id      = "YOUR_KV_NAMESPACE_ID_HERE"
 CP_SITE_NAME    = "My CloudPress Site"
 CP_SITE_TAGLINE = "Just another CloudPress site"
 
+# ── 성능 최적화 설정 ──────────────────────────────────────────────────────────
+# Smart Placement: Worker를 요청 발원지에 가장 가까운 Cloudflare PoP에서 실행
+[placement]
+mode = "smart"
+
 # ── Cron Triggers ─────────────────────────────────────────────────────────────
 [triggers]
 crons = ["*/5 * * * *"]
@@ -48,6 +41,9 @@ crons = ["*/5 * * * *"]
 # ── Per-environment overrides ──────────────────────────────────────────────────
 [env.production]
 name = "cloudflare-cms-production"
+
+[env.production.vars]
+CP_SITE_NAME = "My CloudPress Site"
 
 [env.staging]
 name = "cloudflare-cms-staging"
