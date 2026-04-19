@@ -1432,7 +1432,7 @@ function wrapInFullPage(content, cp, templateName) {
       <a href="/" class="cp-site-name">${escHtml(siteName)}</a>
       <nav>
         <a href="/">홈</a>
-        <a href="/${escHtml(adminSlug)}/">관리자</a>
+        
       </nav>
     </div>
   </header>
@@ -1443,7 +1443,7 @@ function wrapInFullPage(content, cp, templateName) {
   </div>
   <footer class="cp-footer">
     <div class="cp-container">
-      &copy; ${(/* @__PURE__ */ new Date()).getFullYear()} ${escHtml(siteName)} &mdash; <a href="https://cloudpress.pages.dev">CloudPress</a>
+      &copy; ${(/* @__PURE__ */ new Date()).getFullYear()} ${escHtml(siteName)}
     </div>
   </footer>
 </body>
@@ -1462,8 +1462,6 @@ function defaultTemplate(templateName, context) {
            <div class="entry-content">${content}</div>
          </article>` : `<div style="text-align:center;padding:4rem 0">
            <h1>${escHtml(siteName)}</h1>
-           <p style="color:#646970">\uC774 \uC0AC\uC774\uD2B8\uB294 CloudPress\uB85C \uC6B4\uC601 \uC911\uC785\uB2C8\uB2E4.</p>
-           <p><a href="/cp-admin" style="color:#2271b1">\uAD00\uB9AC\uC790 \uD328\uB110 \u2192</a></p>
          </div>`,
     cp,
     templateName
@@ -5017,120 +5015,82 @@ function submitPublish() {
 // ---------------------------------------------------------------------------
 // 카테고리 저장 헬퍼 (term_relationships + term_taxonomy count 갱신)
 // ---------------------------------------------------------------------------
+
 async function savePostCategories(cp, prefix, postId, categoryIds) {
   if (!postId) return;
   try {
     await cp.db.prepare(
-      `DELETE FROM ${prefix}term_relationships
-       WHERE object_id = ?
-         AND term_taxonomy_id IN (
-           SELECT term_taxonomy_id FROM ${prefix}term_taxonomy WHERE taxonomy = 'category'
-         )`
+      `DELETE FROM ${prefix}term_relationships WHERE object_id=? AND term_taxonomy_id IN (SELECT term_taxonomy_id FROM ${prefix}term_taxonomy WHERE taxonomy='category')`
     ).bind(postId).run();
-  } catch (_) {}
-
-  const ids = (categoryIds || []).map(c => parseInt(c)).filter(Boolean);
+  } catch(_) {}
+  const ids = (categoryIds||[]).map(c=>parseInt(c)).filter(Boolean);
   if (!ids.length) return;
-
-  // 한 번에 모든 term_taxonomy 조회
-  const placeholders = ids.map(() => '?').join(',');
+  const ph = ids.map(()=>'?').join(',');
   const ttRows = await cp.db.prepare(
-    `SELECT term_id, term_taxonomy_id FROM ${prefix}term_taxonomy
-     WHERE term_id IN (${placeholders}) AND taxonomy = 'category'`
-  ).bind(...ids).all().catch(() => ({ results: [] }));
-
-  // 배치 INSERT
-  for (const tt of (ttRows.results || [])) {
+    `SELECT term_id, term_taxonomy_id FROM ${prefix}term_taxonomy WHERE term_id IN (${ph}) AND taxonomy='category'`
+  ).bind(...ids).all().catch(()=>({results:[]}));
+  for (const tt of (ttRows.results||[])) {
     await cp.db.prepare(
-      `INSERT OR IGNORE INTO ${prefix}term_relationships (object_id, term_taxonomy_id) VALUES (?, ?)`
-    ).bind(postId, tt.term_taxonomy_id).run().catch(() => {});
+      `INSERT OR IGNORE INTO ${prefix}term_relationships (object_id,term_taxonomy_id) VALUES(?,?)`
+    ).bind(postId,tt.term_taxonomy_id).run().catch(()=>{});
   }
-
-  // count 갱신: 개별 루프 대신 단일 UPDATE로 처리
+  // 개별 루프 없이 단일 서브쿼리 UPDATE
   await cp.db.prepare(
-    `UPDATE ${prefix}term_taxonomy
-     SET count = (
-       SELECT COUNT(*) FROM ${prefix}term_relationships tr
-       JOIN ${prefix}posts p ON p.ID = tr.object_id
-       WHERE tr.term_taxonomy_id = ${prefix}term_taxonomy.term_taxonomy_id
-         AND p.post_status = 'publish'
-     )
-     WHERE taxonomy = 'category'`
-  ).run().catch(() => {});
+    `UPDATE ${prefix}term_taxonomy SET count=(SELECT COUNT(*) FROM ${prefix}term_relationships tr JOIN ${prefix}posts p ON p.ID=tr.object_id WHERE tr.term_taxonomy_id=${prefix}term_taxonomy.term_taxonomy_id AND p.post_status='publish') WHERE taxonomy='category'`
+  ).run().catch(()=>{});
 }
-// ---------------------------------------------------------------------------
-// 태그 저장 헬퍼
-// ---------------------------------------------------------------------------
 
 async function savePostTags(cp, prefix, postId, tagsStr) {
   if (!postId) return;
-
-  // 기존 태그 관계 삭제
   try {
     await cp.db.prepare(
-      `DELETE FROM ${prefix}term_relationships
-       WHERE object_id = ?
-         AND term_taxonomy_id IN (
-           SELECT term_taxonomy_id FROM ${prefix}term_taxonomy WHERE taxonomy = 'post_tag'
-         )`
+      `DELETE FROM ${prefix}term_relationships WHERE object_id=? AND term_taxonomy_id IN (SELECT term_taxonomy_id FROM ${prefix}term_taxonomy WHERE taxonomy='post_tag')`
     ).bind(postId).run();
-  } catch (_) {}
-
-  const tagNames = (tagsStr || '').split(',').map(t => t.trim()).filter(Boolean);
+  } catch(_) {}
+  const tagNames = (tagsStr||'').split(',').map(t=>t.trim()).filter(Boolean);
+  if (!tagNames.length) return;
+  // 기존 태그 한 번에 조회 (루프 SELECT 제거)
+  const ph = tagNames.map(()=>'?').join(',');
+  const existingRows = await cp.db.prepare(
+    `SELECT t.term_id, t.name, tt.term_taxonomy_id FROM ${prefix}terms t JOIN ${prefix}term_taxonomy tt ON tt.term_id=t.term_id AND tt.taxonomy='post_tag' WHERE t.name IN (${ph})`
+  ).bind(...tagNames).all().catch(()=>({results:[]}));
+  const existingMap = new Map((existingRows.results||[]).map(r=>[r.name,r]));
   for (const name of tagNames) {
     try {
-      // term 있으면 재사용, 없으면 생성
-      let term = await cp.db.prepare(
-        `SELECT t.term_id FROM ${prefix}terms t WHERE t.name = ? LIMIT 1`
-      ).bind(name).first();
-
-      let termId;
-      if (term) {
-        termId = term.term_id;
+      let termTaxonomyId;
+      if (existingMap.has(name)) {
+        termTaxonomyId = existingMap.get(name).term_taxonomy_id;
       } else {
-        const slug = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\-가-힣]/g, '');
-        const ins = await cp.db.prepare(
-          `INSERT INTO ${prefix}terms (name, slug) VALUES (?, ?)`
-        ).bind(name, slug).run();
-        termId = ins.meta?.last_row_id;
+        const slug = name.toLowerCase().replace(/\s+/g,'-').replace(/[^a-z0-9\-가-힣]/g,'');
+        const ins = await cp.db.prepare(`INSERT INTO ${prefix}terms (name,slug) VALUES(?,?)`).bind(name,slug).run();
+        const termId = ins.meta?.last_row_id;
+        if (!termId) continue;
+        const ttIns = await cp.db.prepare(`INSERT INTO ${prefix}term_taxonomy (term_id,taxonomy,description,parent,count) VALUES(?,'post_tag','',0,0)`).bind(termId).run();
+        termTaxonomyId = ttIns.meta?.last_row_id;
       }
-
-      // term_taxonomy 확인/생성
-      let tt = await cp.db.prepare(
-        `SELECT term_taxonomy_id FROM ${prefix}term_taxonomy WHERE term_id = ? AND taxonomy = 'post_tag' LIMIT 1`
-      ).bind(termId).first();
-      if (!tt) {
-        const ttIns = await cp.db.prepare(
-          `INSERT INTO ${prefix}term_taxonomy (term_id, taxonomy, description, parent, count) VALUES (?, 'post_tag', '', 0, 0)`
-        ).bind(termId).run();
-        tt = { term_taxonomy_id: ttIns.meta?.last_row_id };
+      if (termTaxonomyId) {
+        await cp.db.prepare(`INSERT OR IGNORE INTO ${prefix}term_relationships (object_id,term_taxonomy_id) VALUES(?,?)`).bind(postId,termTaxonomyId).run();
       }
-
-      // term_relationships 삽입
-      await cp.db.prepare(
-        `INSERT OR IGNORE INTO ${prefix}term_relationships (object_id, term_taxonomy_id) VALUES (?, ?)`
-      ).bind(postId, tt.term_taxonomy_id).run();
-    } catch (_) {}
+    } catch(_) {}
   }
 }
 
 async function savePostMeta(cp, prefix, postId, metaIds, metaKeys, metaValues) {
   if (!postId || !metaKeys?.length) return;
-
-  // 기존 사용자 정의 메타(내부 _ 제외) 삭제 후 재삽입
   await cp.db.prepare(
     `DELETE FROM ${prefix}postmeta WHERE post_id=? AND meta_key NOT LIKE '\\_%' ESCAPE '\\'`
-  ).bind(postId).run().catch(() => {});
-
+  ).bind(postId).run().catch(()=>{});
+  // D1 batch: 여러 INSERT를 한 번의 왕복으로
+  const stmts = [];
   for (let i = 0; i < metaKeys.length; i++) {
-    const key = (metaKeys[i] || '').trim();
-    const val = metaValues[i] || '';
+    const key = (metaKeys[i]||'').trim();
+    const val = metaValues[i]||'';
     if (!key || key.startsWith('_')) continue;
-    await cp.db.prepare(
-      `INSERT INTO ${prefix}postmeta (post_id, meta_key, meta_value) VALUES (?,?,?)`
-    ).bind(postId, key, val).run().catch(() => {});
+    stmts.push(cp.db.prepare(`INSERT INTO ${prefix}postmeta (post_id,meta_key,meta_value) VALUES(?,?,?)`).bind(postId,key,val));
   }
+  if (stmts.length) await cp.db.batch(stmts).catch(()=>{});
 }
+
 
 // ---------------------------------------------------------------------------
 // 언어 레이블
