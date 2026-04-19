@@ -1,10 +1,10 @@
 /**
  * CloudPress Admin Panel - Main Entry
- * Replaces WordPress wp-admin/index.php + wp-admin/admin.php
  *
- * Routes all /cp-admin/* requests to the appropriate admin handler.
- * Uses JWT-based auth (no PHP sessions / wp-login.php).
- * D1 for data, KV for cache/sessions.
+ * [v3.1 수정]
+ * - 테마 에디터 / 플러그인 에디터 404 수정 → 실제 핸들러 추가
+ * - 관리자 URL 슬러그 라우팅 지원 (cp-router에서 /cp-admin으로 재작성 후 진입)
+ * - 한국어 404 메시지
  *
  * @package CloudPress
  */
@@ -14,12 +14,11 @@ import { requireAdmin }     from './auth-check.js';
 import { renderAdminShell } from './admin-shell.js';
 import { handleInstaller }  from './installer.js';
 
-// -- Sub-page handlers ------------------------------------------------------
 import { handleDashboard }         from './pages/dashboard.js';
 import { handlePosts }             from './pages/posts.js';
 import { handlePostEdit }          from './pages/post-edit.js';
 import { handlePages }             from './pages/pages.js';
-import { handleMediaPage }             from './pages/media.js';
+import { handleMediaPage }         from './pages/media.js';
 import { handleComments }          from './pages/comments.js';
 import { handleThemes }            from './pages/themes.js';
 import { handlePlugins }           from './pages/plugins.js';
@@ -39,58 +38,41 @@ import { handleTools }             from './pages/tools.js';
 import { handleUpgrade }           from './pages/upgrade.js';
 import { handleAjax }              from './ajax.js';
 import { handleGithubSync }        from './github-sync.js';
+import { handleThemeEditor }       from './pages/theme-editor.js';
+import { handlePluginEditor }      from './pages/plugin-editor.js';
 
-/**
- * Main admin request handler.
- *
- * @param {Request} request
- * @param {object}  env
- * @param {object}  ctx
- * @returns {Promise<Response>}
- */
 export async function handleAdmin(request, env, ctx) {
   const url    = new URL(request.url);
   const path   = url.pathname.replace(/\/+$/, '') || '/cp-admin';
   const method = request.method.toUpperCase();
 
-  // -- Installer routes (no auth required) ----------------------------------
   if (path === '/cp-admin/setup-config' || path === '/cp-admin/install') {
     return handleInstaller(request, env, ctx);
   }
-
-  // -- AJAX (may handle its own auth internally) -----------------------------
   if (path === '/cp-admin/admin-ajax' || path === '/cp-admin/admin-ajax.js') {
     return handleAjax(request, env, ctx);
   }
-
-  // -- GitHub Sync (REST-style endpoint, requires admin) ---------------------
   if (path === '/cp-admin/github-sync' || path.startsWith('/cp-admin/github-sync/')) {
     return handleGithubSync(request, env, ctx);
   }
 
-  // -- Bootstrap -------------------------------------------------------------
   const cp = await cpLoad(request, env, ctx);
   if (cp.__cpError) return cp.response;
 
-  // -- Auth check (redirect to /cp-login if not admin) ----------------------
   const authResult = await requireAdmin(cp);
-  if (authResult) return authResult; // redirect response
+  if (authResult) return authResult;
 
-  // -- Dispatch to sub-page handler -----------------------------------------
   return dispatchAdmin(request, env, ctx, cp, path, method, url);
 }
 
-/**
- * Route /cp-admin/* to the correct page handler.
- */
 async function dispatchAdmin(request, env, ctx, cp, path, method, url) {
-  // Dashboard (default)
+  // Dashboard
   if (path === '/cp-admin' || path === '/cp-admin/index') {
     return handleDashboard(request, cp);
   }
 
   // Posts
-  if (path === '/cp-admin/edit') {
+  if (path === '/cp-admin/edit' && url.searchParams.get('post_type') !== 'page') {
     return handlePosts(request, cp);
   }
   if (path === '/cp-admin/post-new' || path === '/cp-admin/post') {
@@ -115,14 +97,20 @@ async function dispatchAdmin(request, env, ctx, cp, path, method, url) {
     return handleComments(request, cp);
   }
 
-  // Themes
+  // Themes + Theme Editor
   if (path === '/cp-admin/themes' || path === '/cp-admin/theme-install') {
     return handleThemes(request, cp);
   }
+  if (path === '/cp-admin/theme-editor') {
+    return handleThemeEditor(request, cp);
+  }
 
-  // Plugins
+  // Plugins + Plugin Editor
   if (path === '/cp-admin/plugins' || path === '/cp-admin/plugin-install') {
     return handlePlugins(request, cp);
+  }
+  if (path === '/cp-admin/plugin-editor') {
+    return handlePluginEditor(request, cp);
   }
 
   // Users
@@ -136,48 +124,36 @@ async function dispatchAdmin(request, env, ctx, cp, path, method, url) {
     return handleProfile(request, cp);
   }
 
-  // Options / Settings
-  if (path === '/cp-admin/options-general') {
-    return handleOptionsGeneral(request, cp);
-  }
-  if (path === '/cp-admin/options-writing') {
-    return handleOptionsWriting(request, cp);
-  }
-  if (path === '/cp-admin/options-reading') {
-    return handleOptionsReading(request, cp);
-  }
-  if (path === '/cp-admin/options-discussion') {
-    return handleOptionsDiscussion(request, cp);
-  }
-  if (path === '/cp-admin/options-media') {
-    return handleOptionsMedia(request, cp);
-  }
-  if (path === '/cp-admin/options-permalink') {
-    return handleOptionsPermalink(request, cp);
-  }
-  if (path === '/cp-admin/options') {
-    return handleOptions(request, cp);
-  }
+  // Settings
+  if (path === '/cp-admin/options-general')    return handleOptionsGeneral(request, cp);
+  if (path === '/cp-admin/options-writing')    return handleOptionsWriting(request, cp);
+  if (path === '/cp-admin/options-reading')    return handleOptionsReading(request, cp);
+  if (path === '/cp-admin/options-discussion') return handleOptionsDiscussion(request, cp);
+  if (path === '/cp-admin/options-media')      return handleOptionsMedia(request, cp);
+  if (path === '/cp-admin/options-permalink')  return handleOptionsPermalink(request, cp);
+  if (path === '/cp-admin/options')            return handleOptions(request, cp);
 
   // Tools
-  if (path === '/cp-admin/tools') {
-    return handleTools(request, cp);
-  }
-  if (path === '/cp-admin/import') {
-    return handleImport(request, cp);
-  }
-  if (path === '/cp-admin/export') {
-    return handleExport(request, cp);
-  }
+  if (path === '/cp-admin/tools')   return handleTools(request, cp);
+  if (path === '/cp-admin/import')  return handleImport(request, cp);
+  if (path === '/cp-admin/export')  return handleExport(request, cp);
 
-  // Core upgrade
+  // Upgrade
   if (path === '/cp-admin/update-core' || path === '/cp-admin/upgrade') {
     return handleUpgrade(request, cp);
   }
 
-  // 404 within admin
+  // 404
   return new Response(
-    await renderAdminShell(cp, '<h2>Page Not Found</h2><p>The requested admin page does not exist.</p>', { title: '404 Not Found' }),
+    await renderAdminShell(cp,
+      `<div style="text-align:center;padding:4rem 0">
+        <div style="font-size:3rem;margin-bottom:1rem">🔍</div>
+        <h2 style="font-size:1.5rem;margin:0 0 .5rem">페이지를 찾을 수 없습니다</h2>
+        <p style="color:#646970">요청한 관리자 페이지가 존재하지 않습니다.</p>
+        <a href="/cp-admin" class="cp-btn" style="margin-top:1rem">대시보드로 돌아가기</a>
+      </div>`,
+      { title: '404 페이지 없음' }
+    ),
     { status: 404, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
   );
 }
