@@ -4545,7 +4545,7 @@ function insertBlock(blockId) {
       const alt = prompt('대체 텍스트 (선택):') || '';
       newEl = document.createElement('figure');
       newEl.setAttribute('data-block', 'image');
-      newEl.innerHTML = `<img src="${src}" alt="${alt}" style="max-width:100%;border-radius:4px">`;
+      newEl.innerHTML = \`<img src="${src}" alt="${alt}" style="max-width:100%;border-radius:4px">\`;
       break;
     }
     case 'video': {
@@ -4555,8 +4555,8 @@ function insertBlock(blockId) {
       newEl = document.createElement('figure');
       newEl.setAttribute('data-block', 'video');
       newEl.innerHTML = vid
-        ? `<iframe src="https://www.youtube.com/embed/${vid}" width="100%" height="315" frameborder="0" allowfullscreen style="border-radius:4px;display:block"></iframe>`
-        : `<a href="${vurl}" target="_blank">${vurl}</a>`;
+        ? \`<iframe src="https://www.youtube.com/embed/${vid}" width="100%" height="315" frameborder="0" allowfullscreen style="border-radius:4px;display:block"></iframe>\`
+        : \`<a href="${vurl}" target="_blank">${vurl}</a>\`;
       break;
     }
     case 'button': {
@@ -4565,7 +4565,7 @@ function insertBlock(blockId) {
       newEl = document.createElement('div');
       newEl.setAttribute('data-block', 'button');
       newEl.className = 'cp-block-button-wrap';
-      newEl.innerHTML = `<a href="${href}" class="cp-block-btn">${txt}</a>`;
+      newEl.innerHTML = \`<a href="${href}" class="cp-block-btn">${txt}</a>\`;
       break;
     }
     case 'table': {
@@ -4573,7 +4573,7 @@ function insertBlock(blockId) {
       const rows = parseInt(prompt('행 수 (헤더 포함):', '3') || '3');
       newEl = document.createElement('table');
       newEl.setAttribute('data-block', 'table');
-      let html = '<thead><tr>' + Array(cols).fill(0).map((_,i) => `<th contenteditable="true">제목 ${i+1}</th>`).join('') + '</tr></thead><tbody>';
+      let html = '<thead><tr>' + Array(cols).fill(0).map((_,i) => \`<th contenteditable="true">제목 ${i+1}</th>\`).join('') + '</tr></thead><tbody>';
       for (let r = 1; r < rows; r++) {
         html += '<tr>' + Array(cols).fill(0).map(() => '<td contenteditable="true">내용</td>').join('') + '</tr>';
       }
@@ -4673,18 +4673,18 @@ function renderSlashMenu() {
     );
     if (!matched.length) return;
 
-    html += `<div class="slash-menu-section${first ? ' first' : ''}">${group.group}</div>`;
+    html += \`<div class="slash-menu-section${first ? ' first' : ''}">${group.group}</div>\`;
     first = false;
 
     matched.forEach(item => {
       const isSelected = totalIdx === selectedIdx;
-      html += `<div class="slash-menu-item${isSelected ? ' selected' : ''}" role="option" data-block-id="${item.id}" onclick="insertBlock('${item.id}')">
+      html += \`<div class="slash-menu-item${isSelected ? ' selected' : ''}" role="option" data-block-id="${item.id}" onclick="insertBlock('${item.id}')">
         <span class="slash-menu-icon">${item.icon}</span>
         <div>
           <div class="slash-menu-label">${item.label}</div>
           <div class="slash-menu-desc">${item.desc}</div>
         </div>
-      </div>`;
+      </div>\`;
       totalIdx++;
     });
   });
@@ -5275,21 +5275,6 @@ function getLabels(lang) {
     blockquote: 'Blockquote', separator: 'Horizontal Rule', link: 'Insert Link', image: 'Insert Image', removeFormat: 'Remove Formatting',
   };
   return lang === 'ko_KR' ? KO : EN;
-}
-
-// ---------------------------------------------------------------------------
-// 헬퍼
-// ---------------------------------------------------------------------------
-
-function esc(s) {
-  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-function formatDate(d) {
-  if (!d) return '';
-  try { return new Date(d).toLocaleString('ko-KR'); } catch (_) { return d; }
-}
-function slugify(str) {
-  return (str || '').toLowerCase().replace(/[\s]+/g,'-').replace(/[^a-z0-9\-가-힣]/g,'').replace(/^-|-$/g,'');
 }
 
 __name(handlePostEdit, "handlePostEdit");
