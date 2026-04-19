@@ -131,14 +131,56 @@ export async function handlePostEdit(request, cp, opts = {}) {
 #titlediv .permalink-row{padding:6px 20px 10px;font-size:13px;color:#646970;border-top:1px solid #f0f0f1}
 #titlediv .permalink-row a{color:#2271b1;text-decoration:none}
 #titlediv .permalink-row a:hover{text-decoration:underline}
-/* 에디터 */
-#wp-content-editor-tools{padding:8px 12px;border-bottom:1px solid #dcdcde;display:flex;gap:4px;flex-wrap:wrap;background:#f9f9f9}
-.toolbar-btn{padding:4px 8px;border:1px solid #dcdcde;border-radius:3px;background:#fff;cursor:pointer;font-size:13px;line-height:1.4;transition:.1s}
+/* ── 블록 에디터 ── */
+#wp-content-editor-tools{padding:8px 12px;border-bottom:1px solid #dcdcde;display:flex;gap:4px;flex-wrap:wrap;background:#f9f9f9;align-items:center}
+.toolbar-btn{padding:4px 8px;border:1px solid #dcdcde;border-radius:3px;background:#fff;cursor:pointer;font-size:13px;line-height:1.4;transition:.1s;position:relative}
 .toolbar-btn:hover{background:#f0f0f1;border-color:#8c8f94}
 .toolbar-btn.active{background:#e0e0e0}
-.toolbar-sep{width:1px;background:#dcdcde;margin:2px 4px}
-#editor-visual{min-height:380px;padding:20px;outline:none;font-size:15px;line-height:1.7;color:#1d2327}
-#editor-html{display:none;width:100%;min-height:380px;padding:20px;border:none;font-family:monospace;font-size:13px;resize:vertical;outline:none;color:#1d2327}
+.toolbar-sep{width:1px;background:#dcdcde;margin:2px 4px;align-self:stretch}
+/* 블록 컨테이너 */
+#block-editor-wrap{position:relative;min-height:420px}
+#block-editor{min-height:420px;padding:16px 20px 60px;outline:none;font-size:15px;line-height:1.8;color:#1d2327;cursor:text}
+#block-editor:focus{outline:none}
+#block-editor [data-block]{position:relative;margin:0 0 4px;border-radius:4px;transition:.1s}
+#block-editor [data-block]:hover{outline:1px dashed #dcdcde}
+#block-editor [data-block]:focus-within{outline:2px solid rgba(34,113,177,.25)}
+/* 블록 타입별 스타일 */
+#block-editor p{margin:0 0 2px;padding:4px 0}
+#block-editor h1{font-size:2rem;font-weight:800;margin:8px 0 4px;line-height:1.2}
+#block-editor h2{font-size:1.5rem;font-weight:700;margin:8px 0 4px}
+#block-editor h3{font-size:1.25rem;font-weight:700;margin:6px 0 4px}
+#block-editor h4{font-size:1.1rem;font-weight:700;margin:6px 0 4px}
+#block-editor h5{font-size:1rem;font-weight:700;margin:4px 0}
+#block-editor h6{font-size:.9rem;font-weight:700;margin:4px 0;color:#646970}
+#block-editor blockquote{border-left:4px solid #2271b1;margin:8px 0;padding:8px 16px;background:#f8f9fa;border-radius:0 4px 4px 0;color:#3c434a}
+#block-editor pre{background:#1d2327;color:#e0e0e0;padding:14px 16px;border-radius:4px;font-family:monospace;font-size:13px;overflow-x:auto;margin:8px 0}
+#block-editor code{background:#f0f0f1;padding:2px 6px;border-radius:3px;font-family:monospace;font-size:13px}
+#block-editor hr{border:none;border-top:2px solid #dcdcde;margin:16px 0}
+#block-editor ul,#block-editor ol{padding-left:24px;margin:4px 0}
+#block-editor li{padding:2px 0}
+#block-editor img{max-width:100%;border-radius:4px;display:block;margin:8px 0}
+#block-editor .cp-block-button-wrap{margin:8px 0}
+#block-editor .cp-block-btn{display:inline-block;background:#2271b1;color:#fff;padding:10px 22px;border-radius:4px;text-decoration:none;font-size:15px;font-weight:500;cursor:default}
+#block-editor table{width:100%;border-collapse:collapse;margin:8px 0}
+#block-editor table td,#block-editor table th{border:1px solid #dcdcde;padding:8px 12px;font-size:14px}
+#block-editor table th{background:#f0f0f1;font-weight:600}
+/* 슬래시 커맨드 팝업 */
+#slash-menu{position:absolute;background:#fff;border:1px solid #dcdcde;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:260px;max-height:320px;overflow-y:auto;z-index:999;display:none}
+#slash-menu.visible{display:block}
+.slash-menu-item{display:flex;align-items:center;gap:10px;padding:8px 14px;cursor:pointer;transition:.1s;font-size:13px}
+.slash-menu-item:hover,.slash-menu-item.selected{background:#f0f6ff}
+.slash-menu-icon{font-size:18px;width:28px;text-align:center;flex-shrink:0}
+.slash-menu-label{font-weight:600;color:#1d2327}
+.slash-menu-desc{font-size:11px;color:#646970;margin-top:1px}
+.slash-menu-section{padding:6px 14px 4px;font-size:11px;font-weight:700;color:#646970;text-transform:uppercase;letter-spacing:.5px;border-top:1px solid #f0f0f1;margin-top:4px}
+.slash-menu-section:first-child{border-top:none;margin-top:0}
+/* 블록 추가 힌트 */
+.cp-block-hint{display:flex;align-items:center;gap:8px;padding:10px 4px;color:#c3c4c7;font-size:14px;cursor:text;user-select:none}
+.cp-block-hint:hover{color:#8c8f94}
+.cp-block-add-btn{width:24px;height:24px;border-radius:50%;border:1.5px solid #c3c4c7;background:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;color:#c3c4c7;transition:.15s;flex-shrink:0}
+.cp-block-add-btn:hover{border-color:#2271b1;color:#2271b1;background:rgba(34,113,177,.05)}
+/* HTML 뷰 */
+#editor-html{display:none;width:100%;min-height:420px;padding:20px;border:none;font-family:'JetBrains Mono','Fira Code',monospace;font-size:13px;resize:vertical;outline:none;color:#1d2327;line-height:1.7;background:#fafafa}
 /* 커스텀 필드 */
 #custom-fields-table{width:100%;border-collapse:collapse;font-size:13px}
 #custom-fields-table th{text-align:left;padding:6px 8px;background:#f0f0f1;font-weight:600;border:1px solid #dcdcde}
@@ -183,31 +225,24 @@ export async function handlePostEdit(request, cp, opts = {}) {
       </div>
       <div class="metabox-body" style="padding:0">
         <div id="wp-content-editor-tools">
-          <button type="button" class="toolbar-btn" onclick="execCmd('bold')" title="${L.bold}"><b>B</b></button>
-          <button type="button" class="toolbar-btn" onclick="execCmd('italic')" title="${L.italic}"><i>I</i></button>
-          <button type="button" class="toolbar-btn" onclick="execCmd('underline')" title="${L.underline}"><u>U</u></button>
-          <button type="button" class="toolbar-btn" onclick="execCmd('strikeThrough')" title="${L.strikethrough}"><s>S</s></button>
+          <button type="button" class="toolbar-btn" onclick="execFmt('bold')" title="굵게"><b>B</b></button>
+          <button type="button" class="toolbar-btn" onclick="execFmt('italic')" title="기울임"><i>I</i></button>
+          <button type="button" class="toolbar-btn" onclick="execFmt('underline')" title="밑줄"><u>U</u></button>
+          <button type="button" class="toolbar-btn" onclick="execFmt('strikeThrough')" title="취소선"><s>S</s></button>
           <div class="toolbar-sep"></div>
-          ${['h1','h2','h3','h4','h5','h6'].map(h =>
-            `<button type="button" class="toolbar-btn" onclick="formatHeading('${h}')">${h.toUpperCase()}</button>`
-          ).join('')}
+          <button type="button" class="toolbar-btn" onclick="insertLink2()" title="링크">🔗</button>
+          <button type="button" class="toolbar-btn" onclick="insertImage2()" title="이미지">🖼</button>
           <div class="toolbar-sep"></div>
-          <button type="button" class="toolbar-btn" onclick="execCmd('insertUnorderedList')" title="${L.bulletList}">&#8226;&#8226;</button>
-          <button type="button" class="toolbar-btn" onclick="execCmd('insertOrderedList')" title="${L.numberedList}">1.</button>
-          <button type="button" class="toolbar-btn" onclick="execCmd('indent')" title="${L.indent}">&rarr;</button>
-          <button type="button" class="toolbar-btn" onclick="execCmd('outdent')" title="${L.outdent}">&larr;</button>
-          <div class="toolbar-sep"></div>
-          <button type="button" class="toolbar-btn" onclick="insertBlockquote()" title="${L.blockquote}">&ldquo;&rdquo;</button>
-          <button type="button" class="toolbar-btn" onclick="insertHr()" title="${L.separator}">&#9135;</button>
-          <button type="button" class="toolbar-btn" onclick="insertLink2()" title="${L.link}">&#128279;</button>
-          <button type="button" class="toolbar-btn" onclick="insertImage2()" title="${L.image}">&#128247;</button>
-          <button type="button" class="toolbar-btn" onclick="execCmd('removeFormat')" title="${L.removeFormat}">Tx</button>
+          <button type="button" class="toolbar-btn" onclick="execFmt('removeFormat')" title="서식 제거" style="font-size:11px">Tx</button>
           <div style="flex:1"></div>
-          <button type="button" class="toolbar-btn" id="btn-visual" onclick="switchEditorTab('visual')" style="background:#e0e0e0">Visual</button>
-          <button type="button" class="toolbar-btn" id="btn-html" onclick="switchEditorTab('html')">HTML</button>
+          <button type="button" class="toolbar-btn" id="btn-visual" onclick="switchEditorTab('visual')" style="background:#e0e0e0" title="비주얼 편집">비주얼</button>
+          <button type="button" class="toolbar-btn" id="btn-html" onclick="switchEditorTab('html')" title="HTML 편집">HTML</button>
         </div>
-        <div id="editor-visual" contenteditable="true" oninput="syncEditors()">${post?.post_content || ''}</div>
-        <textarea id="editor-html" name="post_content" oninput="syncFromHtml()">${esc(post?.post_content || '')}</textarea>
+        <div id="block-editor-wrap">
+          <div id="block-editor" contenteditable="true" spellcheck="true"></div>
+          <div id="slash-menu" role="listbox" aria-label="블록 선택"></div>
+        </div>
+        <textarea id="editor-html" name="post_content">${esc(post?.post_content || '')}</textarea>
       </div>
     </div>
 
@@ -412,91 +447,503 @@ export async function handlePostEdit(request, cp, opts = {}) {
 </form>
 
 <script>
-// ── 에디터 ────────────────────────────────────────────────
-let editorMode = 'visual';
+// ═══════════════════════════════════════════════════════════════
+// CloudPress 블록 에디터 — / 슬래시 커맨드
+// ═══════════════════════════════════════════════════════════════
 
-function execCmd(cmd) {
-  document.getElementById('editor-visual').focus();
+const editor = document.getElementById('block-editor');
+const slashMenu = document.getElementById('slash-menu');
+let editorMode = 'visual';
+let slashQuery = '';
+let slashRange = null;
+let selectedIdx = 0;
+
+// ── 초기화: 기존 콘텐츠 로드 ─────────────────────────────────
+(function initEditor() {
+  const raw = document.getElementById('editor-html').value;
+  if (raw.trim()) {
+    editor.innerHTML = raw;
+  } else {
+    insertEmptyParagraph();
+  }
+  // 각 블록에 data-block 속성 부여
+  normalizeBlocks();
+})();
+
+function insertEmptyParagraph() {
+  const p = document.createElement('p');
+  p.setAttribute('data-block', 'paragraph');
+  p.innerHTML = '<br>';
+  editor.appendChild(p);
+  placeCursorIn(p);
+}
+
+function normalizeBlocks() {
+  Array.from(editor.childNodes).forEach(node => {
+    if (node.nodeType === 3 && node.textContent.trim()) {
+      // 텍스트 노드 → p로 래핑
+      const p = document.createElement('p');
+      p.setAttribute('data-block', 'paragraph');
+      p.textContent = node.textContent;
+      editor.replaceChild(p, node);
+    } else if (node.nodeType === 1 && !node.getAttribute('data-block')) {
+      node.setAttribute('data-block', guessBlockType(node));
+    }
+  });
+}
+
+function guessBlockType(el) {
+  const tag = el.tagName?.toLowerCase();
+  if (/^h[1-6]$/.test(tag)) return 'heading';
+  if (tag === 'blockquote') return 'quote';
+  if (tag === 'pre') return 'code';
+  if (tag === 'ul') return 'list';
+  if (tag === 'ol') return 'list-ordered';
+  if (tag === 'hr') return 'separator';
+  if (tag === 'table') return 'table';
+  if (tag === 'figure' || tag === 'img') return 'image';
+  return 'paragraph';
+}
+
+// ── 블록 정의 ─────────────────────────────────────────────────
+const BLOCKS = [
+  { group: '텍스트', items: [
+    { id: 'paragraph',  icon: '¶',  label: '단락',     desc: '기본 텍스트 블록',     key: ['p','단락','텍스트'] },
+    { id: 'h1',         icon: 'H1', label: '제목 1',   desc: '가장 큰 제목',         key: ['h1','제목1'] },
+    { id: 'h2',         icon: 'H2', label: '제목 2',   desc: '큰 제목',              key: ['h2','제목2'] },
+    { id: 'h3',         icon: 'H3', label: '제목 3',   desc: '중간 제목',            key: ['h3','제목3'] },
+    { id: 'h4',         icon: 'H4', label: '제목 4',   desc: '작은 제목',            key: ['h4','제목4'] },
+    { id: 'h5',         icon: 'H5', label: '제목 5',   desc: '더 작은 제목',         key: ['h5','제목5'] },
+    { id: 'h6',         icon: 'H6', label: '제목 6',   desc: '가장 작은 제목',       key: ['h6','제목6'] },
+    { id: 'quote',      icon: '❝',  label: '인용구',   desc: '인용 블록',            key: ['인용','quote','blockquote'] },
+    { id: 'preformatted', icon: '</>',label: '서식 있는 텍스트', desc: '그대로 표시',  key: ['pre','서식'] },
+  ]},
+  { group: '목록', items: [
+    { id: 'list',         icon: '•',  label: '목록 (점)',   desc: '글머리 기호 목록', key: ['ul','목록','list'] },
+    { id: 'list-ordered', icon: '1.', label: '목록 (번호)', desc: '순서 있는 목록',   key: ['ol','번호','ordered'] },
+  ]},
+  { group: '미디어', items: [
+    { id: 'image',      icon: '🖼',  label: '이미지',   desc: 'URL로 이미지 삽입',   key: ['img','이미지','image'] },
+    { id: 'video',      icon: '▶',  label: '동영상',   desc: 'YouTube/Vimeo 임베드', key: ['video','영상','youtube'] },
+  ]},
+  { group: '디자인', items: [
+    { id: 'separator',  icon: '—',  label: '구분선',   desc: '수평선 삽입',          key: ['hr','구분','separator'] },
+    { id: 'button',     icon: '🔘', label: '버튼',     desc: '클릭 버튼',            key: ['btn','버튼','button'] },
+    { id: 'table',      icon: '⊞',  label: '표',       desc: '테이블 삽입',          key: ['table','표','grid'] },
+    { id: 'code',       icon: '{}', label: '코드',     desc: '코드 블록',            key: ['code','코드'] },
+    { id: 'html',       icon: '<>', label: 'HTML',     desc: '순수 HTML 입력',       key: ['html','raw'] },
+  ]},
+];
+
+// ── 블록 삽입 ─────────────────────────────────────────────────
+function insertBlock(blockId) {
+  hideSlashMenu();
+
+  // 슬래시 텍스트 노드 제거
+  if (slashRange) {
+    try {
+      const node = slashRange.startContainer;
+      if (node.nodeType === 3) {
+        const text = node.textContent;
+        const slashPos = text.lastIndexOf('/');
+        if (slashPos !== -1) {
+          node.textContent = text.slice(0, slashPos);
+        }
+      }
+    } catch(_) {}
+  }
+
+  // 현재 빈 블록 또는 새 위치 결정
+  const sel = window.getSelection();
+  let currentBlock = sel?.anchorNode?.closest?.('[data-block]') || editor.lastElementChild;
+
+  let newEl = null;
+
+  switch (blockId) {
+    case 'paragraph':
+      newEl = makeBlock('p', 'paragraph', '');
+      break;
+    case 'h1': case 'h2': case 'h3': case 'h4': case 'h5': case 'h6':
+      newEl = makeBlock(blockId, 'heading', '');
+      break;
+    case 'quote':
+      newEl = makeBlock('blockquote', 'quote', '인용문을 입력하세요…');
+      break;
+    case 'preformatted':
+      newEl = makeBlock('pre', 'preformatted', '');
+      break;
+    case 'list':
+      newEl = document.createElement('ul');
+      newEl.setAttribute('data-block', 'list');
+      newEl.innerHTML = '<li>목록 항목</li>';
+      break;
+    case 'list-ordered':
+      newEl = document.createElement('ol');
+      newEl.setAttribute('data-block', 'list-ordered');
+      newEl.innerHTML = '<li>목록 항목</li>';
+      break;
+    case 'separator':
+      newEl = document.createElement('hr');
+      newEl.setAttribute('data-block', 'separator');
+      newEl.contentEditable = 'false';
+      break;
+    case 'image': {
+      const src = prompt('이미지 URL을 입력하세요:');
+      if (!src) return;
+      const alt = prompt('대체 텍스트 (선택):') || '';
+      newEl = document.createElement('figure');
+      newEl.setAttribute('data-block', 'image');
+      newEl.innerHTML = `<img src="${src}" alt="${alt}" style="max-width:100%;border-radius:4px">`;
+      break;
+    }
+    case 'video': {
+      const vurl = prompt('YouTube/Vimeo URL을 입력하세요:');
+      if (!vurl) return;
+      const vid = extractVideoId(vurl);
+      newEl = document.createElement('figure');
+      newEl.setAttribute('data-block', 'video');
+      newEl.innerHTML = vid
+        ? `<iframe src="https://www.youtube.com/embed/${vid}" width="100%" height="315" frameborder="0" allowfullscreen style="border-radius:4px;display:block"></iframe>`
+        : `<a href="${vurl}" target="_blank">${vurl}</a>`;
+      break;
+    }
+    case 'button': {
+      const txt = prompt('버튼 텍스트:', '자세히 보기') || '자세히 보기';
+      const href = prompt('링크 URL:', '#') || '#';
+      newEl = document.createElement('div');
+      newEl.setAttribute('data-block', 'button');
+      newEl.className = 'cp-block-button-wrap';
+      newEl.innerHTML = `<a href="${href}" class="cp-block-btn">${txt}</a>`;
+      break;
+    }
+    case 'table': {
+      const cols = parseInt(prompt('열 수:', '3') || '3');
+      const rows = parseInt(prompt('행 수 (헤더 포함):', '3') || '3');
+      newEl = document.createElement('table');
+      newEl.setAttribute('data-block', 'table');
+      let html = '<thead><tr>' + Array(cols).fill(0).map((_,i) => `<th contenteditable="true">제목 ${i+1}</th>`).join('') + '</tr></thead><tbody>';
+      for (let r = 1; r < rows; r++) {
+        html += '<tr>' + Array(cols).fill(0).map(() => '<td contenteditable="true">내용</td>').join('') + '</tr>';
+      }
+      html += '</tbody>';
+      newEl.innerHTML = html;
+      break;
+    }
+    case 'code': {
+      newEl = document.createElement('pre');
+      newEl.setAttribute('data-block', 'code');
+      newEl.innerHTML = '<code>// 코드를 입력하세요</code>';
+      break;
+    }
+    case 'html': {
+      const rawHtml = prompt('HTML 코드를 입력하세요:');
+      if (!rawHtml) return;
+      newEl = document.createElement('div');
+      newEl.setAttribute('data-block', 'html');
+      newEl.innerHTML = rawHtml;
+      break;
+    }
+    default:
+      newEl = makeBlock('p', 'paragraph', '');
+  }
+
+  // 현재 블록 뒤에 삽입
+  if (currentBlock && currentBlock.parentNode === editor) {
+    if (isEmpty(currentBlock)) {
+      editor.replaceChild(newEl, currentBlock);
+    } else {
+      currentBlock.insertAdjacentElement('afterend', newEl);
+    }
+  } else {
+    editor.appendChild(newEl);
+  }
+
+  // 뒤에 빈 단락 추가 (HR, image 등)
+  if (['separator','image','video','table','button','html'].includes(blockId)) {
+    const after = makeBlock('p', 'paragraph', '');
+    newEl.insertAdjacentElement('afterend', after);
+    placeCursorIn(after);
+  } else {
+    placeCursorIn(newEl);
+  }
+
+  syncToHtml();
+}
+
+function makeBlock(tag, type, text) {
+  const el = document.createElement(tag);
+  el.setAttribute('data-block', type);
+  if (text) el.textContent = text;
+  else el.innerHTML = '<br>';
+  return el;
+}
+
+function isEmpty(el) {
+  return !el || el.innerHTML === '' || el.innerHTML === '<br>' || el.textContent.trim() === '';
+}
+
+function placeCursorIn(el) {
+  if (!el || el.tagName === 'HR') return;
+  el.focus();
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  range.collapse(false);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+// ── 슬래시 메뉴 ─────────────────────────────────────────────
+function showSlashMenu(range, query) {
+  slashRange = range;
+  slashQuery = query.toLowerCase();
+  selectedIdx = 0;
+  renderSlashMenu();
+  positionSlashMenu(range);
+  slashMenu.classList.add('visible');
+}
+
+function hideSlashMenu() {
+  slashMenu.classList.remove('visible');
+  slashRange = null;
+  slashQuery = '';
+}
+
+function renderSlashMenu() {
+  const q = slashQuery;
+  let html = '';
+  let totalIdx = 0;
+  let first = true;
+
+  BLOCKS.forEach(group => {
+    const matched = group.items.filter(item =>
+      !q || item.key.some(k => k.includes(q)) || item.label.toLowerCase().includes(q) || item.id.includes(q)
+    );
+    if (!matched.length) return;
+
+    html += `<div class="slash-menu-section${first ? ' first' : ''}">${group.group}</div>`;
+    first = false;
+
+    matched.forEach(item => {
+      const isSelected = totalIdx === selectedIdx;
+      html += `<div class="slash-menu-item${isSelected ? ' selected' : ''}" role="option" data-block-id="${item.id}" onclick="insertBlock('${item.id}')">
+        <span class="slash-menu-icon">${item.icon}</span>
+        <div>
+          <div class="slash-menu-label">${item.label}</div>
+          <div class="slash-menu-desc">${item.desc}</div>
+        </div>
+      </div>`;
+      totalIdx++;
+    });
+  });
+
+  slashMenu.innerHTML = html || '<div style="padding:12px 16px;color:#646970;font-size:13px">일치하는 블록이 없습니다</div>';
+}
+
+function positionSlashMenu(range) {
+  const rect = range.getBoundingClientRect();
+  const wrapRect = editor.closest('#block-editor-wrap').getBoundingClientRect();
+  const top  = rect.bottom - wrapRect.top + 4;
+  const left = Math.max(0, rect.left - wrapRect.left);
+  slashMenu.style.top  = top + 'px';
+  slashMenu.style.left = left + 'px';
+}
+
+function getSlashMenuItems() {
+  return slashMenu.querySelectorAll('.slash-menu-item');
+}
+
+// ── 키보드 이벤트 ────────────────────────────────────────────
+editor.addEventListener('keydown', function(e) {
+  if (slashMenu.classList.contains('visible')) {
+    const items = getSlashMenuItems();
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      selectedIdx = Math.min(selectedIdx + 1, items.length - 1);
+      renderSlashMenu();
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      selectedIdx = Math.max(selectedIdx - 1, 0);
+      renderSlashMenu();
+      return;
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      const selected = items[selectedIdx];
+      if (selected) {
+        const blockId = selected.getAttribute('data-block-id');
+        insertBlock(blockId);
+      }
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      hideSlashMenu();
+      return;
+    }
+  }
+
+  // Enter → 새 단락 블록
+  if (e.key === 'Enter' && !e.shiftKey) {
+    const sel = window.getSelection();
+    const block = sel?.anchorNode?.closest?.('[data-block]');
+    if (block && (block.tagName === 'PRE' || block.getAttribute('data-block') === 'preformatted')) {
+      // pre 안에서는 Enter = 개행
+      return;
+    }
+    e.preventDefault();
+    const newP = makeBlock('p', 'paragraph', '');
+    if (block && block.parentNode === editor) {
+      block.insertAdjacentElement('afterend', newP);
+    } else {
+      editor.appendChild(newP);
+    }
+    placeCursorIn(newP);
+    syncToHtml();
+    return;
+  }
+
+  // Backspace: 빈 블록 제거
+  if (e.key === 'Backspace') {
+    const sel = window.getSelection();
+    const block = sel?.anchorNode?.closest?.('[data-block]');
+    if (block && isEmpty(block) && editor.children.length > 1) {
+      e.preventDefault();
+      const prev = block.previousElementSibling;
+      editor.removeChild(block);
+      if (prev) placeCursorIn(prev);
+      syncToHtml();
+    }
+  }
+});
+
+editor.addEventListener('input', function(e) {
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const range = sel.getRangeAt(0);
+  const node  = range.startContainer;
+
+  if (node.nodeType !== 3) { syncToHtml(); return; }
+
+  const text    = node.textContent;
+  const offset  = range.startOffset;
+  const before  = text.slice(0, offset);
+  const slashAt = before.lastIndexOf('/');
+
+  if (slashAt !== -1) {
+    const query = before.slice(slashAt + 1);
+    // 슬래시 뒤에 공백 없이 알파벳/한글만
+    if (/^[\w가-힣]*$/.test(query)) {
+      const slashR = range.cloneRange();
+      slashR.setStart(node, slashAt);
+      slashR.setEnd(node, offset);
+      showSlashMenu(slashR, query);
+      syncToHtml();
+      return;
+    }
+  }
+
+  hideSlashMenu();
+  syncToHtml();
+});
+
+// 에디터 바깥 클릭 → 메뉴 숨김
+document.addEventListener('click', e => {
+  if (!slashMenu.contains(e.target) && !editor.contains(e.target)) {
+    hideSlashMenu();
+  }
+});
+
+// ── 포맷팅 함수 ──────────────────────────────────────────────
+function execFmt(cmd) {
+  editor.focus();
   document.execCommand(cmd, false, null);
-  syncEditors();
+  syncToHtml();
 }
-function formatHeading(tag) {
-  document.getElementById('editor-visual').focus();
-  document.execCommand('formatBlock', false, tag);
-  syncEditors();
-}
-function insertBlockquote() {
-  document.getElementById('editor-visual').focus();
-  document.execCommand('formatBlock', false, 'blockquote');
-  syncEditors();
-}
-function insertHr() {
-  document.getElementById('editor-visual').focus();
-  document.execCommand('insertHTML', false, '<hr>');
-  syncEditors();
-}
+
 function insertLink2() {
-  const url = prompt('${L.enterUrl}');
-  if (url) { document.getElementById('editor-visual').focus(); document.execCommand('createLink', false, url); syncEditors(); }
+  const url = prompt('URL을 입력하세요:');
+  if (url) { editor.focus(); document.execCommand('createLink', false, url); syncToHtml(); }
 }
+
 function insertImage2() {
-  const src = prompt('${L.enterImageUrl}');
-  if (src) { document.getElementById('editor-visual').focus(); document.execCommand('insertHTML', false, '<img src="'+src+'" style="max-width:100%">'); syncEditors(); }
+  insertBlock('image');
 }
-function syncEditors() {
-  document.getElementById('editor-html').value = document.getElementById('editor-visual').innerHTML;
-}
-function syncFromHtml() {
-  document.getElementById('editor-visual').innerHTML = document.getElementById('editor-html').value;
-}
+
+// ── 탭 전환 ──────────────────────────────────────────────────
 function switchEditorTab(mode) {
   editorMode = mode;
-  const vis  = document.getElementById('editor-visual');
-  const html = document.getElementById('editor-html');
-  const bVis = document.getElementById('btn-visual');
-  const bHtml= document.getElementById('btn-html');
+  const wrap  = document.getElementById('block-editor-wrap');
+  const html  = document.getElementById('editor-html');
+  const bVis  = document.getElementById('btn-visual');
+  const bHtml = document.getElementById('btn-html');
+
   if (mode === 'html') {
-    syncEditors();
-    vis.style.display  = 'none';
-    html.style.display = 'block';
-    bVis.classList.remove('active'); bHtml.classList.add('active');
+    syncToHtml();
+    wrap.style.display  = 'none';
+    html.style.display  = 'block';
+    html.style.minHeight= '420px';
+    bVis.classList.remove('active');
+    bHtml.classList.add('active');
+    bHtml.style.background = '#e0e0e0';
+    bVis.style.background  = '';
   } else {
     syncFromHtml();
-    html.style.display = 'none';
-    vis.style.display  = 'block';
-    bVis.classList.add('active'); bHtml.classList.remove('active');
+    html.style.display  = 'none';
+    wrap.style.display  = '';
+    bVis.classList.add('active');
+    bHtml.classList.remove('active');
+    bVis.style.background  = '#e0e0e0';
+    bHtml.style.background = '';
   }
 }
 
-// ── 메타박스 접기/펼치기 ────────────────────────────────────
+function syncToHtml() {
+  document.getElementById('editor-html').value = editor.innerHTML;
+}
+
+function syncFromHtml() {
+  editor.innerHTML = document.getElementById('editor-html').value || '<p data-block="paragraph"><br></p>';
+  normalizeBlocks();
+}
+
+// ── 유틸 ─────────────────────────────────────────────────────
+function extractVideoId(url) {
+  const m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\s]+)/);
+  return m ? m[1] : null;
+}
+
+// ── 메타박스 접기/펼치기 ─────────────────────────────────────
 function toggleMetabox(titleEl) {
   const box = titleEl.closest('.metabox');
   box.classList.toggle('closed');
-  const id  = box.id;
+  const id     = box.id;
   const closed = box.classList.contains('closed');
   try {
     const state = JSON.parse(localStorage.getItem('cp_metabox_state') || '{}');
     state[id] = closed;
     localStorage.setItem('cp_metabox_state', JSON.stringify(state));
-  } catch(_){}
+  } catch(_) {}
 }
-// 저장된 상태 복원
-(function(){
+
+(function() {
   try {
     const state = JSON.parse(localStorage.getItem('cp_metabox_state') || '{}');
     Object.entries(state).forEach(([id, closed]) => {
       const el = document.getElementById(id);
       if (el) el.classList.toggle('closed', closed);
     });
-  } catch(_){}
+  } catch(_) {}
 })();
 
-// ── 커스텀 필드 ──────────────────────────────────────────────
+// ── 커스텀 필드 ─────────────────────────────────────────────
 let metaRowIdx = ${postMetas.length};
 function addMetaRow() {
   const key = document.getElementById('new-meta-key').value.trim();
   const val = document.getElementById('new-meta-value').value;
-  if (!key) { alert('${L.keyRequired}'); return; }
+  if (!key) { alert('키를 입력하세요.'); return; }
   const tbody = document.getElementById('custom-fields-body');
   const tr = document.createElement('tr');
   tr.innerHTML = \`
@@ -514,11 +961,9 @@ function addMetaRow() {
   document.getElementById('new-meta-value').value = '';
   metaRowIdx++;
 }
-function removeMetaRow(btn) {
-  btn.closest('tr').remove();
-}
+function removeMetaRow(btn) { btn.closest('tr').remove(); }
 
-// ── 태그 ──────────────────────────────────────────────────────
+// ── 태그 ────────────────────────────────────────────────────
 let tags = [];
 function addTag() {
   const input = document.getElementById('tag-input');
@@ -541,28 +986,28 @@ function renderTags() {
   document.getElementById('post_tags_input').value = tags.join(',');
 }
 
-// ── 특성 이미지 ──────────────────────────────────────────────
+// ── 특성 이미지 ─────────────────────────────────────────────
 function setFeaturedImage() {
-  const url = prompt('${L.enterImageUrl}');
+  const url = prompt('이미지 URL을 입력하세요:');
   if (url) {
     document.getElementById('featured-image-url').value = url;
     document.getElementById('featured-image-wrap').innerHTML =
       \`<img src="\${url}" style="max-width:100%;border-radius:4px;margin-bottom:8px">
-       <br><a href="#" onclick="clearFeaturedImage();return false" style="font-size:12px;color:#d63638">${L.removeFeaturedImage}</a>\`;
+       <br><a href="#" onclick="clearFeaturedImage();return false" style="font-size:12px;color:#d63638">특성 이미지 제거</a>\`;
   }
 }
 function clearFeaturedImage() {
   document.getElementById('featured-image-url').value = '';
   document.getElementById('featured-image-wrap').innerHTML =
     \`<div style="background:#f0f0f1;border:2px dashed #dcdcde;border-radius:4px;padding:20px;text-align:center;color:#646970;font-size:13px;cursor:pointer" onclick="setFeaturedImage()">
-       <div style="font-size:28px;margin-bottom:6px">&#128247;</div>
-       <a style="color:#2271b1">${L.setFeaturedImage}</a>
+       <div style="font-size:28px;margin-bottom:6px">🖼</div>
+       <a style="color:#2271b1">특성 이미지 설정</a>
      </div>\`;
 }
 
 // ── 제출 전 동기화 ───────────────────────────────────────────
 document.getElementById('post-form').addEventListener('submit', function() {
-  if (editorMode === 'visual') syncEditors();
+  if (editorMode === 'visual') syncToHtml();
 });
 
 // ── 슬러그 자동 생성 ─────────────────────────────────────────
@@ -570,8 +1015,8 @@ document.getElementById('title').addEventListener('blur', function() {
   const slugField = document.getElementById('post_name');
   if (!slugField.value && this.value) {
     slugField.value = this.value.toLowerCase()
-      .replace(/[\\s]+/g,'-')
-      .replace(/[^a-z0-9\\-가-힣]/g,'')
+      .replace(/[\s]+/g,'-')
+      .replace(/[^a-z0-9\-가-힣]/g,'')
       .replace(/^-|-$/g,'');
   }
 });
