@@ -364,11 +364,12 @@ async function wrapInFullPage(content, cp, templateName, extra = {}) {
   <link rel="stylesheet" href="/cp-includes/css/template-fallback.css">
   <style>
     *,*::before,*::after{box-sizing:border-box}
-    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR','Malgun Gothic','Segoe UI',sans-serif;line-height:1.7;color:#1d2327;background:#fff}
+    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR','Malgun Gothic','Segoe UI',sans-serif;line-height:1.7;color:#1d2327;background:#fff;display:flex;flex-direction:column;min-height:100vh}
     a{color:#2271b1;text-decoration:none}
     a:hover{text-decoration:underline}
     img{max-width:100%;height:auto}
     .cp-container{max-width:860px;margin:0 auto;padding:0 1.5rem}
+    .cp-site-wrap{flex:1}
     /* 헤더 */
     .cp-header{background:#1d2327;color:#fff;padding:1.1rem 0;box-shadow:0 2px 4px rgba(0,0,0,.15)}
     .cp-header-inner{display:flex;align-items:center;justify-content:space-between;max-width:860px;margin:0 auto;padding:0 1.5rem}
@@ -376,7 +377,7 @@ async function wrapInFullPage(content, cp, templateName, extra = {}) {
     .cp-header nav a{color:rgba(255,255,255,.75);text-decoration:none;margin-left:1.5rem;font-size:.9rem;transition:.15s}
     .cp-header nav a:hover{color:#fff}
     /* 히어로 */
-    .cp-home-hero{padding:3rem 0 1.5rem;border-bottom:1px solid #f0f0f1;margin-bottom:2.5rem}
+    .cp-home-hero{padding:1.5rem 0 1rem;border-bottom:1px solid #f0f0f1;margin-bottom:1.75rem}
     .cp-site-title{font-size:2.2rem;font-weight:800;margin:0 0 .5rem;color:#1d2327}
     .cp-site-desc{color:#646970;font-size:1.05rem;margin:0}
     /* 포스트 카드 */
@@ -402,7 +403,7 @@ async function wrapInFullPage(content, cp, templateName, extra = {}) {
     .cp-single-footer{margin-top:2.5rem;padding-top:1.5rem;border-top:1px solid #f0f0f1}
     .cp-back-link{font-size:.9rem;color:#646970}
     /* 빈 상태 */
-    .cp-empty-state{text-align:center;padding:4rem 0;color:#646970}
+    .cp-empty-state{text-align:center;padding:2rem 0;color:#646970}
     .cp-empty-icon{font-size:3rem;margin-bottom:1rem}
     .cp-empty-state h2{font-size:1.4rem;color:#1d2327;margin:0 0 .5rem}
     .cp-empty-state p{margin:0 0 1.5rem}
@@ -414,7 +415,7 @@ async function wrapInFullPage(content, cp, templateName, extra = {}) {
     /* 아카이브 */
     .cp-archive-title{font-size:1.75rem;font-weight:700;margin:0 0 2rem;padding-bottom:1rem;border-bottom:1px solid #f0f0f1}
     /* 푸터 */
-    .cp-footer{background:#f6f7f7;border-top:1px solid #dcdcde;padding:1.5rem 0;text-align:center;color:#646970;font-size:.85rem;margin-top:3rem}
+    .cp-footer{background:#f6f7f7;border-top:1px solid #dcdcde;padding:1.5rem 0;text-align:center;color:#646970;font-size:.85rem}
     .cp-footer a{color:#646970}
     @media(max-width:600px){
       .cp-site-title{font-size:1.6rem}
@@ -433,8 +434,10 @@ async function wrapInFullPage(content, cp, templateName, extra = {}) {
       </nav>
     </div>
   </header>
-  <div class="cp-container">
-    ${content}
+  <div class="cp-site-wrap">
+    <div class="cp-container">
+      ${content}
+    </div>
   </div>
   <footer class="cp-footer">
     <div class="cp-container">
