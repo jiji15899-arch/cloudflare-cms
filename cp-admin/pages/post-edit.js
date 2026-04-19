@@ -44,10 +44,24 @@ export async function handlePostEdit(request, cp, opts = {}) {
     const title    = (fd.get('post_title') || '').trim();
     const content  = fd.get('post_content') || '';
     const excerpt  = fd.get('post_excerpt') || '';
-    const status   = fd.get('post_status') || 'draft';
     const slug     = (fd.get('post_name') || slugify(title)).trim();
     const now      = new Date().toISOString().replace('T', ' ').slice(0, 19);
     const authorId = cp.currentUser?.ID || 1;
+
+    // Scheduled publish support
+    const scheduledDate = fd.get('post_date') || '';
+    let postDate = now;
+    let status = fd.get('post_status') || 'draft';
+    if (scheduledDate) {
+      const sched = new Date(scheduledDate);
+      if (!isNaN(sched.getTime())) {
+        postDate = sched.toISOString().replace('T', ' ').slice(0, 19);
+        // If publish requested but date is in the future, set to 'future'
+        if (status === 'publish' && sched > new Date()) {
+          status = 'future';
+        }
+      }
+    }
 
     // postmeta 저장 (커스텀 필드)
     const metaKeys   = fd.getAll('meta_key[]');
@@ -62,7 +76,7 @@ export async function handlePostEdit(request, cp, opts = {}) {
           (post_author, post_date, post_content, post_title, post_excerpt, post_status,
            post_type, post_name, comment_status, ping_status, post_modified, post_date_gmt, post_modified_gmt)
         VALUES (?,?,?,?,?,?,?,?,'open','open',?,?,?)
-      `).bind(authorId, now, content, title, excerpt, status, postType, slug, now, now, now).run();
+      `).bind(authorId, postDate, content, title, excerpt, status, postType, slug, now, now, now).run();
 
       savedPostId = result.meta?.last_row_id;
       const redirectType = postType === 'page' ? 'page' : 'post';
@@ -75,9 +89,9 @@ export async function handlePostEdit(request, cp, opts = {}) {
       await cp.db.prepare(`
         UPDATE ${prefix}posts SET
           post_title=?, post_content=?, post_excerpt=?, post_status=?,
-          post_name=?, post_modified=?, post_modified_gmt=?
+          post_name=?, post_date=?, post_modified=?, post_modified_gmt=?
         WHERE ID=?
-      `).bind(title, content, excerpt, status, slug, now, now, postId).run();
+      `).bind(title, content, excerpt, status, slug, postDate, now, now, postId).run();
 
       post = await cp.db.prepare(`SELECT * FROM ${prefix}posts WHERE ID=? LIMIT 1`).bind(postId).first();
       await savePostMeta(cp, prefix, postId, metaIds, metaKeys, metaValues);
@@ -330,21 +344,29 @@ export async function handlePostEdit(request, cp, opts = {}) {
       <div class="metabox-body">
         <div style="margin-bottom:10px">
           <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px">${L.status}</label>
-          <select name="post_status" class="cp-form-select" style="max-width:100%;width:100%">
+          <select name="post_status" id="post_status_select" class="cp-form-select" style="max-width:100%;width:100%" onchange="onStatusChange(this.value)">
             <option value="draft"   ${(post?.post_status || 'draft') === 'draft'   ? 'selected' : ''}>${L.draft}</option>
-            <option value="publish" ${post?.post_status === 'publish' ? 'selected' : ''}>${L.published}</option>
+            <option value="publish" ${(post?.post_status === 'publish' || post?.post_status === 'future') ? 'selected' : ''}>${L.published}</option>
             <option value="private" ${post?.post_status === 'private' ? 'selected' : ''}>${L.private}</option>
             <option value="pending" ${post?.post_status === 'pending' ? 'selected' : ''}>${L.pendingReview}</option>
           </select>
+        </div>
+        <!-- 예약 발행 날짜 선택 -->
+        <div id="schedule-date-wrap" style="margin-bottom:10px;${(post?.post_status === 'future') ? '' : 'display:none'}">
+          <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px">&#128197; ${L.scheduleFor || '예약 발행 시간'}</label>
+          <input type="datetime-local" name="post_date" id="post_date_input"
+                 class="cp-form-input" style="width:100%"
+                 value="${post?.post_date ? post.post_date.replace(' ','T').slice(0,16) : ''}">
+          <p class="cp-description" style="margin-top:4px">${L.scheduleDesc || '미래 날짜를 선택하면 자동 예약 발행됩니다.'}</p>
         </div>
         <div class="publish-actions">
           <button type="button" class="cp-btn cp-btn-secondary"
                   onclick="document.querySelector('[name=post_status]').value='draft';document.getElementById('post-form').submit()">
             ${L.saveDraft}
           </button>
-          <button type="button" class="cp-btn"
-                  onclick="document.querySelector('[name=post_status]').value='publish';document.getElementById('post-form').submit()">
-            ${isNew ? L.publish : L.update}
+          <button type="button" class="cp-btn" id="publish-btn"
+                  onclick="submitPublish()">
+            ${post?.post_status === 'future' ? (L.scheduled || '예약됨') : (isNew ? L.publish : L.update)}
           </button>
         </div>
         ${post ? `
@@ -1020,6 +1042,182 @@ document.getElementById('title').addEventListener('blur', function() {
       .replace(/^-|-$/g,'');
   }
 });
+
+// ── 예약발행 상태 변경 핸들러 ──────────────────────────────────
+function onStatusChange(val) {
+  const wrap = document.getElementById('schedule-date-wrap');
+  const btn  = document.getElementById('publish-btn');
+  if (val === 'publish') {
+    wrap.style.display = 'block';
+    if (btn) btn.textContent = '예약/발행';
+  } else {
+    wrap.style.display = 'none';
+    if (btn) btn.textContent = val === 'draft' ? '임시저장' : '업데이트';
+  }
+}
+
+function submitPublish() {
+  const sel   = document.getElementById('post_status_select');
+  const dateI = document.getElementById('post_date_input');
+  if (sel && sel.value === 'publish' && dateI && dateI.value) {
+    const chosen = new Date(dateI.value);
+    if (chosen > new Date()) {
+      sel.value = 'publish'; // server will set 'future' automatically
+    }
+  }
+  document.getElementById('post-form').submit();
+}
+
+// ── 슬래시(/) 블록 인서터 ─────────────────────────────────────
+(function() {
+  const BLOCKS = [
+    { label: '단락', icon: '¶', tag: '<p></p>' },
+    { label: '제목 H2', icon: 'H2', tag: '<h2></h2>' },
+    { label: '제목 H3', icon: 'H3', tag: '<h3></h3>' },
+    { label: '이미지', icon: '🖼', tag: '<img src="" alt="">' },
+    { label: '인용구', icon: '"', tag: '<blockquote></blockquote>' },
+    { label: '목록', icon: '☰', tag: '<ul>\n  <li></li>\n</ul>' },
+    { label: '번호 목록', icon: '1.', tag: '<ol>\n  <li></li>\n</ol>' },
+    { label: '구분선', icon: '—', tag: '<hr>' },
+    { label: '코드', icon: '</>', tag: '<pre><code></code></pre>' },
+    { label: '표', icon: '⊞', tag: '<table>\n  <tr><th></th></tr>\n  <tr><td></td></tr>\n</table>' },
+  ];
+
+  let slashMenu = null;
+  let slashStart = -1;
+
+  function removeMenu() {
+    if (slashMenu) { slashMenu.remove(); slashMenu = null; }
+    slashStart = -1;
+  }
+
+  function insertBlock(ta, tag) {
+    const start = ta.selectionStart;
+    const val   = ta.value;
+    // Remove the slash+query typed so far
+    const lineStart = val.lastIndexOf('\n', start - 1) + 1;
+    const before    = val.slice(0, lineStart);
+    const after     = val.slice(start);
+    ta.value = before + tag + '\n' + after;
+    const newPos = before.length + tag.length + 1;
+    ta.setSelectionRange(newPos, newPos);
+    ta.focus();
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    const ta = document.getElementById('post_content') || document.querySelector('textarea[name="post_content"]');
+    if (!ta) return;
+
+    ta.addEventListener('keydown', function(e) {
+      if (slashMenu && e.key === 'Escape') { removeMenu(); e.preventDefault(); }
+      if (slashMenu && e.key === 'Enter') {
+        const active = slashMenu.querySelector('.slash-item.active');
+        if (active) { active.click(); e.preventDefault(); }
+      }
+      if (slashMenu && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+        const items = Array.from(slashMenu.querySelectorAll('.slash-item'));
+        const idx   = items.findIndex(i => i.classList.contains('active'));
+        items.forEach(i => i.classList.remove('active'));
+        let next = e.key === 'ArrowDown' ? idx + 1 : idx - 1;
+        if (next < 0) next = items.length - 1;
+        if (next >= items.length) next = 0;
+        items[next].classList.add('active');
+        items[next].scrollIntoView({ block: 'nearest' });
+        e.preventDefault();
+      }
+    });
+
+    ta.addEventListener('input', function() {
+      const pos = ta.selectionStart;
+      const val = ta.value;
+      const lineStart = val.lastIndexOf('\n', pos - 1) + 1;
+      const lineText  = val.slice(lineStart, pos);
+
+      if (lineText.startsWith('/')) {
+        const query = lineText.slice(1).toLowerCase();
+        slashStart  = lineStart;
+        showSlashMenu(ta, query);
+      } else {
+        removeMenu();
+      }
+    });
+
+    ta.addEventListener('blur', function() {
+      setTimeout(removeMenu, 150);
+    });
+
+    function showSlashMenu(ta, query) {
+      removeMenu();
+      const filtered = BLOCKS.filter(b => !query || b.label.toLowerCase().includes(query));
+      if (!filtered.length) return;
+
+      const rect   = ta.getBoundingClientRect();
+      const coords = getCaretCoordinates(ta, ta.selectionStart);
+
+      slashMenu = document.createElement('div');
+      slashMenu.id = 'slash-block-menu';
+      slashMenu.style.cssText = [
+        'position:fixed',
+        'background:#fff',
+        'border:1px solid #ddd',
+        'border-radius:6px',
+        'box-shadow:0 4px 16px rgba(0,0,0,.12)',
+        'z-index:9999',
+        'max-height:240px',
+        'overflow-y:auto',
+        'min-width:180px',
+        'padding:4px 0',
+        `left:${Math.min(rect.left + coords.left, window.innerWidth - 200)}px`,
+        `top:${rect.top + coords.top + 20 + ta.scrollTop}px`,
+      ].join(';');
+
+      filtered.forEach((b, i) => {
+        const item = document.createElement('div');
+        item.className = 'slash-item' + (i === 0 ? ' active' : '');
+        item.style.cssText = 'padding:7px 14px;cursor:pointer;display:flex;gap:10px;align-items:center;font-size:13px';
+        item.innerHTML = '<span style="font-weight:600;width:20px;text-align:center">' + b.icon + '</span><span>' + b.label + '</span>';
+        item.addEventListener('mouseenter', function() {
+          slashMenu.querySelectorAll('.slash-item').forEach(x => x.classList.remove('active'));
+          item.classList.add('active');
+        });
+        item.addEventListener('click', function() {
+          insertBlock(ta, b.tag);
+          removeMenu();
+        });
+        slashMenu.appendChild(item);
+      });
+
+      // Highlight active
+      slashMenu.querySelectorAll('.slash-item').forEach(function(el) {
+        el.addEventListener('mouseenter', function() { el.style.background = '#f0f0f1'; });
+        el.addEventListener('mouseleave', function() { el.style.background = ''; });
+      });
+
+      document.body.appendChild(slashMenu);
+    }
+
+    // Simple caret coordinate estimator
+    function getCaretCoordinates(el, pos) {
+      const div = document.createElement('div');
+      const style = window.getComputedStyle(el);
+      ['fontFamily','fontSize','fontWeight','lineHeight','padding','border','boxSizing','whiteSpace','wordWrap','overflowWrap'].forEach(p => {
+        div.style[p] = style[p];
+      });
+      div.style.cssText += ';position:absolute;visibility:hidden;white-space:pre-wrap;word-wrap:break-word;';
+      div.style.width = el.offsetWidth + 'px';
+      const text = el.value.substring(0, pos);
+      div.textContent = text;
+      const span = document.createElement('span');
+      span.textContent = el.value.substring(pos) || '.';
+      div.appendChild(span);
+      document.body.appendChild(div);
+      const coords = { left: span.offsetLeft, top: span.offsetTop };
+      document.body.removeChild(div);
+      return coords;
+    }
+  });
+})();
+
 </script>
 `;
 
@@ -1087,6 +1285,9 @@ function getLabels(lang) {
     published: '게시됨',
     private: '비공개',
     pendingReview: '검토 대기',
+    scheduleFor: '예약 발행 시간',
+    scheduleDesc: '미래 날짜를 선택하면 자동 예약 발행됩니다.',
+    scheduled: '예약됨',
     saveDraft: '초안 저장',
     update: '업데이트',
     new: '새',
@@ -1149,6 +1350,9 @@ function getLabels(lang) {
     published: 'Published',
     private: 'Private',
     pendingReview: 'Pending Review',
+    scheduleFor: 'Schedule For',
+    scheduleDesc: 'Select a future date to schedule this post.',
+    scheduled: 'Scheduled',
     saveDraft: 'Save Draft',
     update: 'Update',
     new: 'New',
