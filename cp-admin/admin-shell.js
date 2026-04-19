@@ -19,9 +19,11 @@ export async function renderAdminShell(cp, content, opts = {}) {
   const user        = cp.currentUser;
   const userLogin   = user?.user_login || '관리자';
   const currentPath = cp.url.pathname;
+  let adminSlug = cp.config?.ADMIN_SLUG || 'cp-admin';
+  try { const s = await cp.kv?.get('cp:admin_slug'); if (s) adminSlug = s; } catch (_) {}
   const adminVersion = cp.version || '1.0.0';
 
-  const navItems = buildNavItems(cp, currentPath);
+  const navItems = buildNavItems(cp, currentPath, adminSlug);
   const navHtml  = renderNav(navItems, currentPath);
 
   const noticeHtml = notices.map(n =>
@@ -35,7 +37,7 @@ export async function renderAdminShell(cp, content, opts = {}) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${escHtml(title)} &lsaquo; CloudPress 관리자</title>
   <meta name="robots" content="noindex,nofollow">
-  <link rel="icon" href="/cp-admin/images/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/${adminSlug}/images/favicon.svg" type="image/svg+xml">
   <style>${ADMIN_CSS}</style>
 </head>
 <body class="cp-admin-body ${escHtml(bodyClass)}">
@@ -57,7 +59,7 @@ export async function renderAdminShell(cp, content, opts = {}) {
         ${escHtml(userLogin)} &#9660;
       </button>
       <div class="cp-user-dropdown">
-        <a href="/cp-admin/profile">프로필 편집</a>
+        <a href="/${adminSlug}/profile">프로필 편집</a>
         <a href="${escHtml(siteUrl)}" target="_blank">사이트 보기</a>
         <hr>
         <a href="/cp-logout" class="cp-logout">로그아웃</a>
@@ -72,7 +74,7 @@ export async function renderAdminShell(cp, content, opts = {}) {
   <!-- Sidebar -->
   <nav id="cp-sidebar" aria-label="관리자 메뉴">
     <div class="cp-sidebar-header">
-      <a href="/cp-admin" class="cp-logo">
+      <a href="/${adminSlug}" class="cp-logo">
         <svg width="28" height="28" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
           <rect width="32" height="32" rx="8" fill="#F6821F"/>
           <path d="M8 16C8 11.582 11.582 8 16 8C20.418 8 24 11.582 24 16C24 20.418 20.418 24 16 24C11.582 24 8 20.418 8 16Z" fill="white" fill-opacity="0.2"/>
@@ -111,78 +113,79 @@ export async function renderAdminShell(cp, content, opts = {}) {
 // Navigation Builder - 한국어
 // ---------------------------------------------------------------------------
 
-function buildNavItems(cp, currentPath) {
+function buildNavItems(cp, currentPath, adminSlug = 'cp-admin') {
+  const A = (p) => `/${adminSlug}${p}`;
   return [
     {
-      id: 'dashboard', label: '대시보드', icon: '&#9635;', href: '/cp-admin',
+      id: 'dashboard', label: '대시보드', icon: '&#9635;', href: A(''),
       exact: true,
     },
     {
-      id: 'posts', label: '글', icon: '&#128221;', href: '/cp-admin/edit',
+      id: 'posts', label: '글', icon: '&#128221;', href: A('/edit'),
       children: [
-        { label: '모든 글',   href: '/cp-admin/edit' },
-        { label: '새 글 쓰기', href: '/cp-admin/post-new' },
-        { label: '카테고리',  href: '/cp-admin/edit-tags?taxonomy=category' },
-        { label: '태그',      href: '/cp-admin/edit-tags?taxonomy=post_tag' },
+        { label: '모든 글',   href: A('/edit') },
+        { label: '새 글 쓰기', href: A('/post-new') },
+        { label: '카테고리',  href: A('/edit-tags?taxonomy=category') },
+        { label: '태그',      href: A('/edit-tags?taxonomy=post_tag') },
       ],
     },
     {
-      id: 'media', label: '미디어', icon: '&#128247;', href: '/cp-admin/upload',
+      id: 'media', label: '미디어', icon: '&#128247;', href: A('/upload'),
       children: [
-        { label: '라이브러리', href: '/cp-admin/upload' },
-        { label: '새 파일 추가', href: '/cp-admin/media-new' },
+        { label: '라이브러리', href: A('/upload') },
+        { label: '새 파일 추가', href: A('/media-new') },
       ],
     },
     {
-      id: 'pages', label: '페이지', icon: '&#128196;', href: '/cp-admin/edit?post_type=page',
+      id: 'pages', label: '페이지', icon: '&#128196;', href: A('/edit?post_type=page'),
       children: [
-        { label: '모든 페이지', href: '/cp-admin/edit?post_type=page' },
-        { label: '새 페이지',   href: '/cp-admin/page-new' },
+        { label: '모든 페이지', href: A('/edit?post_type=page') },
+        { label: '새 페이지',   href: A('/page-new') },
       ],
     },
     {
-      id: 'comments', label: '댓글', icon: '&#128172;', href: '/cp-admin/edit-comments',
+      id: 'comments', label: '댓글', icon: '&#128172;', href: A('/edit-comments'),
     },
     {
-      id: 'appearance', label: '외모', icon: '&#127912;', href: '/cp-admin/themes',
+      id: 'appearance', label: '외모', icon: '&#127912;', href: A('/themes'),
       children: [
-        { label: '테마',        href: '/cp-admin/themes' },
-        { label: '테마 편집기', href: '/cp-admin/theme-editor' },
+        { label: '테마',        href: A('/themes') },
+        { label: '테마 편집기', href: A('/theme-editor') },
       ],
     },
     {
-      id: 'plugins', label: '플러그인', icon: '&#129529;', href: '/cp-admin/plugins',
+      id: 'plugins', label: '플러그인', icon: '&#129529;', href: A('/plugins'),
       children: [
-        { label: '설치된 플러그인', href: '/cp-admin/plugins' },
-        { label: '새 플러그인 추가', href: '/cp-admin/plugin-install' },
-        { label: '플러그인 편집기',  href: '/cp-admin/plugin-editor' },
+        { label: '설치된 플러그인', href: A('/plugins') },
+        { label: '새 플러그인 추가', href: A('/plugin-install') },
+        { label: '플러그인 편집기',  href: A('/plugin-editor') },
       ],
     },
     {
-      id: 'users', label: '사용자', icon: '&#128101;', href: '/cp-admin/users',
+      id: 'users', label: '사용자', icon: '&#128101;', href: A('/users'),
       children: [
-        { label: '모든 사용자', href: '/cp-admin/users' },
-        { label: '새 사용자',   href: '/cp-admin/user-new' },
-        { label: '내 프로필',   href: '/cp-admin/profile' },
+        { label: '모든 사용자', href: A('/users') },
+        { label: '새 사용자',   href: A('/user-new') },
+        { label: '내 프로필',   href: A('/profile') },
       ],
     },
     {
-      id: 'tools', label: '도구', icon: '&#128295;', href: '/cp-admin/tools',
+      id: 'tools', label: '도구', icon: '&#128295;', href: A('/tools'),
       children: [
-        { label: '사용 가능한 도구', href: '/cp-admin/tools' },
-        { label: '가져오기',         href: '/cp-admin/import' },
-        { label: '내보내기',         href: '/cp-admin/export' },
+        { label: '사용 가능한 도구', href: A('/tools') },
+        { label: '가져오기',         href: A('/import') },
+        { label: '내보내기',         href: A('/export') },
       ],
     },
     {
-      id: 'settings', label: '설정', icon: '&#9881;', href: '/cp-admin/options-general',
+      id: 'settings', label: '설정', icon: '&#9881;', href: A('/options-general'),
       children: [
-        { label: '일반',       href: '/cp-admin/options-general' },
-        { label: '쓰기',       href: '/cp-admin/options-writing' },
-        { label: '읽기',       href: '/cp-admin/options-reading' },
-        { label: '토론',       href: '/cp-admin/options-discussion' },
-        { label: '미디어',     href: '/cp-admin/options-media' },
-        { label: '고유주소',   href: '/cp-admin/options-permalink' },
+        { label: '일반',       href: A('/options-general') },
+        { label: '쓰기',       href: A('/options-writing') },
+        { label: '읽기',       href: A('/options-reading') },
+        { label: '토론',       href: A('/options-discussion') },
+        { label: '미디어',     href: A('/options-media') },
+        { label: '고유주소',   href: A('/options-permalink') },
       ],
     },
   ];
