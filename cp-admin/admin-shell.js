@@ -54,6 +54,16 @@ export async function renderAdminShell(cp, content, opts = {}) {
   </div>
   <div class="cp-topbar-right">
     <span class="cp-version">v${escHtml(adminVersion)}</span>
+    <div class="cp-admin-lang-switcher">
+      <select onchange="location='/cp-set-lang?lang='+this.value+'&redirect='+encodeURIComponent(location.pathname+location.search)"
+              style="font-size:12px;padding:3px 6px;border:1px solid rgba(255,255,255,.25);border-radius:4px;background:rgba(255,255,255,.1);color:#fff;cursor:pointer">
+        <option value="en">English</option>
+        <option value="ko">한국어</option>
+        <option value="zh">中文</option>
+        <option value="ja">日本語</option>
+        <option value="fr">Français</option>
+      </select>
+    </div>
     <div class="cp-user-menu">
       <button class="cp-user-btn" onclick="this.parentElement.classList.toggle('open')">
         ${escHtml(userLogin)} &#9660;
