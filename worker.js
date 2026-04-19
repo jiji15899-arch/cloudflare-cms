@@ -4319,7 +4319,7 @@ async function handleUpload(cp, file, postId = 0) {
   const buffer = await file.arrayBuffer();
   const b64 = binaryToBase64(buffer);
   try {
-    await cp.kv.put(`cp:media:${filePath}`, b64, { expirationTtl: 0 });
+    await cp.kv.put(`cp:media:${filePath}`, b64);
   } catch (e) {
     return { error: `KV storage error: ${e.message}` };
   }
