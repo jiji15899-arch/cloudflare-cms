@@ -103,6 +103,6 @@ function mergeWithDefaults(stored, env) {
  * Exported config constants (equivalent to WP_DEBUG, ABSPATH, etc.)
  * These are set at runtime by cp-settings.js on the `cp` context object.
  */
-export const CP_VERSION = '1.0.0';
+export const CP_VERSION = '1.1.0';
 export const CPINC      = 'cp-includes';
 export const CPADMIN    = 'cp-admin';
