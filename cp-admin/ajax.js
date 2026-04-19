@@ -11,6 +11,7 @@
 import { cpLoad }         from '../cp-load.js';
 import { getAdminUser }   from './auth-check.js';
 import { jsonResponse }   from '../cp-includes/functions.js';
+import { checkForUpdates, applyUpdate } from '../cp-includes/updater.js';
 
 /** Registered AJAX action handlers (action -> { handler, nopriv }) */
 const AJAX_ACTIONS = new Map();
@@ -187,6 +188,40 @@ async function handleBuiltinAction(action, cp, formData, user) {
         `UPDATE ${prefix}options SET option_value=? WHERE option_name='active_plugins'`
       ).bind(JSON.stringify(plugins)).run();
       return jsonResponse({ success: true, data: { plugins } });
+    }
+
+    // 업데이트 실행
+    case 'cp_do_update': {
+      if (!user) return jsonResponse({ success: false, data: '-1' }, 401);
+
+      // 최신 업데이트 정보를 KV에서 읽기 (강제 체크 없이)
+      let updateInfo = null;
+      try {
+        updateInfo = await cp.kv.get('cp:update:available', { type: 'json' });
+      } catch (_) {}
+
+      // KV에 없으면 GitHub에서 직접 체크
+      if (!updateInfo) {
+        updateInfo = await checkForUpdates(cp, true);
+      }
+
+      if (!updateInfo) {
+        return jsonResponse({ success: false, data: '업데이트 정보를 찾을 수 없습니다. 이미 최신 버전이거나 GitHub 저장소 설정을 확인하세요.' }, 400);
+      }
+
+      const result = await applyUpdate(cp, updateInfo);
+      if (result.success) {
+        return jsonResponse({ success: true, data: result });
+      } else {
+        return jsonResponse({ success: false, data: result.message }, 500);
+      }
+    }
+
+    // 업데이트 강제 재확인
+    case 'cp_check_update': {
+      if (!user) return jsonResponse({ success: false, data: '-1' }, 401);
+      const updateInfo = await checkForUpdates(cp, true); // forceCheck=true
+      return jsonResponse({ success: true, data: { update: updateInfo } });
     }
 
     default:
