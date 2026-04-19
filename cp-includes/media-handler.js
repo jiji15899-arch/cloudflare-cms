@@ -130,7 +130,7 @@ export async function handleUpload(cp, file, postId = 0) {
 
   // Store in KV
   try {
-    await cp.kv.put(`cp:media:${filePath}`, b64, { expirationTtl: 0 });
+    await cp.kv.put(`cp:media:${filePath}`, b64);
   } catch (e) {
     return { error: `KV storage error: ${e.message}` };
   }
