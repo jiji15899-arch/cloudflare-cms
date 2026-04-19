@@ -73,7 +73,7 @@ var init_cp_config = __esm({
     __name(loadConfig, "loadConfig");
     __name(saveConfig, "saveConfig");
     __name(mergeWithDefaults, "mergeWithDefaults");
-    CP_VERSION = "1.1.0";
+    CP_VERSION = "1.2.0";
     CPINC = "cp-includes";
     CPADMIN = "cp-admin";
   }
@@ -178,7 +178,7 @@ async function getThemeMeta(cp, slug) {
       return cached;
   } catch (_) {
   }
-  const meta = await fetchThemeJson(cp, slug) || { name: slug, version: "1.0.0" };
+  const meta = await fetchThemeJson(cp, slug) || { name: slug, version: "1.2.0" };
   try {
     await cp.kv.put(kvKey, JSON.stringify(meta), { expirationTtl: THEME_KV_TTL });
   } catch (_) {
@@ -2802,7 +2802,7 @@ async function renderAdminShell(cp, content, opts = {}) {
   const user = cp.currentUser;
   const userLogin = user?.user_login || "Admin";
   const currentPath = cp.url.pathname;
-  const adminVersion = cp.version || "1.0.0";
+  const adminVersion = cp.version || "1.2.0";
   const navItems = buildNavItems(cp, currentPath);
   const navHtml = renderNav(navItems, currentPath);
   const noticeHtml = notices.map(
@@ -3647,7 +3647,7 @@ async function handleDashboard(request, cp) {
     <h2>Site Info</h2>
     <table style="width:100%;font-size:13px;border-collapse:collapse">
       <tr><td style="padding:5px 0;color:#646970">Site</td><td><a href="${esc2(siteUrl)}" target="_blank">${esc2(siteName)}</a></td></tr>
-      <tr><td style="padding:5px 0;color:#646970">CloudPress Version</td><td>${esc2(cp.version || "1.0.0")}</td></tr>
+      <tr><td style="padding:5px 0;color:#646970">CloudPress Version</td><td>${esc2(cp.version || "1.2.0")}</td></tr>
       <tr><td style="padding:5px 0;color:#646970">Logged in as</td><td>${esc2(user?.display_name || user?.user_login || "")}</td></tr>
       <tr><td style="padding:5px 0;color:#646970">Role</td><td><span class="cp-badge cp-badge-publish">${esc2((user?.roles || ["administrator"])[0])}</span></td></tr>
       <tr><td style="padding:5px 0;color:#646970">Platform</td><td>Cloudflare Workers + D1 + KV</td></tr>
@@ -5868,7 +5868,7 @@ async function handleThemes(request, cp) {
       const builtinSlug = "cloudpress-default";
       await updateOption(cp, "template", builtinSlug);
       await updateOption(cp, "stylesheet", builtinSlug);
-      const meta = { name: "CloudPress Default", version: "1.0.0", description: "The default CloudPress theme.", author: "CloudPress" };
+      const meta = { name: "CloudPress Default", version: "1.2.0", description: "The default CloudPress theme.", author: "CloudPress" };
       await cp.kv.put(`cp:theme:meta:${builtinSlug}`, JSON.stringify(meta)).catch(() => {
       });
       await cp.kv.put("cp:themes:list", JSON.stringify([{ slug: builtinSlug, ...meta }])).catch(() => {
@@ -5976,7 +5976,7 @@ async function handlePlugins(request, cp) {
       if (repo) {
         const plugins2 = await getPlugins(cp);
         if (!plugins2.find((p) => p.slug === plugSlug)) {
-          plugins2.push({ slug: plugSlug, name: plugSlug, github_repo: repo, version: "1.0.0", description: `GitHub: ${repo}` });
+          plugins2.push({ slug: plugSlug, name: plugSlug, github_repo: repo, version: "1.2.0", description: `GitHub: ${repo}` });
           await cp.kv.put("cp:plugins:list", JSON.stringify(plugins2)).catch(() => {
           });
           notice = { type: "success", message: `Plugin "${esc9(plugSlug)}" added from GitHub.` };
@@ -8045,7 +8045,7 @@ async function handleUpgrade(request, cp) {
       notice = { type: "success", message: "Update cache cleared." };
     }
   }
-  const currentVersion = CP_VERSION || cp.version || "1.0.0";
+  const currentVersion = CP_VERSION || cp.version || "1.2.0";
   const isUpToDate = !latestInfo || latestInfo.version === currentVersion;
   const content = `
 <div class="cp-card" style="max-width:720px">
