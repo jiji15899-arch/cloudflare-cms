@@ -72,9 +72,16 @@ export async function route(request, env, ctx) {
     return handleInstaller(request, env, ctx);
   }
 
-  // -- Admin CSS assets (inline, no filesystem required) ---------------------
-  if (path.startsWith('/cp-admin/css/')) {
-    return serveAdminCss(path);
+  // -- Resolve admin slug (randomized: cp-admin-XXXXXX stored in KV) ---------
+  let adminSlug = 'cp-admin';
+  try {
+    const stored = await env.CP_KV?.get('cp:admin_slug');
+    if (stored) adminSlug = stored;
+  } catch (_) {}
+
+  // -- Admin CSS/image assets ------------------------------------------------
+  if (path.startsWith('/cp-admin/css/') || path.startsWith(\`/\${adminSlug}/css/\`)) {
+    return serveAdminCss(path.replace(\`/\${adminSlug}/css/\`, '/cp-admin/css/'));
   }
 
   // -- Shared includes CSS assets (login, signup, etc.) ----------------------
@@ -83,9 +90,8 @@ export async function route(request, env, ctx) {
   }
 
   // -- Admin static assets (images, icons) -----------------------------------
-  // Workers have no filesystem -- static assets are served inline.
-  if (path.startsWith('/cp-admin/images/')) {
-    return serveAdminAsset(path);
+  if (path.startsWith('/cp-admin/images/') || path.startsWith(\`/\${adminSlug}/images/\`)) {
+    return serveAdminAsset(path.replace(\`/\${adminSlug}/images/\`, '/cp-admin/images/'));
   }
 
   // -- Static Media (KV store) -----------------------------------------------
@@ -112,9 +118,15 @@ export async function route(request, env, ctx) {
     return handleLogout(request, env, ctx);
   }
 
-  // -- Admin Panel ------------------------------------------------------------
-  if (path === '/cp-admin' || path.startsWith('/cp-admin/')) {
-    return handleAdmin(request, env, ctx);
+  // -- Admin Panel (support both legacy /cp-admin/ and randomized slug) -------
+  if (path === '/cp-admin' || path.startsWith('/cp-admin/') ||
+      path === `/${adminSlug}` || path.startsWith(`/${adminSlug}/`)) {
+    // Rewrite randomized slug to canonical for internal handlers
+    const rewritten = new Request(
+      request.url.replace(`/${adminSlug}`, '/cp-admin'),
+      request
+    );
+    return handleAdmin(rewritten, env, ctx);
   }
 
   // -- Account Activation -----------------------------------------------------
