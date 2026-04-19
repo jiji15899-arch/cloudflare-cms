@@ -231,7 +231,7 @@ async function buildDefaultPage(templateName, cp, context) {
     bodyHtml = renderHomePage(posts, siteName, siteDesc);
   }
 
-  return wrapInFullPage(bodyHtml, cp, templateName, { siteName, siteUrl });
+  return await wrapInFullPage(bodyHtml, cp, templateName, { siteName, siteUrl });
 }
 
 async function getSiteName(cp) {
@@ -348,9 +348,11 @@ function render404() {
 
 /* ── 전체 페이지 래핑 ─────────────────────────────────────────────────────── */
 
-function wrapInFullPage(content, cp, templateName, extra = {}) {
+async function wrapInFullPage(content, cp, templateName, extra = {}) {
   const siteName = extra.siteName || cp?.config?.SITE_NAME || 'CloudPress';
   const siteUrl  = extra.siteUrl  || cp?.config?.SITE_URL  || '';
+  let adminSlug = cp?.config?.ADMIN_SLUG || 'cp-admin';
+  try { const s = await cp?.kv?.get('cp:admin_slug'); if (s) adminSlug = s; } catch (_) {}
 
   return `<!DOCTYPE html>
 <html lang="ko">
@@ -427,7 +429,7 @@ function wrapInFullPage(content, cp, templateName, extra = {}) {
       <a href="/" class="cp-site-name">${escHtml(siteName)}</a>
       <nav>
         <a href="/">홈</a>
-        <a href="/cp-admin">관리자</a>
+        <a href="/${adminSlug}/">관리자</a>
       </nav>
     </div>
   </header>
