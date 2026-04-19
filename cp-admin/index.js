@@ -38,8 +38,8 @@ import { handleTools }             from './pages/tools.js';
 import { handleUpgrade }           from './pages/upgrade.js';
 import { handleAjax }              from './ajax.js';
 import { handleGithubSync }        from './github-sync.js';
-import { handleThemeEditor }       from './pages/theme-editor.js';
-import { handlePluginEditor }      from './pages/plugin-editor.js';
+import { handleThemeEditor }       from './theme-editor.js';
+import { handlePluginEditor }      from './plugin-editor.js';
 
 export async function handleAdmin(request, env, ctx) {
   const url    = new URL(request.url);
