@@ -110,6 +110,21 @@ export async function route(request, env, ctx) {
     return handleSitemap(request, env, ctx);
   }
 
+  // -- Language Switch (cookie-based i18n) ------------------------------------
+  if (path === '/cp-set-lang') {
+    const qs   = url.searchParams;
+    const lang = qs.get('lang') || 'en';
+    const redir = qs.get('redirect') || '/';
+    const valid = ['en','ko','zh','ja','fr'].includes(lang) ? lang : 'en';
+    return new Response(null, {
+      status: 302,
+      headers: {
+        'Location': redir,
+        'Set-Cookie': `cp_lang=${valid}; Path=/; Max-Age=31536000; SameSite=Lax`,
+      },
+    });
+  }
+
   // -- Authentication (JWT-based -- no PHP sessions) ---------------------------
   if (path === '/cp-login') {
     return handleLogin(request, env, ctx);
