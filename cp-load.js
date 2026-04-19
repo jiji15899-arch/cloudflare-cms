@@ -2,142 +2,181 @@
  * Bootstrap for CloudPress.
  * Replaces WordPress wp-load.php
  *
- * Sets up:
- *  - ABSPATH equivalent (CP_PATH)
- *  - Config loading (cp-config.js)
- *  - D1 database binding
- *  - KV namespace binding
- *  - Global cp context object
+ * [v3.0 수정]
+ * - HookSystem을 plugin-loader의 완전한 구현으로 교체
+ * - removeFilter, hasFilter, didAction, shortcode 지원
  *
  * @package CloudPress
  */
 
-import { loadConfig } from './cp-config.js';
-import { cpSettings } from './cp-settings.js';
+import { loadConfig }        from './cp-config.js';
+import { cpSettings }        from './cp-settings.js';
 
-/**
- * Main bootstrap function.
- * Returns a fully initialized `cp` context object used throughout the system.
- *
- * @param {Request} request
- * @param {object}  env      - Cloudflare Worker env bindings (D1, KV, etc.)
- * @param {object}  ctx      - Cloudflare Worker execution context
- * @param {object}  options  - e.g. { CP_USE_THEMES: true }
- * @returns {Promise<object>} cp context
- */
 export async function cpLoad(request, env, ctx, options = {}) {
-  // Validate required Cloudflare bindings
   if (!env.CP_DB) {
     return errorResponse(
-      'CloudPress Error: D1 database binding <code>CP_DB</code> is not configured. ' +
-      'Please add a D1 database binding named <strong>CP_DB</strong> in your Cloudflare Workers settings.'
+      'CloudPress 오류: D1 데이터베이스 바인딩 <code>CP_DB</code>가 설정되지 않았습니다. ' +
+      'Cloudflare Workers 설정에서 <strong>CP_DB</strong>라는 D1 데이터베이스 바인딩을 추가하세요.'
     );
   }
   if (!env.CP_KV) {
     return errorResponse(
-      'CloudPress Error: KV namespace binding <code>CP_KV</code> is not configured. ' +
-      'Please add a KV namespace binding named <strong>CP_KV</strong> in your Cloudflare Workers settings.'
+      'CloudPress 오류: KV 네임스페이스 바인딩 <code>CP_KV</code>가 설정되지 않았습니다. ' +
+      'Cloudflare Workers 설정에서 <strong>CP_KV</strong>라는 KV 네임스페이스 바인딩을 추가하세요.'
     );
   }
 
-  // Load user config (cp-config.js)
   let config;
   try {
     config = await loadConfig(env);
   } catch (e) {
     return errorResponse(
-      `CloudPress Error: Could not load configuration. ${e.message}<br>` +
-      'Make sure <code>cp-config.js</code> is correctly set up or run the installer at <a href="/cp-admin/setup-config">/cp-admin/setup-config</a>.'
+      `CloudPress 오류: 설정을 로드할 수 없습니다. ${e.message}<br>` +
+      '<code>cp-config.js</code>가 올바르게 설정되어 있는지 확인하거나 <a href="/cp-admin/setup-config">설치 마법사</a>를 실행하세요.'
     );
   }
 
-  // Build the cp context object (equivalent to WordPress globals)
   const cp = {
-    // Cloudflare bindings
-    db: env.CP_DB,       // D1 database
-    kv: env.CP_KV,       // KV namespace
-
-    // GitHub source (optional, for theme/plugin sync)
-    github: env.GITHUB_TOKEN ? env.GITHUB_TOKEN : null,
-
-    // Config values
+    db:     env.CP_DB,
+    kv:     env.CP_KV,
+    github: env.GITHUB_TOKEN || null,
     config,
-
-    // Request context
     request,
     env,
     ctx,
-    url: new URL(request.url),
-
-    // Options
+    url:      new URL(request.url),
     options,
-
-    // Runtime state
-    query: {},
+    query:    {},
     currentUser: null,
-    hooks: createHookSystem(),
-
-    // Helpers
+    hooks:    createHookSystem(),
     db_prefix: config.DB_PREFIX || 'cp_',
+    version:  '3.0.0',
   };
 
-  // Run cp-settings (register hooks, load active plugins/theme meta, etc.)
   await cpSettings(cp);
-
   return cp;
 }
 
-/**
- * Creates a minimal WordPress-compatible hook system (do_action / apply_filters).
- */
+// ─── 완전한 WordPress 호환 훅 시스템 ──────────────────────────────────────
+
 function createHookSystem() {
-  const actions = {};
-  const filters = {};
+  const registry  = { actions: {}, filters: {} };
+  const _done     = new Set();
+  const _current  = [];
+  const _shortcodes = {};
+
+  function sortHooks(list) {
+    list.sort((a, b) => a.priority - b.priority);
+  }
 
   return {
-    addAction(hook, callback, priority = 10) {
-      if (!actions[hook]) actions[hook] = [];
-      actions[hook].push({ callback, priority });
-      actions[hook].sort((a, b) => a.priority - b.priority);
+    // Filters
+    addFilter(hook, callback, priority = 10, acceptedArgs = 1) {
+      if (!registry.filters[hook]) registry.filters[hook] = [];
+      registry.filters[hook].push({ callback, priority, acceptedArgs });
+      sortHooks(registry.filters[hook]);
     },
-    doAction(hook, ...args) {
-      (actions[hook] || []).forEach(({ callback }) => callback(...args));
-    },
-    addFilter(hook, callback, priority = 10) {
-      if (!filters[hook]) filters[hook] = [];
-      filters[hook].push({ callback, priority });
-      filters[hook].sort((a, b) => a.priority - b.priority);
+    removeFilter(hook, callback, priority = 10) {
+      if (!registry.filters[hook]) return false;
+      registry.filters[hook] = registry.filters[hook].filter(
+        h => !(h.callback === callback && h.priority === priority)
+      );
+      return true;
     },
     applyFilters(hook, value, ...args) {
-      return (filters[hook] || []).reduce(
-        (val, { callback }) => callback(val, ...args),
-        value
+      if (!registry.filters[hook]) return value;
+      let result = value;
+      for (const h of registry.filters[hook]) {
+        try {
+          const pass = [result, ...args].slice(0, h.acceptedArgs);
+          const r = h.callback(...pass);
+          if (r !== undefined) result = r;
+        } catch(e) {
+          console.error(`[hooks] applyFilters "${hook}":`, e?.message);
+        }
+      }
+      return result;
+    },
+    hasFilter(hook, callback) {
+      if (!registry.filters[hook]) return false;
+      if (!callback) return registry.filters[hook].length > 0;
+      return registry.filters[hook].some(h => h.callback === callback);
+    },
+
+    // Actions
+    addAction(hook, callback, priority = 10, acceptedArgs = 1) {
+      if (!registry.actions[hook]) registry.actions[hook] = [];
+      registry.actions[hook].push({ callback, priority, acceptedArgs });
+      sortHooks(registry.actions[hook]);
+    },
+    removeAction(hook, callback, priority = 10) {
+      if (!registry.actions[hook]) return false;
+      registry.actions[hook] = registry.actions[hook].filter(
+        h => !(h.callback === callback && h.priority === priority)
+      );
+      return true;
+    },
+    doAction(hook, ...args) {
+      _current.push(hook);
+      if (registry.actions[hook]) {
+        for (const h of registry.actions[hook]) {
+          try {
+            const pass = args.slice(0, h.acceptedArgs);
+            h.callback(...pass);
+          } catch(e) {
+            console.error(`[hooks] doAction "${hook}":`, e?.message);
+          }
+        }
+      }
+      _done.add(hook);
+      _current.pop();
+    },
+    didAction:     (hook) => _done.has(hook),
+    currentFilter: ()     => _current[_current.length - 1] || '',
+    hasAction:     (hook, cb) => {
+      if (!registry.actions[hook]) return false;
+      if (!cb) return registry.actions[hook].length > 0;
+      return registry.actions[hook].some(h => h.callback === cb);
+    },
+
+    // Shortcodes
+    addShortcode(tag, callback) { _shortcodes[tag] = callback; },
+    removeShortcode(tag)        { delete _shortcodes[tag]; },
+    doShortcode(content) {
+      if (!content) return content;
+      return content.replace(
+        /\[(\w+)((?:\s+\w+="[^"]*")*)\s*(?:\]([\s\S]*?)\[\/\1\]|\s*\/\])/g,
+        (match, tag, attrsStr, inner) => {
+          const cb = _shortcodes[tag];
+          if (!cb) return match;
+          const attrs = {};
+          const re = /(\w+)="([^"]*)"/g; let m;
+          while ((m = re.exec(attrsStr || ''))) attrs[m[1]] = m[2];
+          try { return String(cb(attrs, inner || '', tag) || ''); }
+          catch(_) { return match; }
+        }
       );
     },
   };
 }
 
-/**
- * Returns an error HTML response for bootstrap failures.
- */
 function errorResponse(message) {
   const html = `<!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CloudPress &rsaquo; Error</title>
+  <title>CloudPress › 오류</title>
   <link rel="stylesheet" href="/cp-includes/css/error.css">
 </head>
 <body>
   <div class="error-box">
-    <h1>CloudPress &rsaquo; Configuration Error</h1>
+    <h1>CloudPress › 설정 오류</h1>
     <p>${message}</p>
   </div>
 </body>
 </html>`;
 
-  // Return a Response-like object that the caller can detect
   return {
     __cpError: true,
     response: new Response(html, {
