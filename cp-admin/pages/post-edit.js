@@ -80,8 +80,10 @@ export async function handlePostEdit(request, cp, opts = {}) {
 
       savedPostId = result.meta?.last_row_id;
       const redirectType = postType === 'page' ? 'page' : 'post';
-      // 메타 저장 후 리다이렉트
+      // 메타 및 카테고리 저장 후 리다이렉트
       await savePostMeta(cp, prefix, savedPostId, metaIds, metaKeys, metaValues);
+      await savePostCategories(cp, prefix, savedPostId, fd.getAll('post_category[]'));
+      await savePostTags(cp, prefix, savedPostId, fd.get('post_tags') || '');
       return Response.redirect(
         `${cp.url.origin}/cp-admin/${redirectType}?post=${savedPostId}&message=1`, 302
       );
@@ -95,6 +97,8 @@ export async function handlePostEdit(request, cp, opts = {}) {
 
       post = await cp.db.prepare(`SELECT * FROM ${prefix}posts WHERE ID=? LIMIT 1`).bind(postId).first();
       await savePostMeta(cp, prefix, postId, metaIds, metaKeys, metaValues);
+      await savePostCategories(cp, prefix, postId, fd.getAll('post_category[]'));
+      await savePostTags(cp, prefix, postId, fd.get('post_tags') || '');
       notices.push({ type: 'success', message: L.postUpdated });
     }
   }
@@ -104,6 +108,7 @@ export async function handlePostEdit(request, cp, opts = {}) {
 
   // ── 데이터 로드 ──────────────────────────────────────────
   let categories = [];
+  let postCategoryIds = new Set();
   if (postType === 'post') {
     const cats = await cp.db.prepare(
       `SELECT t.term_id, t.name FROM ${prefix}terms t
@@ -111,9 +116,22 @@ export async function handlePostEdit(request, cp, opts = {}) {
        WHERE tt.taxonomy = 'category'`
     ).all();
     categories = cats?.results || [];
+
+    // 현재 포스트에 지정된 카테고리 ID 로드
+    if (postId) {
+      try {
+        const assigned = await cp.db.prepare(
+          `SELECT tt.term_id FROM ${prefix}term_relationships tr
+           JOIN ${prefix}term_taxonomy tt ON tr.term_taxonomy_id = tt.term_taxonomy_id
+           WHERE tr.object_id = ? AND tt.taxonomy = 'category'`
+        ).bind(postId).all();
+        postCategoryIds = new Set((assigned?.results || []).map(r => String(r.term_id)));
+      } catch (_) {}
+    }
   }
 
   let postMetas = [];
+  let existingTags = [];
   if (postId) {
     const metaRows = await cp.db.prepare(
       `SELECT meta_id, meta_key, meta_value FROM ${prefix}postmeta WHERE post_id=? ORDER BY meta_id`
@@ -121,6 +139,17 @@ export async function handlePostEdit(request, cp, opts = {}) {
     postMetas = metaRows?.results || [];
     // 내부 메타(_로 시작) 숨김
     postMetas = postMetas.filter(m => !String(m.meta_key).startsWith('_'));
+
+    // 기존 태그 로드
+    try {
+      const tagRows = await cp.db.prepare(
+        `SELECT t.name FROM ${prefix}terms t
+         JOIN ${prefix}term_taxonomy tt ON t.term_id = tt.term_id
+         JOIN ${prefix}term_relationships tr ON tt.term_taxonomy_id = tr.term_taxonomy_id
+         WHERE tr.object_id = ? AND tt.taxonomy = 'post_tag'`
+      ).bind(postId).all();
+      existingTags = (tagRows?.results || []).map(r => r.name);
+    } catch (_) {}
   }
 
   const isNew     = !postId || !post;
@@ -390,7 +419,7 @@ export async function handlePostEdit(request, cp, opts = {}) {
         <div style="max-height:180px;overflow-y:auto;margin-bottom:8px">
           ${categories.map(cat => `
             <label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;cursor:pointer">
-              <input type="checkbox" name="post_category[]" value="${cat.term_id}">
+              <input type="checkbox" name="post_category[]" value="${cat.term_id}" ${postCategoryIds.has(String(cat.term_id)) ? 'checked' : ''}>
               ${esc(cat.name)}
             </label>
           `).join('')}
@@ -986,7 +1015,8 @@ function addMetaRow() {
 function removeMetaRow(btn) { btn.closest('tr').remove(); }
 
 // ── 태그 ────────────────────────────────────────────────────
-let tags = [];
+let tags = ${JSON.stringify(existingTags)};
+if (tags.length) renderTags();
 function addTag() {
   const input = document.getElementById('tag-input');
   const raw   = input.value.trim();
@@ -1068,155 +1098,6 @@ function submitPublish() {
   document.getElementById('post-form').submit();
 }
 
-// ── 슬래시(/) 블록 인서터 ─────────────────────────────────────
-(function() {
-  const BLOCKS = [
-    { label: '단락', icon: '¶', tag: '<p></p>' },
-    { label: '제목 H2', icon: 'H2', tag: '<h2></h2>' },
-    { label: '제목 H3', icon: 'H3', tag: '<h3></h3>' },
-    { label: '이미지', icon: '🖼', tag: '<img src="" alt="">' },
-    { label: '인용구', icon: '"', tag: '<blockquote></blockquote>' },
-    { label: '목록', icon: '☰', tag: '<ul>\n  <li></li>\n</ul>' },
-    { label: '번호 목록', icon: '1.', tag: '<ol>\n  <li></li>\n</ol>' },
-    { label: '구분선', icon: '—', tag: '<hr>' },
-    { label: '코드', icon: '</>', tag: '<pre><code></code></pre>' },
-    { label: '표', icon: '⊞', tag: '<table>\n  <tr><th></th></tr>\n  <tr><td></td></tr>\n</table>' },
-  ];
-
-  let slashMenu = null;
-  let slashStart = -1;
-
-  function removeMenu() {
-    if (slashMenu) { slashMenu.remove(); slashMenu = null; }
-    slashStart = -1;
-  }
-
-  function insertBlock(ta, tag) {
-    const start = ta.selectionStart;
-    const val   = ta.value;
-    // Remove the slash+query typed so far
-    const lineStart = val.lastIndexOf('\n', start - 1) + 1;
-    const before    = val.slice(0, lineStart);
-    const after     = val.slice(start);
-    ta.value = before + tag + '\n' + after;
-    const newPos = before.length + tag.length + 1;
-    ta.setSelectionRange(newPos, newPos);
-    ta.focus();
-  }
-
-  document.addEventListener('DOMContentLoaded', function() {
-    const ta = document.getElementById('post_content') || document.querySelector('textarea[name="post_content"]');
-    if (!ta) return;
-
-    ta.addEventListener('keydown', function(e) {
-      if (slashMenu && e.key === 'Escape') { removeMenu(); e.preventDefault(); }
-      if (slashMenu && e.key === 'Enter') {
-        const active = slashMenu.querySelector('.slash-item.active');
-        if (active) { active.click(); e.preventDefault(); }
-      }
-      if (slashMenu && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
-        const items = Array.from(slashMenu.querySelectorAll('.slash-item'));
-        const idx   = items.findIndex(i => i.classList.contains('active'));
-        items.forEach(i => i.classList.remove('active'));
-        let next = e.key === 'ArrowDown' ? idx + 1 : idx - 1;
-        if (next < 0) next = items.length - 1;
-        if (next >= items.length) next = 0;
-        items[next].classList.add('active');
-        items[next].scrollIntoView({ block: 'nearest' });
-        e.preventDefault();
-      }
-    });
-
-    ta.addEventListener('input', function() {
-      const pos = ta.selectionStart;
-      const val = ta.value;
-      const lineStart = val.lastIndexOf('\n', pos - 1) + 1;
-      const lineText  = val.slice(lineStart, pos);
-
-      if (lineText.startsWith('/')) {
-        const query = lineText.slice(1).toLowerCase();
-        slashStart  = lineStart;
-        showSlashMenu(ta, query);
-      } else {
-        removeMenu();
-      }
-    });
-
-    ta.addEventListener('blur', function() {
-      setTimeout(removeMenu, 150);
-    });
-
-    function showSlashMenu(ta, query) {
-      removeMenu();
-      const filtered = BLOCKS.filter(b => !query || b.label.toLowerCase().includes(query));
-      if (!filtered.length) return;
-
-      const rect   = ta.getBoundingClientRect();
-      const coords = getCaretCoordinates(ta, ta.selectionStart);
-
-      slashMenu = document.createElement('div');
-      slashMenu.id = 'slash-block-menu';
-      slashMenu.style.cssText = [
-        'position:fixed',
-        'background:#fff',
-        'border:1px solid #ddd',
-        'border-radius:6px',
-        'box-shadow:0 4px 16px rgba(0,0,0,.12)',
-        'z-index:9999',
-        'max-height:240px',
-        'overflow-y:auto',
-        'min-width:180px',
-        'padding:4px 0',
-        `left:${Math.min(rect.left + coords.left, window.innerWidth - 200)}px`,
-        `top:${rect.top + coords.top + 20 + ta.scrollTop}px`,
-      ].join(';');
-
-      filtered.forEach((b, i) => {
-        const item = document.createElement('div');
-        item.className = 'slash-item' + (i === 0 ? ' active' : '');
-        item.style.cssText = 'padding:7px 14px;cursor:pointer;display:flex;gap:10px;align-items:center;font-size:13px';
-        item.innerHTML = '<span style="font-weight:600;width:20px;text-align:center">' + b.icon + '</span><span>' + b.label + '</span>';
-        item.addEventListener('mouseenter', function() {
-          slashMenu.querySelectorAll('.slash-item').forEach(x => x.classList.remove('active'));
-          item.classList.add('active');
-        });
-        item.addEventListener('click', function() {
-          insertBlock(ta, b.tag);
-          removeMenu();
-        });
-        slashMenu.appendChild(item);
-      });
-
-      // Highlight active
-      slashMenu.querySelectorAll('.slash-item').forEach(function(el) {
-        el.addEventListener('mouseenter', function() { el.style.background = '#f0f0f1'; });
-        el.addEventListener('mouseleave', function() { el.style.background = ''; });
-      });
-
-      document.body.appendChild(slashMenu);
-    }
-
-    // Simple caret coordinate estimator
-    function getCaretCoordinates(el, pos) {
-      const div = document.createElement('div');
-      const style = window.getComputedStyle(el);
-      ['fontFamily','fontSize','fontWeight','lineHeight','padding','border','boxSizing','whiteSpace','wordWrap','overflowWrap'].forEach(p => {
-        div.style[p] = style[p];
-      });
-      div.style.cssText += ';position:absolute;visibility:hidden;white-space:pre-wrap;word-wrap:break-word;';
-      div.style.width = el.offsetWidth + 'px';
-      const text = el.value.substring(0, pos);
-      div.textContent = text;
-      const span = document.createElement('span');
-      span.textContent = el.value.substring(pos) || '.';
-      div.appendChild(span);
-      document.body.appendChild(div);
-      const coords = { left: span.offsetLeft, top: span.offsetTop };
-      document.body.removeChild(div);
-      return coords;
-    }
-  });
-})();
 
 </script>
 `;
@@ -1231,6 +1112,113 @@ function submitPublish() {
 // ---------------------------------------------------------------------------
 // postmeta 저장 헬퍼
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// 카테고리 저장 헬퍼 (term_relationships + term_taxonomy count 갱신)
+// ---------------------------------------------------------------------------
+
+async function savePostCategories(cp, prefix, postId, categoryIds) {
+  if (!postId) return;
+
+  // 기존 카테고리 관계 삭제
+  try {
+    await cp.db.prepare(
+      `DELETE FROM ${prefix}term_relationships
+       WHERE object_id = ?
+         AND term_taxonomy_id IN (
+           SELECT term_taxonomy_id FROM ${prefix}term_taxonomy WHERE taxonomy = 'category'
+         )`
+    ).bind(postId).run();
+  } catch (_) {}
+
+  // 새 카테고리 관계 삽입
+  for (const catId of (categoryIds || [])) {
+    const id = parseInt(catId);
+    if (!id) continue;
+    try {
+      const tt = await cp.db.prepare(
+        `SELECT term_taxonomy_id FROM ${prefix}term_taxonomy WHERE term_id = ? AND taxonomy = 'category' LIMIT 1`
+      ).bind(id).first();
+      if (!tt) continue;
+      await cp.db.prepare(
+        `INSERT OR IGNORE INTO ${prefix}term_relationships (object_id, term_taxonomy_id) VALUES (?, ?)`
+      ).bind(postId, tt.term_taxonomy_id).run();
+    } catch (_) {}
+  }
+
+  // term_taxonomy.count 갱신
+  try {
+    const tts = await cp.db.prepare(
+      `SELECT term_taxonomy_id FROM ${prefix}term_taxonomy WHERE taxonomy = 'category'`
+    ).all();
+    for (const row of (tts?.results || [])) {
+      const cnt = await cp.db.prepare(
+        `SELECT COUNT(*) as n FROM ${prefix}term_relationships tr
+         JOIN ${prefix}posts p ON p.ID = tr.object_id
+         WHERE tr.term_taxonomy_id = ? AND p.post_status = 'publish'`
+      ).bind(row.term_taxonomy_id).first();
+      await cp.db.prepare(
+        `UPDATE ${prefix}term_taxonomy SET count = ? WHERE term_taxonomy_id = ?`
+      ).bind(cnt?.n || 0, row.term_taxonomy_id).run();
+    }
+  } catch (_) {}
+}
+
+// ---------------------------------------------------------------------------
+// 태그 저장 헬퍼
+// ---------------------------------------------------------------------------
+
+async function savePostTags(cp, prefix, postId, tagsStr) {
+  if (!postId) return;
+
+  // 기존 태그 관계 삭제
+  try {
+    await cp.db.prepare(
+      `DELETE FROM ${prefix}term_relationships
+       WHERE object_id = ?
+         AND term_taxonomy_id IN (
+           SELECT term_taxonomy_id FROM ${prefix}term_taxonomy WHERE taxonomy = 'post_tag'
+         )`
+    ).bind(postId).run();
+  } catch (_) {}
+
+  const tagNames = (tagsStr || '').split(',').map(t => t.trim()).filter(Boolean);
+  for (const name of tagNames) {
+    try {
+      // term 있으면 재사용, 없으면 생성
+      let term = await cp.db.prepare(
+        `SELECT t.term_id FROM ${prefix}terms t WHERE t.name = ? LIMIT 1`
+      ).bind(name).first();
+
+      let termId;
+      if (term) {
+        termId = term.term_id;
+      } else {
+        const slug = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\-가-힣]/g, '');
+        const ins = await cp.db.prepare(
+          `INSERT INTO ${prefix}terms (name, slug) VALUES (?, ?)`
+        ).bind(name, slug).run();
+        termId = ins.meta?.last_row_id;
+      }
+
+      // term_taxonomy 확인/생성
+      let tt = await cp.db.prepare(
+        `SELECT term_taxonomy_id FROM ${prefix}term_taxonomy WHERE term_id = ? AND taxonomy = 'post_tag' LIMIT 1`
+      ).bind(termId).first();
+      if (!tt) {
+        const ttIns = await cp.db.prepare(
+          `INSERT INTO ${prefix}term_taxonomy (term_id, taxonomy, description, parent, count) VALUES (?, 'post_tag', '', 0, 0)`
+        ).bind(termId).run();
+        tt = { term_taxonomy_id: ttIns.meta?.last_row_id };
+      }
+
+      // term_relationships 삽입
+      await cp.db.prepare(
+        `INSERT OR IGNORE INTO ${prefix}term_relationships (object_id, term_taxonomy_id) VALUES (?, ?)`
+      ).bind(postId, tt.term_taxonomy_id).run();
+    } catch (_) {}
+  }
+}
 
 async function savePostMeta(cp, prefix, postId, metaIds, metaKeys, metaValues) {
   if (!postId || !metaKeys?.length) return;

@@ -20,25 +20,43 @@ export async function handleTools(request, cp) {
     const action = fd.get('action') || '';
 
     if (action === 'flush_kv') {
-      // Flush template/theme cache keys
-      const cacheKeys = ['cp:themes:list'];
-      for (const k of cacheKeys) {
+      // 완전 KV 캐시 제거: 모든 cp: 접두사 키를 열거 후 삭제
+      const PURGE_PREFIXES = [
+        'cp:themes:list',
+        'cp:template:',
+        'cp:theme:meta:',
+        'cp:option:',
+        'cp:post:',
+        'cp:query:',
+        'cp:update:',
+        'cp:transient:',
+        'cp:doing_cron',
+      ];
+
+      // 단일 키 삭제
+      const singleKeys = PURGE_PREFIXES.filter(k => !k.endsWith(':'));
+      for (const k of singleKeys) {
         try { await cp.kv.delete(k); } catch (_) {}
       }
-      // Flush KV listed keys with cp:template: and cp:theme:meta: prefix
-      try {
-        const list = await cp.kv.list({ prefix: 'cp:template:' });
-        for (const key of (list.keys || [])) {
-          await cp.kv.delete(key.name).catch(() => {});
-        }
-      } catch (_) {}
-      try {
-        const list2 = await cp.kv.list({ prefix: 'cp:theme:meta:' });
-        for (const key of (list2.keys || [])) {
-          await cp.kv.delete(key.name).catch(() => {});
-        }
-      } catch (_) {}
-      notice = { type: 'success', message: 'Cache flushed. Template and theme caches cleared.' };
+
+      // 접두사 기반 열거 삭제
+      const prefixKeys = PURGE_PREFIXES.filter(k => k.endsWith(':'));
+      let totalDeleted = 0;
+      for (const prefix of prefixKeys) {
+        try {
+          let cursor;
+          do {
+            const opts = cursor ? { prefix, cursor } : { prefix };
+            const listResult = await cp.kv.list(opts);
+            for (const key of (listResult.keys || [])) {
+              await cp.kv.delete(key.name).catch(() => {});
+              totalDeleted++;
+            }
+            cursor = listResult.list_complete ? null : listResult.cursor;
+          } while (cursor);
+        } catch (_) {}
+      }
+      notice = { type: 'success', message: `캐시 완전 삭제 완료. KV 키 ${totalDeleted}개 제거됨 (옵션·템플릿·테마·포스트·트랜지언트 포함).` };
     }
 
     if (action === 'recount_terms') {
@@ -119,11 +137,11 @@ export async function handleTools(request, cp) {
   <div style="display:grid;gap:16px">
 
     <div style="border:1px solid #ddd;border-radius:8px;padding:18px">
-      <h3 style="margin:0 0 6px">Flush Cache</h3>
-      <p style="color:#666;font-size:13px;margin:0 0 12px">Clear all template and theme caches stored in KV. Useful after updating theme files in GitHub.</p>
-      <form method="post">
+      <h3 style="margin:0 0 6px">🗑️ 전체 캐시 완전 삭제 (DNS 캐시 포함)</h3>
+      <p style="color:#666;font-size:13px;margin:0 0 12px">KV에 저장된 <strong>모든 캐시</strong>를 삭제합니다. 옵션 캐시·템플릿 캐시·테마 캐시·포스트 캐시·트랜지언트 등 이전 버전 잔류 항목까지 완전 제거됩니다. 업데이트 직후 또는 레이아웃이 이상할 때 실행하세요.</p>
+      <form method="post" onsubmit="return confirm('모든 KV 캐시를 삭제합니다. 계속하시겠습니까?')">
         <input type="hidden" name="action" value="flush_kv">
-        <button type="submit" class="cp-btn">Flush Cache</button>
+        <button type="submit" class="cp-btn cp-btn-danger">전체 캐시 삭제</button>
       </form>
     </div>
 
