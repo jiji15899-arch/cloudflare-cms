@@ -54,6 +54,12 @@ export async function handleOptionsGeneral(request, cp) {
   // 언어 기본값 한국어
   const currentLang = opts.WPLANG || cp.config?.WPLANG || 'ko_KR';
   const githubToken = cp.config.GITHUB_TOKEN || cp.env?.CP_GITHUB_TOKEN || '';
+  // Load admin slug
+  let adminSlug = cp.config?.ADMIN_SLUG || 'cp-admin';
+  try {
+    const stored = await cp.kv.get('cp:admin_slug');
+    if (stored) adminSlug = stored;
+  } catch (_) {}
 
   // UI 언어에 따른 레이블
   const L = getLabels(currentLang);
@@ -171,6 +177,20 @@ export async function handleOptionsGeneral(request, cp) {
               `<option value="${i}" ${(opts.start_of_week ?? '0') == i ? 'selected' : ''}>${d}</option>`
             ).join('')}
           </select>
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- ── Admin Security ───────────────────────────── -->
+  <div class="cp-card" id="admin-security">
+    <h2>&#128274; 관리자 보안</h2>
+    <table class="cp-form-table">
+      <tr>
+        <th>관리자 URL</th>
+        <td>
+          <code style="font-size:14px">/${esc(adminSlug)}/</code>
+          <p class="cp-description">설치 시 자동 생성된 보안 관리자 URL입니다. 이 URL을 안전하게 보관하세요.</p>
         </td>
       </tr>
     </table>
