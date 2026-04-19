@@ -73,7 +73,7 @@ var init_cp_config = __esm({
     __name(loadConfig, "loadConfig");
     __name(saveConfig, "saveConfig");
     __name(mergeWithDefaults, "mergeWithDefaults");
-    CP_VERSION = "1.0.0";
+    CP_VERSION = "1.1.0";
     CPINC = "cp-includes";
     CPADMIN = "cp-admin";
   }
@@ -1366,6 +1366,7 @@ __name(interpolate, "interpolate");
 function wrapInFullPage(content, cp, templateName) {
   const siteName = cp?.config?.SITE_NAME || "CloudPress";
   const siteUrl = cp?.config?.SITE_URL || "";
+  const adminSlug = cp?.config?.ADMIN_SLUG || "cp-admin";
   return `<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -1373,50 +1374,76 @@ function wrapInFullPage(content, cp, templateName) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="generator" content="CloudPress">
   <title>${escHtml(siteName)}</title>
-  <link rel="stylesheet" href="/cp-includes/css/template-fallback.css">
   <style>
-    *, *::before, *::after { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-                   'Helvetica Neue', Arial, sans-serif;
-      line-height: 1.6;
-      color: #1d2327;
-      background: #fff;
-    }
-    .cp-container { max-width: 1200px; margin: 0 auto; padding: 0 1.5rem; }
-    .cp-header {
-      background: #1d2327;
-      color: #fff;
-      padding: 1rem 0;
-      margin-bottom: 2rem;
-    }
-    .cp-header a { color: #fff; text-decoration: none; font-size: 1.4rem; font-weight: 700; }
-    .cp-main { min-height: 60vh; padding-bottom: 3rem; }
-    .cp-footer {
-      background: #f6f7f7;
-      border-top: 1px solid #dcdcde;
-      padding: 1.5rem 0;
-      text-align: center;
-      color: #646970;
-      font-size: .875rem;
+    *,*::before,*::after{box-sizing:border-box}
+    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR','Malgun Gothic','Segoe UI',sans-serif;line-height:1.7;color:#1d2327;background:#fff;display:flex;flex-direction:column;min-height:100vh}
+    a{color:#2271b1;text-decoration:none}
+    a:hover{text-decoration:underline}
+    img{max-width:100%;height:auto}
+    .cp-container{max-width:860px;margin:0 auto;padding:0 1.5rem}
+    .cp-site-wrap{flex:1}
+    .cp-header{background:#1d2327;color:#fff;padding:1.1rem 0;box-shadow:0 2px 4px rgba(0,0,0,.15)}
+    .cp-header-inner{display:flex;align-items:center;justify-content:space-between;max-width:860px;margin:0 auto;padding:0 1.5rem}
+    .cp-header a.cp-site-name{color:#fff;text-decoration:none;font-size:1.35rem;font-weight:700;letter-spacing:-.3px}
+    .cp-header nav a{color:rgba(255,255,255,.75);text-decoration:none;margin-left:1.5rem;font-size:.9rem;transition:.15s}
+    .cp-header nav a:hover{color:#fff}
+    .cp-home-hero{padding:1.5rem 0 1rem;border-bottom:1px solid #f0f0f1;margin-bottom:1.75rem}
+    .cp-site-title{font-size:2.2rem;font-weight:800;margin:0 0 .5rem;color:#1d2327}
+    .cp-site-desc{color:#646970;font-size:1.05rem;margin:0}
+    .cp-posts-list{display:flex;flex-direction:column;gap:2rem;margin-bottom:3rem}
+    .cp-post-card{border-bottom:1px solid #f0f0f1;padding-bottom:2rem}
+    .cp-post-card:last-child{border-bottom:none}
+    .cp-post-card-title{margin:0 0 .4rem;font-size:1.4rem;font-weight:700;line-height:1.3}
+    .cp-post-card-title a{color:#1d2327;text-decoration:none}
+    .cp-post-card-title a:hover{color:#2271b1}
+    .cp-post-card-date{color:#646970;font-size:.85rem;display:block;margin-bottom:.75rem}
+    .cp-post-card-excerpt p{margin:.5rem 0;color:#3c434a;line-height:1.7}
+    .cp-post-card-footer{margin-top:.75rem}
+    .cp-read-more{font-size:.9rem;font-weight:600;color:#2271b1}
+    .cp-single-post{padding:2rem 0}
+    .cp-single-title{font-size:2rem;font-weight:800;margin:0 0 .75rem;line-height:1.25;color:#1d2327}
+    .cp-single-meta{color:#646970;font-size:.875rem;margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #f0f0f1}
+    .cp-single-content{font-size:1.05rem;line-height:1.85;color:#3c434a}
+    .cp-single-content h1,.cp-single-content h2,.cp-single-content h3{color:#1d2327;margin:2rem 0 .75rem}
+    .cp-single-content p{margin:0 0 1.2rem}
+    .cp-single-content blockquote{border-left:4px solid #2271b1;padding:.75rem 1rem;margin:1.5rem 0;background:#f8f9fa;color:#3c434a}
+    .cp-single-footer{margin-top:2.5rem;padding-top:1.5rem;border-top:1px solid #f0f0f1}
+    .cp-back-link{font-size:.9rem;color:#646970}
+    .cp-empty-state{text-align:center;padding:2rem 0;color:#646970}
+    .cp-empty-icon{font-size:3rem;margin-bottom:1rem}
+    .cp-empty-state h2{font-size:1.4rem;color:#1d2327;margin:0 0 .5rem}
+    .cp-empty-state p{margin:0 0 1.5rem}
+    .cp-btn-primary{display:inline-block;background:#2271b1;color:#fff;padding:.6rem 1.4rem;border-radius:4px;font-weight:600;text-decoration:none;transition:.15s}
+    .cp-btn-primary:hover{background:#135e96;text-decoration:none;color:#fff}
+    .cp-404{text-align:center;padding:5rem 0}
+    .cp-404 h1{font-size:5rem;font-weight:900;color:#dcdcde;margin:0}
+    .cp-footer{background:#f6f7f7;border-top:1px solid #dcdcde;padding:1.5rem 0;text-align:center;color:#646970;font-size:.85rem}
+    .cp-footer a{color:#646970}
+    @media(max-width:600px){
+      .cp-site-title{font-size:1.6rem}
+      .cp-single-title{font-size:1.5rem}
+      .cp-post-card-title{font-size:1.2rem}
     }
   </style>
 </head>
 <body>
   <header class="cp-header">
-    <div class="cp-container">
-      <a href="/">${escHtml(siteName)}</a>
+    <div class="cp-header-inner">
+      <a href="/" class="cp-site-name">${escHtml(siteName)}</a>
+      <nav>
+        <a href="/">홈</a>
+        <a href="/${escHtml(adminSlug)}/">관리자</a>
+      </nav>
     </div>
   </header>
-  <main class="cp-main">
+  <div class="cp-site-wrap">
     <div class="cp-container">
       ${content}
     </div>
-  </main>
+  </div>
   <footer class="cp-footer">
     <div class="cp-container">
-      <p>&copy; ${(/* @__PURE__ */ new Date()).getFullYear()} ${escHtml(siteName)} \u2014 Powered by <a href="https://cloudpress.pages.dev" style="color:inherit">CloudPress</a></p>
+      &copy; ${(/* @__PURE__ */ new Date()).getFullYear()} ${escHtml(siteName)} &mdash; <a href="https://cloudpress.pages.dev">CloudPress</a>
     </div>
   </footer>
 </body>
@@ -3874,256 +3901,1397 @@ function capitalize(s) {
 __name(capitalize, "capitalize");
 
 // cp-admin/pages/post-edit.js
+/**
+ * CloudPress Admin - Post / Page Editor
+ * Replaces WordPress wp-admin/post.php + wp-admin/post-new.php
+ *
+ * 변경사항:
+ *  - 워드프레스식 메타박스 시스템 구현
+ *    · 상단: 제목 입력 + 퍼마링크
+ *    · 에디터 아래: 사용자 정의 필드(Custom Fields) 메타박스
+ *    · 우측 사이드바: Publish / 카테고리 / 태그 / 특성 이미지 / 페이지 속성 메타박스
+ *    · 메타박스 접기/펼치기 가능 (WP 동일 UX)
+ *    · 메타박스 순서 drag 없이 CSS order로 관리
+ *  - postmeta (커스텀 필드) CRUD 지원
+ *  - 언어에 따른 레이블 (WPLANG 옵션 반영)
+ *
+ * @package CloudPress
+ */
+
+
 async function handlePostEdit(request, cp, opts = {}) {
-  const url = cp.url;
-  const prefix = cp.config.DB_PREFIX || "cp_";
-  const method = request.method.toUpperCase();
-  const postType = opts.post_type || url.searchParams.get("post_type") || "post";
-  const postId = parseInt(url.searchParams.get("post") || url.searchParams.get("page") || "0");
-  let post = null;
+  const url      = cp.url;
+  const prefix   = cp.config.DB_PREFIX || 'cp_';
+  const method   = request.method.toUpperCase();
+  const postType = opts.post_type || url.searchParams.get('post_type') || 'post';
+  const postId   = parseInt(url.searchParams.get('post') || url.searchParams.get('page') || '0');
+  const lang     = await getOption(cp, 'WPLANG').catch(() => 'ko_KR') || 'ko_KR';
+  const L        = getLabels(lang);
+
+  let post    = null;
   let notices = [];
+
+  // 기존 포스트 로드
   if (postId) {
     post = await cp.db.prepare(
       `SELECT * FROM ${prefix}posts WHERE ID=? AND post_type=? LIMIT 1`
     ).bind(postId, postType).first();
-    if (!post) {
-      notices.push({ type: "error", message: "Post not found." });
-    }
+    if (!post) notices.push({ type: 'error', message: L.postNotFound });
   }
-  if (method === "POST") {
-    const fd = await request.formData().catch(() => new FormData());
-    const title = (fd.get("post_title") || "").trim();
-    const content2 = fd.get("post_content") || "";
-    const excerpt = fd.get("post_excerpt") || "";
-    const status = fd.get("post_status") || "draft";
-    const slug = (fd.get("post_name") || slugify3(title)).trim();
-    const now = (/* @__PURE__ */ new Date()).toISOString().replace("T", " ").slice(0, 19);
+
+  // ── POST 저장 처리 ──────────────────────────────────────
+  if (method === 'POST') {
+    const fd       = await request.formData().catch(() => new FormData());
+    const title    = (fd.get('post_title') || '').trim();
+    const content  = fd.get('post_content') || '';
+    const excerpt  = fd.get('post_excerpt') || '';
+    const slug     = (fd.get('post_name') || slugify(title)).trim();
+    const now      = new Date().toISOString().replace('T', ' ').slice(0, 19);
     const authorId = cp.currentUser?.ID || 1;
+
+    // Scheduled publish support
+    const scheduledDate = fd.get('post_date') || '';
+    let postDate = now;
+    let status = fd.get('post_status') || 'draft';
+    if (scheduledDate) {
+      const sched = new Date(scheduledDate);
+      if (!isNaN(sched.getTime())) {
+        postDate = sched.toISOString().replace('T', ' ').slice(0, 19);
+        // If publish requested but date is in the future, set to 'future'
+        if (status === 'publish' && sched > new Date()) {
+          status = 'future';
+        }
+      }
+    }
+
+    // postmeta 저장 (커스텀 필드)
+    const metaKeys   = fd.getAll('meta_key[]');
+    const metaValues = fd.getAll('meta_value[]');
+    const metaIds    = fd.getAll('meta_id[]');
+
+    let savedPostId = postId;
+
     if (!postId || !post) {
       const result = await cp.db.prepare(`
         INSERT INTO ${prefix}posts
           (post_author, post_date, post_content, post_title, post_excerpt, post_status,
            post_type, post_name, comment_status, ping_status, post_modified, post_date_gmt, post_modified_gmt)
         VALUES (?,?,?,?,?,?,?,?,'open','open',?,?,?)
-      `).bind(authorId, now, content2, title, excerpt, status, postType, slug, now, now, now).run();
-      const newId = result.meta?.last_row_id;
-      const redirectType = postType === "page" ? "page" : "post";
+      `).bind(authorId, postDate, content, title, excerpt, status, postType, slug, now, now, now).run();
+
+      savedPostId = result.meta?.last_row_id;
+      const redirectType = postType === 'page' ? 'page' : 'post';
+      // 메타 및 카테고리 저장 후 리다이렉트
+      await savePostMeta(cp, prefix, savedPostId, metaIds, metaKeys, metaValues);
+      await savePostCategories(cp, prefix, savedPostId, fd.getAll('post_category[]'));
+      await savePostTags(cp, prefix, savedPostId, fd.get('post_tags') || '');
       return Response.redirect(
-        `${cp.url.origin}/cp-admin/${redirectType}?post=${newId}&message=1`,
-        302
+        `${cp.url.origin}/cp-admin/${redirectType}?post=${savedPostId}&message=1`, 302
       );
     } else {
       await cp.db.prepare(`
         UPDATE ${prefix}posts SET
           post_title=?, post_content=?, post_excerpt=?, post_status=?,
-          post_name=?, post_modified=?, post_modified_gmt=?
+          post_name=?, post_date=?, post_modified=?, post_modified_gmt=?
         WHERE ID=?
-      `).bind(title, content2, excerpt, status, slug, now, now, postId).run();
+      `).bind(title, content, excerpt, status, slug, postDate, now, now, postId).run();
+
       post = await cp.db.prepare(`SELECT * FROM ${prefix}posts WHERE ID=? LIMIT 1`).bind(postId).first();
-      notices.push({ type: "success", message: "Post updated." });
+      await savePostMeta(cp, prefix, postId, metaIds, metaKeys, metaValues);
+      await savePostCategories(cp, prefix, postId, fd.getAll('post_category[]'));
+      await savePostTags(cp, prefix, postId, fd.get('post_tags') || '');
+      notices.push({ type: 'success', message: L.postUpdated });
     }
   }
-  const msg = url.searchParams.get("message");
-  if (msg === "1")
-    notices.push({ type: "success", message: "Post published." });
+
+  const msg = url.searchParams.get('message');
+  if (msg === '1') notices.push({ type: 'success', message: L.postPublished });
+
+  // ── 데이터 로드 ──────────────────────────────────────────
   let categories = [];
-  if (postType === "post") {
+  let postCategoryIds = new Set();
+  if (postType === 'post') {
     const cats = await cp.db.prepare(
       `SELECT t.term_id, t.name FROM ${prefix}terms t
        JOIN ${prefix}term_taxonomy tt ON t.term_id = tt.term_id
        WHERE tt.taxonomy = 'category'`
     ).all();
     categories = cats?.results || [];
+
+    // 현재 포스트에 지정된 카테고리 ID 로드
+    if (postId) {
+      try {
+        const assigned = await cp.db.prepare(
+          `SELECT tt.term_id FROM ${prefix}term_relationships tr
+           JOIN ${prefix}term_taxonomy tt ON tr.term_taxonomy_id = tt.term_taxonomy_id
+           WHERE tr.object_id = ? AND tt.taxonomy = 'category'`
+        ).bind(postId).all();
+        postCategoryIds = new Set((assigned?.results || []).map(r => String(r.term_id)));
+      } catch (_) {}
+    }
   }
-  const isNew = !postId || !post;
-  const typeLabel = postType === "page" ? "Page" : "Post";
-  const listHref = postType === "page" ? "/cp-admin/edit?post_type=page" : "/cp-admin/edit";
-  const content = `
-<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
-  <a href="${listHref}" style="color:#2271b1;text-decoration:none;font-size:13px">&larr; All ${typeLabel}s</a>
-  ${post && post.post_status === "publish" ? `<a href="/?p=${post.ID}" target="_blank" class="cp-btn cp-btn-secondary" style="font-size:12px;padding:4px 10px">View ${typeLabel}</a>` : ""}
+
+  let postMetas = [];
+  let existingTags = [];
+  if (postId) {
+    const metaRows = await cp.db.prepare(
+      `SELECT meta_id, meta_key, meta_value FROM ${prefix}postmeta WHERE post_id=? ORDER BY meta_id`
+    ).bind(postId).all();
+    postMetas = metaRows?.results || [];
+    // 내부 메타(_로 시작) 숨김
+    postMetas = postMetas.filter(m => !String(m.meta_key).startsWith('_'));
+
+    // 기존 태그 로드
+    try {
+      const tagRows = await cp.db.prepare(
+        `SELECT t.name FROM ${prefix}terms t
+         JOIN ${prefix}term_taxonomy tt ON t.term_id = tt.term_id
+         JOIN ${prefix}term_relationships tr ON tt.term_taxonomy_id = tr.term_taxonomy_id
+         WHERE tr.object_id = ? AND tt.taxonomy = 'post_tag'`
+      ).bind(postId).all();
+      existingTags = (tagRows?.results || []).map(r => r.name);
+    } catch (_) {}
+  }
+
+  const isNew     = !postId || !post;
+  const typeLabel = postType === 'page' ? L.page : L.post;
+  const listHref  = postType === 'page' ? '/cp-admin/edit?post_type=page' : '/cp-admin/edit';
+
+  // ── HTML 렌더링 ──────────────────────────────────────────
+  const pageContent = `
+<style>
+/* ── 메타박스 시스템 ── */
+.metabox-holder{display:grid;grid-template-columns:1fr 282px;gap:20px;align-items:start}
+.metabox{background:#fff;border:1px solid #dcdcde;border-radius:4px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,.07)}
+.metabox-title{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;cursor:pointer;user-select:none;border-bottom:1px solid #dcdcde;background:#f9f9f9;border-radius:4px 4px 0 0}
+.metabox-title h3{margin:0;font-size:13px;font-weight:600;color:#1d2327}
+.metabox-toggle{font-size:10px;color:#646970;transition:transform .2s}
+.metabox.closed .metabox-toggle{transform:rotate(-90deg)}
+.metabox.closed .metabox-body{display:none}
+.metabox-body{padding:14px}
+/* 제목 영역 */
+#titlediv{background:#fff;border:1px solid #dcdcde;border-radius:4px;margin-bottom:20px;padding:0;box-shadow:0 1px 3px rgba(0,0,0,.07)}
+#title{width:100%;border:none;padding:16px 20px;font-size:22px;font-weight:600;outline:none;color:#1d2327;border-radius:4px;font-family:inherit}
+#titlediv .permalink-row{padding:6px 20px 10px;font-size:13px;color:#646970;border-top:1px solid #f0f0f1}
+#titlediv .permalink-row a{color:#2271b1;text-decoration:none}
+#titlediv .permalink-row a:hover{text-decoration:underline}
+/* ── 블록 에디터 ── */
+#wp-content-editor-tools{padding:8px 12px;border-bottom:1px solid #dcdcde;display:flex;gap:4px;flex-wrap:wrap;background:#f9f9f9;align-items:center}
+.toolbar-btn{padding:4px 8px;border:1px solid #dcdcde;border-radius:3px;background:#fff;cursor:pointer;font-size:13px;line-height:1.4;transition:.1s;position:relative}
+.toolbar-btn:hover{background:#f0f0f1;border-color:#8c8f94}
+.toolbar-btn.active{background:#e0e0e0}
+.toolbar-sep{width:1px;background:#dcdcde;margin:2px 4px;align-self:stretch}
+/* 블록 컨테이너 */
+#block-editor-wrap{position:relative;min-height:420px}
+#block-editor{min-height:420px;padding:16px 20px 60px;outline:none;font-size:15px;line-height:1.8;color:#1d2327;cursor:text}
+#block-editor:focus{outline:none}
+#block-editor [data-block]{position:relative;margin:0 0 4px;border-radius:4px;transition:.1s}
+#block-editor [data-block]:hover{outline:1px dashed #dcdcde}
+#block-editor [data-block]:focus-within{outline:2px solid rgba(34,113,177,.25)}
+/* 블록 타입별 스타일 */
+#block-editor p{margin:0 0 2px;padding:4px 0}
+#block-editor h1{font-size:2rem;font-weight:800;margin:8px 0 4px;line-height:1.2}
+#block-editor h2{font-size:1.5rem;font-weight:700;margin:8px 0 4px}
+#block-editor h3{font-size:1.25rem;font-weight:700;margin:6px 0 4px}
+#block-editor h4{font-size:1.1rem;font-weight:700;margin:6px 0 4px}
+#block-editor h5{font-size:1rem;font-weight:700;margin:4px 0}
+#block-editor h6{font-size:.9rem;font-weight:700;margin:4px 0;color:#646970}
+#block-editor blockquote{border-left:4px solid #2271b1;margin:8px 0;padding:8px 16px;background:#f8f9fa;border-radius:0 4px 4px 0;color:#3c434a}
+#block-editor pre{background:#1d2327;color:#e0e0e0;padding:14px 16px;border-radius:4px;font-family:monospace;font-size:13px;overflow-x:auto;margin:8px 0}
+#block-editor code{background:#f0f0f1;padding:2px 6px;border-radius:3px;font-family:monospace;font-size:13px}
+#block-editor hr{border:none;border-top:2px solid #dcdcde;margin:16px 0}
+#block-editor ul,#block-editor ol{padding-left:24px;margin:4px 0}
+#block-editor li{padding:2px 0}
+#block-editor img{max-width:100%;border-radius:4px;display:block;margin:8px 0}
+#block-editor .cp-block-button-wrap{margin:8px 0}
+#block-editor .cp-block-btn{display:inline-block;background:#2271b1;color:#fff;padding:10px 22px;border-radius:4px;text-decoration:none;font-size:15px;font-weight:500;cursor:default}
+#block-editor table{width:100%;border-collapse:collapse;margin:8px 0}
+#block-editor table td,#block-editor table th{border:1px solid #dcdcde;padding:8px 12px;font-size:14px}
+#block-editor table th{background:#f0f0f1;font-weight:600}
+/* 슬래시 커맨드 팝업 */
+#slash-menu{position:absolute;background:#fff;border:1px solid #dcdcde;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:260px;max-height:320px;overflow-y:auto;z-index:999;display:none}
+#slash-menu.visible{display:block}
+.slash-menu-item{display:flex;align-items:center;gap:10px;padding:8px 14px;cursor:pointer;transition:.1s;font-size:13px}
+.slash-menu-item:hover,.slash-menu-item.selected{background:#f0f6ff}
+.slash-menu-icon{font-size:18px;width:28px;text-align:center;flex-shrink:0}
+.slash-menu-label{font-weight:600;color:#1d2327}
+.slash-menu-desc{font-size:11px;color:#646970;margin-top:1px}
+.slash-menu-section{padding:6px 14px 4px;font-size:11px;font-weight:700;color:#646970;text-transform:uppercase;letter-spacing:.5px;border-top:1px solid #f0f0f1;margin-top:4px}
+.slash-menu-section:first-child{border-top:none;margin-top:0}
+/* 블록 추가 힌트 */
+.cp-block-hint{display:flex;align-items:center;gap:8px;padding:10px 4px;color:#c3c4c7;font-size:14px;cursor:text;user-select:none}
+.cp-block-hint:hover{color:#8c8f94}
+.cp-block-add-btn{width:24px;height:24px;border-radius:50%;border:1.5px solid #c3c4c7;background:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;color:#c3c4c7;transition:.15s;flex-shrink:0}
+.cp-block-add-btn:hover{border-color:#2271b1;color:#2271b1;background:rgba(34,113,177,.05)}
+/* HTML 뷰 */
+#editor-html{display:none;width:100%;min-height:420px;padding:20px;border:none;font-family:'JetBrains Mono','Fira Code',monospace;font-size:13px;resize:vertical;outline:none;color:#1d2327;line-height:1.7;background:#fafafa}
+/* 커스텀 필드 */
+#custom-fields-table{width:100%;border-collapse:collapse;font-size:13px}
+#custom-fields-table th{text-align:left;padding:6px 8px;background:#f0f0f1;font-weight:600;border:1px solid #dcdcde}
+#custom-fields-table td{padding:6px 8px;border:1px solid #dcdcde;vertical-align:top}
+#custom-fields-table input{width:100%;border:1px solid #dcdcde;border-radius:3px;padding:4px 6px;font-size:13px}
+#custom-fields-table textarea{width:100%;border:1px solid #dcdcde;border-radius:3px;padding:4px 6px;font-size:13px;resize:vertical;min-height:48px}
+/* Publish 박스 */
+.publish-actions{display:flex;gap:8px;margin-top:12px}
+.publish-actions .cp-btn{flex:1;justify-content:center}
+.post-meta-info{margin-top:10px;padding-top:10px;border-top:1px solid #dcdcde;font-size:12px;color:#646970;line-height:1.8}
+</style>
+
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+  <a href="${listHref}" style="color:#2271b1;text-decoration:none;font-size:13px">&larr; ${L.allItems(typeLabel)}</a>
+  ${post && post.post_status === 'publish' ? `<a href="/${post.post_name || '?p='+post.ID}" target="_blank" class="cp-btn cp-btn-secondary" style="font-size:12px;padding:4px 10px">${L.viewItem(typeLabel)}</a>` : ''}
 </div>
 
 <form method="post" id="post-form">
-<div style="display:grid;grid-template-columns:1fr 260px;gap:20px;align-items:start">
 
-  <!-- Main Editor -->
-  <div>
-    <div class="cp-card" style="padding:0;overflow:hidden">
-      <input type="text" name="post_title" id="post_title"
-             value="${esc4(post?.post_title || "")}"
-             placeholder="Add title"
-             style="width:100%;border:none;padding:20px;font-size:22px;font-weight:600;outline:none;color:#1d2327;border-bottom:1px solid #dcdcde">
-
-      <!-- Simple editor toolbar -->
-      <div id="editor-toolbar" style="padding:8px 16px;border-bottom:1px solid #dcdcde;display:flex;gap:4px;flex-wrap:wrap">
-        ${["bold", "italic", "underline", "strikeThrough"].map(
-    (cmd) => `<button type="button" onclick="document.execCommand('${cmd}')" title="${cmd}"
-                   style="padding:4px 8px;border:1px solid #dcdcde;border-radius:3px;background:#fff;cursor:pointer;font-size:13px">
-            ${{ bold: "<b>B</b>", italic: "<i>I</i>", underline: "<u>U</u>", strikeThrough: "<s>S</s>" }[cmd]}
-           </button>`
-  ).join("")}
-        <span style="border-left:1px solid #dcdcde;margin:0 4px"></span>
-        ${["h2", "h3"].map(
-    (tag) => `<button type="button" onclick="wrapSelection('${tag}')" title="${tag.toUpperCase()}"
-                   style="padding:4px 8px;border:1px solid #dcdcde;border-radius:3px;background:#fff;cursor:pointer;font-size:13px">
-            ${tag.toUpperCase()}
-           </button>`
-  ).join("")}
-        <button type="button" onclick="insertLink()" title="Link"
-                style="padding:4px 8px;border:1px solid #dcdcde;border-radius:3px;background:#fff;cursor:pointer;font-size:13px">
-          &#128279;
-        </button>
-        <button type="button" onclick="insertImage()" title="Image"
-                style="padding:4px 8px;border:1px solid #dcdcde;border-radius:3px;background:#fff;cursor:pointer;font-size:13px">
-          &#128247;
-        </button>
-        <span style="flex:1"></span>
-        <button type="button" id="toggle-html"
-                onclick="toggleHtmlMode()"
-                style="padding:4px 10px;border:1px solid #dcdcde;border-radius:3px;background:#fff;cursor:pointer;font-size:12px;color:#646970">
-          &lt;/&gt; HTML
-        </button>
-      </div>
-
-      <!-- Visual editor (contenteditable) -->
-      <div id="editor-visual" contenteditable="true"
-           style="min-height:400px;padding:20px;outline:none;font-size:15px;line-height:1.7;color:#1d2327"
-           oninput="syncEditors()">${post?.post_content || ""}</div>
-
-      <!-- HTML editor (hidden by default) -->
-      <textarea id="editor-html" name="post_content"
-                style="display:none;width:100%;min-height:400px;padding:20px;border:none;
-                       font-family:monospace;font-size:13px;resize:vertical;outline:none;color:#1d2327"
-                oninput="syncFromHtml()">${esc4(post?.post_content || "")}</textarea>
-    </div>
-
-    <!-- Excerpt -->
-    <div class="cp-card">
-      <h3 style="margin:0 0 10px;font-size:14px">Excerpt</h3>
-      <textarea name="post_excerpt" rows="3" class="cp-form-textarea" style="max-width:100%"
-                placeholder="Write an excerpt (optional)">${esc4(post?.post_excerpt || "")}</textarea>
-    </div>
-
-    <!-- Slug -->
-    <div class="cp-card">
-      <h3 style="margin:0 0 10px;font-size:14px">Permalink / Slug</h3>
-      <input type="text" name="post_name" class="cp-form-input" style="max-width:100%"
-             value="${esc4(post?.post_name || "")}"
-             placeholder="auto-generated-from-title">
-    </div>
-  </div>
-
-  <!-- Sidebar -->
-  <div>
-    <!-- Publish -->
-    <div class="cp-card">
-      <h3 style="margin:0 0 12px;font-size:14px">Publish</h3>
-      <div style="margin-bottom:12px">
-        <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px">Status</label>
-        <select name="post_status" class="cp-form-select" style="max-width:100%;width:100%">
-          <option value="draft"   ${(post?.post_status || "draft") === "draft" ? "selected" : ""}>Draft</option>
-          <option value="publish" ${post?.post_status === "publish" ? "selected" : ""}>Published</option>
-          <option value="private" ${post?.post_status === "private" ? "selected" : ""}>Private</option>
-          <option value="pending" ${post?.post_status === "pending" ? "selected" : ""}>Pending Review</option>
-        </select>
-      </div>
-      <div style="display:flex;gap:8px">
-        <button type="submit" name="post_status" value="draft" class="cp-btn cp-btn-secondary" style="flex:1">Save Draft</button>
-        <button type="submit" name="_publish" value="1" class="cp-btn" style="flex:1"
-                onclick="document.querySelector('[name=post_status]').value='publish'">
-          ${isNew ? "Publish" : "Update"}
-        </button>
-      </div>
-      ${post ? `
-        <div style="margin-top:10px;padding-top:10px;border-top:1px solid #dcdcde;font-size:12px;color:#646970">
-          <div>Created: ${esc4(formatDate3(post.post_date))}</div>
-          <div>Modified: ${esc4(formatDate3(post.post_modified))}</div>
-          <div>Post ID: ${post.ID}</div>
-        </div>
-      ` : ""}
-    </div>
-
-    <!-- Categories (posts only) -->
-    ${postType === "post" && categories.length ? `
-    <div class="cp-card">
-      <h3 style="margin:0 0 12px;font-size:14px">Categories</h3>
-      <div style="max-height:200px;overflow-y:auto">
-        ${categories.map((cat) => `
-          <label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;cursor:pointer">
-            <input type="checkbox" name="post_category[]" value="${cat.term_id}">
-            ${esc4(cat.name)}
-          </label>
-        `).join("")}
-      </div>
-    </div>
-    ` : ""}
-
-    <!-- Featured Image placeholder -->
-    <div class="cp-card">
-      <h3 style="margin:0 0 12px;font-size:14px">Featured Image</h3>
-      <div style="background:#f0f0f1;border:2px dashed #dcdcde;border-radius:4px;padding:20px;text-align:center;color:#646970;font-size:13px">
-        <div style="font-size:24px;margin-bottom:8px">&#128247;</div>
-        <a href="/cp-admin/upload" style="color:#2271b1">Set featured image</a>
-      </div>
-    </div>
-  </div>
+<!-- 제목 -->
+<div id="titlediv">
+  <input type="text" name="post_title" id="title"
+         value="${esc(post?.post_title || '')}"
+         placeholder="${L.addTitle}">
+  ${post?.post_name ? `
+  <div class="permalink-row">
+    ${L.permalink}: <a href="/${esc(post.post_name)}" target="_blank">${esc(post.post_name)}</a>
+    &nbsp;<a href="#" onclick="document.getElementById('slug-edit').style.display='inline';return false">${L.editSlug}</a>
+  </div>` : ''}
 </div>
+
+<div class="metabox-holder">
+
+  <!-- ── 좌측 컬럼 ── -->
+  <div id="postbox-container-2">
+
+    <!-- 에디터 메타박스 -->
+    <div class="metabox" id="postdivrich">
+      <div class="metabox-title" onclick="toggleMetabox(this)">
+        <h3>${L.content}</h3>
+        <span class="metabox-toggle">&#9660;</span>
+      </div>
+      <div class="metabox-body" style="padding:0">
+        <div id="wp-content-editor-tools">
+          <button type="button" class="toolbar-btn" onclick="execFmt('bold')" title="굵게"><b>B</b></button>
+          <button type="button" class="toolbar-btn" onclick="execFmt('italic')" title="기울임"><i>I</i></button>
+          <button type="button" class="toolbar-btn" onclick="execFmt('underline')" title="밑줄"><u>U</u></button>
+          <button type="button" class="toolbar-btn" onclick="execFmt('strikeThrough')" title="취소선"><s>S</s></button>
+          <div class="toolbar-sep"></div>
+          <button type="button" class="toolbar-btn" onclick="insertLink2()" title="링크">🔗</button>
+          <button type="button" class="toolbar-btn" onclick="insertImage2()" title="이미지">🖼</button>
+          <div class="toolbar-sep"></div>
+          <button type="button" class="toolbar-btn" onclick="execFmt('removeFormat')" title="서식 제거" style="font-size:11px">Tx</button>
+          <div style="flex:1"></div>
+          <button type="button" class="toolbar-btn" id="btn-visual" onclick="switchEditorTab('visual')" style="background:#e0e0e0" title="비주얼 편집">비주얼</button>
+          <button type="button" class="toolbar-btn" id="btn-html" onclick="switchEditorTab('html')" title="HTML 편집">HTML</button>
+        </div>
+        <div id="block-editor-wrap">
+          <div id="block-editor" contenteditable="true" spellcheck="true"></div>
+          <div id="slash-menu" role="listbox" aria-label="블록 선택"></div>
+        </div>
+        <textarea id="editor-html" name="post_content">${esc(post?.post_content || '')}</textarea>
+      </div>
+    </div>
+
+    <!-- 발췌문 메타박스 -->
+    <div class="metabox" id="postexcerpt">
+      <div class="metabox-title" onclick="toggleMetabox(this)">
+        <h3>${L.excerpt}</h3>
+        <span class="metabox-toggle">&#9660;</span>
+      </div>
+      <div class="metabox-body">
+        <textarea name="post_excerpt" rows="3" class="cp-form-textarea" style="max-width:100%;width:100%"
+                  placeholder="${L.excerptPlaceholder}">${esc(post?.post_excerpt || '')}</textarea>
+        <p class="cp-description">${L.excerptDesc}</p>
+      </div>
+    </div>
+
+    <!-- 슬러그 메타박스 -->
+    <div class="metabox" id="slugdiv">
+      <div class="metabox-title" onclick="toggleMetabox(this)">
+        <h3>${L.slug}</h3>
+        <span class="metabox-toggle">&#9660;</span>
+      </div>
+      <div class="metabox-body">
+        <input type="text" name="post_name" class="cp-form-input" style="max-width:100%;width:100%"
+               id="post_name" value="${esc(post?.post_name || '')}"
+               placeholder="${L.slugPlaceholder}">
+        <p class="cp-description">${L.slugDesc}</p>
+      </div>
+    </div>
+
+    <!-- 커스텀 필드 메타박스 -->
+    <div class="metabox closed" id="postcustom">
+      <div class="metabox-title" onclick="toggleMetabox(this)">
+        <h3>${L.customFields}</h3>
+        <span class="metabox-toggle">&#9660;</span>
+      </div>
+      <div class="metabox-body">
+        <table id="custom-fields-table">
+          <thead>
+            <tr>
+              <th style="width:35%">${L.name}</th>
+              <th>${L.value}</th>
+              <th style="width:60px">${L.delete}</th>
+            </tr>
+          </thead>
+          <tbody id="custom-fields-body">
+            ${postMetas.map((m, idx) => `
+            <tr id="meta-row-${m.meta_id}">
+              <td>
+                <input type="hidden" name="meta_id[]" value="${esc(String(m.meta_id))}">
+                <input type="text" name="meta_key[]" value="${esc(m.meta_key)}" placeholder="${L.key}">
+              </td>
+              <td>
+                <textarea name="meta_value[]" rows="2">${esc(m.meta_value || '')}</textarea>
+              </td>
+              <td style="text-align:center">
+                <button type="button" class="cp-btn cp-btn-danger" style="padding:3px 8px;font-size:12px"
+                        onclick="removeMetaRow(this)">&times;</button>
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+        <div style="margin-top:12px;padding-top:12px;border-top:1px solid #dcdcde">
+          <strong style="font-size:13px">${L.addNewField}</strong>
+          <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:8px;margin-top:8px;align-items:start">
+            <input type="text" id="new-meta-key" placeholder="${L.key}" class="cp-form-input" style="max-width:100%">
+            <textarea id="new-meta-value" rows="2" class="cp-form-textarea" placeholder="${L.value}" style="max-width:100%;width:100%"></textarea>
+            <button type="button" class="cp-btn" style="align-self:start" onclick="addMetaRow()">${L.add}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /postbox-container-2 -->
+
+  <!-- ── 우측 사이드바 ── -->
+  <div id="postbox-container-1">
+
+    <!-- Publish 메타박스 -->
+    <div class="metabox" id="submitdiv">
+      <div class="metabox-title" onclick="toggleMetabox(this)">
+        <h3>${L.publish}</h3>
+        <span class="metabox-toggle">&#9660;</span>
+      </div>
+      <div class="metabox-body">
+        <div style="margin-bottom:10px">
+          <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px">${L.status}</label>
+          <select name="post_status" id="post_status_select" class="cp-form-select" style="max-width:100%;width:100%" onchange="onStatusChange(this.value)">
+            <option value="draft"   ${(post?.post_status || 'draft') === 'draft'   ? 'selected' : ''}>${L.draft}</option>
+            <option value="publish" ${(post?.post_status === 'publish' || post?.post_status === 'future') ? 'selected' : ''}>${L.published}</option>
+            <option value="private" ${post?.post_status === 'private' ? 'selected' : ''}>${L.private}</option>
+            <option value="pending" ${post?.post_status === 'pending' ? 'selected' : ''}>${L.pendingReview}</option>
+          </select>
+        </div>
+        <!-- 예약 발행 날짜 선택 -->
+        <div id="schedule-date-wrap" style="margin-bottom:10px;${(post?.post_status === 'future') ? '' : 'display:none'}">
+          <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px">&#128197; ${L.scheduleFor || '예약 발행 시간'}</label>
+          <input type="datetime-local" name="post_date" id="post_date_input"
+                 class="cp-form-input" style="width:100%"
+                 value="${post?.post_date ? post.post_date.replace(' ','T').slice(0,16) : ''}">
+          <p class="cp-description" style="margin-top:4px">${L.scheduleDesc || '미래 날짜를 선택하면 자동 예약 발행됩니다.'}</p>
+        </div>
+        <div class="publish-actions">
+          <button type="button" class="cp-btn cp-btn-secondary"
+                  onclick="document.querySelector('[name=post_status]').value='draft';document.getElementById('post-form').submit()">
+            ${L.saveDraft}
+          </button>
+          <button type="button" class="cp-btn" id="publish-btn"
+                  onclick="submitPublish()">
+            ${post?.post_status === 'future' ? (L.scheduled || '예약됨') : (isNew ? L.publish : L.update)}
+          </button>
+        </div>
+        ${post ? `
+        <div class="post-meta-info">
+          <div>${L.created}: ${esc(formatDate(post.post_date))}</div>
+          <div>${L.modified}: ${esc(formatDate(post.post_modified))}</div>
+          <div>ID: ${post.ID}</div>
+        </div>` : ''}
+      </div>
+    </div>
+
+    <!-- 카테고리 메타박스 (post only) -->
+    ${postType === 'post' ? `
+    <div class="metabox" id="categorydiv">
+      <div class="metabox-title" onclick="toggleMetabox(this)">
+        <h3>${L.categories}</h3>
+        <span class="metabox-toggle">&#9660;</span>
+      </div>
+      <div class="metabox-body">
+        ${categories.length ? `
+        <div style="max-height:180px;overflow-y:auto;margin-bottom:8px">
+          ${categories.map(cat => `
+            <label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;cursor:pointer">
+              <input type="checkbox" name="post_category[]" value="${cat.term_id}" ${postCategoryIds.has(String(cat.term_id)) ? 'checked' : ''}>
+              ${esc(cat.name)}
+            </label>
+          `).join('')}
+        </div>` : `<p style="color:#646970;font-size:13px">${L.noCategories}</p>`}
+        <div style="border-top:1px solid #dcdcde;padding-top:10px;font-size:12px">
+          <a href="/cp-admin/edit-tags?taxonomy=category" style="color:#2271b1">${L.manageCategories}</a>
+        </div>
+      </div>
+    </div>` : ''}
+
+    <!-- 태그 메타박스 (post only) -->
+    ${postType === 'post' ? `
+    <div class="metabox" id="tagsdiv-post_tag">
+      <div class="metabox-title" onclick="toggleMetabox(this)">
+        <h3>${L.tags}</h3>
+        <span class="metabox-toggle">&#9660;</span>
+      </div>
+      <div class="metabox-body">
+        <div style="display:flex;gap:6px;margin-bottom:8px">
+          <input type="text" id="tag-input" class="cp-form-input" style="flex:1;max-width:none"
+                 placeholder="${L.tagsPlaceholder}" onkeydown="if(event.key==='Enter'){event.preventDefault();addTag()}">
+          <button type="button" class="cp-btn cp-btn-secondary" onclick="addTag()">${L.add}</button>
+        </div>
+        <div id="tag-cloud" style="min-height:32px;display:flex;flex-wrap:wrap;gap:4px"></div>
+        <input type="hidden" name="post_tags" id="post_tags_input" value="">
+        <p class="cp-description" style="margin-top:8px">${L.tagsDesc}</p>
+      </div>
+    </div>` : ''}
+
+    <!-- 특성 이미지 메타박스 -->
+    <div class="metabox" id="postimagediv">
+      <div class="metabox-title" onclick="toggleMetabox(this)">
+        <h3>${L.featuredImage}</h3>
+        <span class="metabox-toggle">&#9660;</span>
+      </div>
+      <div class="metabox-body">
+        <div id="featured-image-wrap">
+          <div style="background:#f0f0f1;border:2px dashed #dcdcde;border-radius:4px;padding:20px;text-align:center;color:#646970;font-size:13px;cursor:pointer"
+               onclick="setFeaturedImage()">
+            <div style="font-size:28px;margin-bottom:6px">&#128247;</div>
+            <a style="color:#2271b1">${L.setFeaturedImage}</a>
+          </div>
+        </div>
+        <input type="hidden" name="meta_featured_image" id="featured-image-url" value="">
+      </div>
+    </div>
+
+    <!-- 페이지 속성 메타박스 (page only) -->
+    ${postType === 'page' ? `
+    <div class="metabox" id="pageparentdiv">
+      <div class="metabox-title" onclick="toggleMetabox(this)">
+        <h3>${L.pageAttributes}</h3>
+        <span class="metabox-toggle">&#9660;</span>
+      </div>
+      <div class="metabox-body">
+        <div style="margin-bottom:10px">
+          <label style="font-size:13px;font-weight:600;display:block;margin-bottom:4px">${L.template}</label>
+          <select name="page_template" class="cp-form-select" style="width:100%;max-width:100%">
+            <option value="default">${L.defaultTemplate}</option>
+            <option value="full-width">${L.fullWidth}</option>
+            <option value="sidebar-left">${L.sidebarLeft}</option>
+            <option value="blank">${L.blankTemplate}</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:13px;font-weight:600;display:block;margin-bottom:4px">${L.order}</label>
+          <input type="number" name="menu_order" class="cp-form-input" style="max-width:80px"
+                 value="${esc(String(post?.menu_order || 0))}">
+          <p class="cp-description">${L.orderDesc}</p>
+        </div>
+      </div>
+    </div>` : ''}
+
+  </div><!-- /postbox-container-1 -->
+</div><!-- /metabox-holder -->
 </form>
 
 <script>
-let isHtmlMode = false;
+// ═══════════════════════════════════════════════════════════════
+// CloudPress 블록 에디터 — / 슬래시 커맨드
+// ═══════════════════════════════════════════════════════════════
 
-function syncEditors() {
-  document.getElementById('editor-html').value = document.getElementById('editor-visual').innerHTML;
+const editor = document.getElementById('block-editor');
+const slashMenu = document.getElementById('slash-menu');
+let editorMode = 'visual';
+let slashQuery = '';
+let slashRange = null;
+let selectedIdx = 0;
+
+// ── 초기화: 기존 콘텐츠 로드 ─────────────────────────────────
+(function initEditor() {
+  const raw = document.getElementById('editor-html').value;
+  if (raw.trim()) {
+    editor.innerHTML = raw;
+  } else {
+    insertEmptyParagraph();
+  }
+  // 각 블록에 data-block 속성 부여
+  normalizeBlocks();
+})();
+
+function insertEmptyParagraph() {
+  const p = document.createElement('p');
+  p.setAttribute('data-block', 'paragraph');
+  p.innerHTML = '<br>';
+  editor.appendChild(p);
+  placeCursorIn(p);
 }
-function syncFromHtml() {
-  document.getElementById('editor-visual').innerHTML = document.getElementById('editor-html').value;
+
+function normalizeBlocks() {
+  Array.from(editor.childNodes).forEach(node => {
+    if (node.nodeType === 3 && node.textContent.trim()) {
+      // 텍스트 노드 → p로 래핑
+      const p = document.createElement('p');
+      p.setAttribute('data-block', 'paragraph');
+      p.textContent = node.textContent;
+      editor.replaceChild(p, node);
+    } else if (node.nodeType === 1 && !node.getAttribute('data-block')) {
+      node.setAttribute('data-block', guessBlockType(node));
+    }
+  });
 }
-function toggleHtmlMode() {
-  isHtmlMode = !isHtmlMode;
-  document.getElementById('editor-visual').style.display = isHtmlMode ? 'none' : 'block';
-  document.getElementById('editor-html').style.display   = isHtmlMode ? 'block' : 'none';
-  document.getElementById('toggle-html').style.background = isHtmlMode ? '#e0e0e0' : '#fff';
-  if (!isHtmlMode) syncFromHtml();
+
+function guessBlockType(el) {
+  const tag = el.tagName?.toLowerCase();
+  if (/^h[1-6]$/.test(tag)) return 'heading';
+  if (tag === 'blockquote') return 'quote';
+  if (tag === 'pre') return 'code';
+  if (tag === 'ul') return 'list';
+  if (tag === 'ol') return 'list-ordered';
+  if (tag === 'hr') return 'separator';
+  if (tag === 'table') return 'table';
+  if (tag === 'figure' || tag === 'img') return 'image';
+  return 'paragraph';
 }
-function wrapSelection(tag) {
+
+// ── 블록 정의 ─────────────────────────────────────────────────
+const BLOCKS = [
+  { group: '텍스트', items: [
+    { id: 'paragraph',  icon: '¶',  label: '단락',     desc: '기본 텍스트 블록',     key: ['p','단락','텍스트'] },
+    { id: 'h1',         icon: 'H1', label: '제목 1',   desc: '가장 큰 제목',         key: ['h1','제목1'] },
+    { id: 'h2',         icon: 'H2', label: '제목 2',   desc: '큰 제목',              key: ['h2','제목2'] },
+    { id: 'h3',         icon: 'H3', label: '제목 3',   desc: '중간 제목',            key: ['h3','제목3'] },
+    { id: 'h4',         icon: 'H4', label: '제목 4',   desc: '작은 제목',            key: ['h4','제목4'] },
+    { id: 'h5',         icon: 'H5', label: '제목 5',   desc: '더 작은 제목',         key: ['h5','제목5'] },
+    { id: 'h6',         icon: 'H6', label: '제목 6',   desc: '가장 작은 제목',       key: ['h6','제목6'] },
+    { id: 'quote',      icon: '❝',  label: '인용구',   desc: '인용 블록',            key: ['인용','quote','blockquote'] },
+    { id: 'preformatted', icon: '</>',label: '서식 있는 텍스트', desc: '그대로 표시',  key: ['pre','서식'] },
+  ]},
+  { group: '목록', items: [
+    { id: 'list',         icon: '•',  label: '목록 (점)',   desc: '글머리 기호 목록', key: ['ul','목록','list'] },
+    { id: 'list-ordered', icon: '1.', label: '목록 (번호)', desc: '순서 있는 목록',   key: ['ol','번호','ordered'] },
+  ]},
+  { group: '미디어', items: [
+    { id: 'image',      icon: '🖼',  label: '이미지',   desc: 'URL로 이미지 삽입',   key: ['img','이미지','image'] },
+    { id: 'video',      icon: '▶',  label: '동영상',   desc: 'YouTube/Vimeo 임베드', key: ['video','영상','youtube'] },
+  ]},
+  { group: '디자인', items: [
+    { id: 'separator',  icon: '—',  label: '구분선',   desc: '수평선 삽입',          key: ['hr','구분','separator'] },
+    { id: 'button',     icon: '🔘', label: '버튼',     desc: '클릭 버튼',            key: ['btn','버튼','button'] },
+    { id: 'table',      icon: '⊞',  label: '표',       desc: '테이블 삽입',          key: ['table','표','grid'] },
+    { id: 'code',       icon: '{}', label: '코드',     desc: '코드 블록',            key: ['code','코드'] },
+    { id: 'html',       icon: '<>', label: 'HTML',     desc: '순수 HTML 입력',       key: ['html','raw'] },
+  ]},
+];
+
+// ── 블록 삽입 ─────────────────────────────────────────────────
+function insertBlock(blockId) {
+  hideSlashMenu();
+
+  // 슬래시 텍스트 노드 제거
+  if (slashRange) {
+    try {
+      const node = slashRange.startContainer;
+      if (node.nodeType === 3) {
+        const text = node.textContent;
+        const slashPos = text.lastIndexOf('/');
+        if (slashPos !== -1) {
+          node.textContent = text.slice(0, slashPos);
+        }
+      }
+    } catch(_) {}
+  }
+
+  // 현재 빈 블록 또는 새 위치 결정
   const sel = window.getSelection();
-  if (sel.rangeCount) {
-    const range = sel.getRangeAt(0);
-    const el = document.createElement(tag);
-    range.surroundContents(el);
-    syncEditors();
+  let currentBlock = sel?.anchorNode?.closest?.('[data-block]') || editor.lastElementChild;
+
+  let newEl = null;
+
+  switch (blockId) {
+    case 'paragraph':
+      newEl = makeBlock('p', 'paragraph', '');
+      break;
+    case 'h1': case 'h2': case 'h3': case 'h4': case 'h5': case 'h6':
+      newEl = makeBlock(blockId, 'heading', '');
+      break;
+    case 'quote':
+      newEl = makeBlock('blockquote', 'quote', '인용문을 입력하세요…');
+      break;
+    case 'preformatted':
+      newEl = makeBlock('pre', 'preformatted', '');
+      break;
+    case 'list':
+      newEl = document.createElement('ul');
+      newEl.setAttribute('data-block', 'list');
+      newEl.innerHTML = '<li>목록 항목</li>';
+      break;
+    case 'list-ordered':
+      newEl = document.createElement('ol');
+      newEl.setAttribute('data-block', 'list-ordered');
+      newEl.innerHTML = '<li>목록 항목</li>';
+      break;
+    case 'separator':
+      newEl = document.createElement('hr');
+      newEl.setAttribute('data-block', 'separator');
+      newEl.contentEditable = 'false';
+      break;
+    case 'image': {
+      const src = prompt('이미지 URL을 입력하세요:');
+      if (!src) return;
+      const alt = prompt('대체 텍스트 (선택):') || '';
+      newEl = document.createElement('figure');
+      newEl.setAttribute('data-block', 'image');
+      newEl.innerHTML = `<img src="${src}" alt="${alt}" style="max-width:100%;border-radius:4px">`;
+      break;
+    }
+    case 'video': {
+      const vurl = prompt('YouTube/Vimeo URL을 입력하세요:');
+      if (!vurl) return;
+      const vid = extractVideoId(vurl);
+      newEl = document.createElement('figure');
+      newEl.setAttribute('data-block', 'video');
+      newEl.innerHTML = vid
+        ? `<iframe src="https://www.youtube.com/embed/${vid}" width="100%" height="315" frameborder="0" allowfullscreen style="border-radius:4px;display:block"></iframe>`
+        : `<a href="${vurl}" target="_blank">${vurl}</a>`;
+      break;
+    }
+    case 'button': {
+      const txt = prompt('버튼 텍스트:', '자세히 보기') || '자세히 보기';
+      const href = prompt('링크 URL:', '#') || '#';
+      newEl = document.createElement('div');
+      newEl.setAttribute('data-block', 'button');
+      newEl.className = 'cp-block-button-wrap';
+      newEl.innerHTML = `<a href="${href}" class="cp-block-btn">${txt}</a>`;
+      break;
+    }
+    case 'table': {
+      const cols = parseInt(prompt('열 수:', '3') || '3');
+      const rows = parseInt(prompt('행 수 (헤더 포함):', '3') || '3');
+      newEl = document.createElement('table');
+      newEl.setAttribute('data-block', 'table');
+      let html = '<thead><tr>' + Array(cols).fill(0).map((_,i) => `<th contenteditable="true">제목 ${i+1}</th>`).join('') + '</tr></thead><tbody>';
+      for (let r = 1; r < rows; r++) {
+        html += '<tr>' + Array(cols).fill(0).map(() => '<td contenteditable="true">내용</td>').join('') + '</tr>';
+      }
+      html += '</tbody>';
+      newEl.innerHTML = html;
+      break;
+    }
+    case 'code': {
+      newEl = document.createElement('pre');
+      newEl.setAttribute('data-block', 'code');
+      newEl.innerHTML = '<code>// 코드를 입력하세요</code>';
+      break;
+    }
+    case 'html': {
+      const rawHtml = prompt('HTML 코드를 입력하세요:');
+      if (!rawHtml) return;
+      newEl = document.createElement('div');
+      newEl.setAttribute('data-block', 'html');
+      newEl.innerHTML = rawHtml;
+      break;
+    }
+    default:
+      newEl = makeBlock('p', 'paragraph', '');
   }
-}
-function insertLink() {
-  const url = prompt('Enter URL:');
-  if (url) document.execCommand('createLink', false, url);
-  syncEditors();
-}
-function insertImage() {
-  const src = prompt('Enter image URL:');
-  if (src) document.execCommand('insertHTML', false, '<img src="'+src+'" style="max-width:100%">');
-  syncEditors();
+
+  // 현재 블록 뒤에 삽입
+  if (currentBlock && currentBlock.parentNode === editor) {
+    if (isEmpty(currentBlock)) {
+      editor.replaceChild(newEl, currentBlock);
+    } else {
+      currentBlock.insertAdjacentElement('afterend', newEl);
+    }
+  } else {
+    editor.appendChild(newEl);
+  }
+
+  // 뒤에 빈 단락 추가 (HR, image 등)
+  if (['separator','image','video','table','button','html'].includes(blockId)) {
+    const after = makeBlock('p', 'paragraph', '');
+    newEl.insertAdjacentElement('afterend', after);
+    placeCursorIn(after);
+  } else {
+    placeCursorIn(newEl);
+  }
+
+  syncToHtml();
 }
 
-// Sync before submit
+function makeBlock(tag, type, text) {
+  const el = document.createElement(tag);
+  el.setAttribute('data-block', type);
+  if (text) el.textContent = text;
+  else el.innerHTML = '<br>';
+  return el;
+}
+
+function isEmpty(el) {
+  return !el || el.innerHTML === '' || el.innerHTML === '<br>' || el.textContent.trim() === '';
+}
+
+function placeCursorIn(el) {
+  if (!el || el.tagName === 'HR') return;
+  el.focus();
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  range.collapse(false);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+// ── 슬래시 메뉴 ─────────────────────────────────────────────
+function showSlashMenu(range, query) {
+  slashRange = range;
+  slashQuery = query.toLowerCase();
+  selectedIdx = 0;
+  renderSlashMenu();
+  positionSlashMenu(range);
+  slashMenu.classList.add('visible');
+}
+
+function hideSlashMenu() {
+  slashMenu.classList.remove('visible');
+  slashRange = null;
+  slashQuery = '';
+}
+
+function renderSlashMenu() {
+  const q = slashQuery;
+  let html = '';
+  let totalIdx = 0;
+  let first = true;
+
+  BLOCKS.forEach(group => {
+    const matched = group.items.filter(item =>
+      !q || item.key.some(k => k.includes(q)) || item.label.toLowerCase().includes(q) || item.id.includes(q)
+    );
+    if (!matched.length) return;
+
+    html += `<div class="slash-menu-section${first ? ' first' : ''}">${group.group}</div>`;
+    first = false;
+
+    matched.forEach(item => {
+      const isSelected = totalIdx === selectedIdx;
+      html += `<div class="slash-menu-item${isSelected ? ' selected' : ''}" role="option" data-block-id="${item.id}" onclick="insertBlock('${item.id}')">
+        <span class="slash-menu-icon">${item.icon}</span>
+        <div>
+          <div class="slash-menu-label">${item.label}</div>
+          <div class="slash-menu-desc">${item.desc}</div>
+        </div>
+      </div>`;
+      totalIdx++;
+    });
+  });
+
+  slashMenu.innerHTML = html || '<div style="padding:12px 16px;color:#646970;font-size:13px">일치하는 블록이 없습니다</div>';
+}
+
+function positionSlashMenu(range) {
+  const rect = range.getBoundingClientRect();
+  const wrapRect = editor.closest('#block-editor-wrap').getBoundingClientRect();
+  const top  = rect.bottom - wrapRect.top + 4;
+  const left = Math.max(0, rect.left - wrapRect.left);
+  slashMenu.style.top  = top + 'px';
+  slashMenu.style.left = left + 'px';
+}
+
+function getSlashMenuItems() {
+  return slashMenu.querySelectorAll('.slash-menu-item');
+}
+
+// ── 키보드 이벤트 ────────────────────────────────────────────
+editor.addEventListener('keydown', function(e) {
+  if (slashMenu.classList.contains('visible')) {
+    const items = getSlashMenuItems();
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      selectedIdx = Math.min(selectedIdx + 1, items.length - 1);
+      renderSlashMenu();
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      selectedIdx = Math.max(selectedIdx - 1, 0);
+      renderSlashMenu();
+      return;
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      const selected = items[selectedIdx];
+      if (selected) {
+        const blockId = selected.getAttribute('data-block-id');
+        insertBlock(blockId);
+      }
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      hideSlashMenu();
+      return;
+    }
+  }
+
+  // Enter → 새 단락 블록
+  if (e.key === 'Enter' && !e.shiftKey) {
+    const sel = window.getSelection();
+    const block = sel?.anchorNode?.closest?.('[data-block]');
+    if (block && (block.tagName === 'PRE' || block.getAttribute('data-block') === 'preformatted')) {
+      // pre 안에서는 Enter = 개행
+      return;
+    }
+    e.preventDefault();
+    const newP = makeBlock('p', 'paragraph', '');
+    if (block && block.parentNode === editor) {
+      block.insertAdjacentElement('afterend', newP);
+    } else {
+      editor.appendChild(newP);
+    }
+    placeCursorIn(newP);
+    syncToHtml();
+    return;
+  }
+
+  // Backspace: 빈 블록 제거
+  if (e.key === 'Backspace') {
+    const sel = window.getSelection();
+    const block = sel?.anchorNode?.closest?.('[data-block]');
+    if (block && isEmpty(block) && editor.children.length > 1) {
+      e.preventDefault();
+      const prev = block.previousElementSibling;
+      editor.removeChild(block);
+      if (prev) placeCursorIn(prev);
+      syncToHtml();
+    }
+  }
+});
+
+editor.addEventListener('input', function(e) {
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const range = sel.getRangeAt(0);
+  const node  = range.startContainer;
+
+  if (node.nodeType !== 3) { syncToHtml(); return; }
+
+  const text    = node.textContent;
+  const offset  = range.startOffset;
+  const before  = text.slice(0, offset);
+  const slashAt = before.lastIndexOf('/');
+
+  if (slashAt !== -1) {
+    const query = before.slice(slashAt + 1);
+    // 슬래시 뒤에 공백 없이 알파벳/한글만
+    if (/^[\w가-힣]*$/.test(query)) {
+      const slashR = range.cloneRange();
+      slashR.setStart(node, slashAt);
+      slashR.setEnd(node, offset);
+      showSlashMenu(slashR, query);
+      syncToHtml();
+      return;
+    }
+  }
+
+  hideSlashMenu();
+  syncToHtml();
+});
+
+// 에디터 바깥 클릭 → 메뉴 숨김
+document.addEventListener('click', e => {
+  if (!slashMenu.contains(e.target) && !editor.contains(e.target)) {
+    hideSlashMenu();
+  }
+});
+
+// ── 포맷팅 함수 ──────────────────────────────────────────────
+function execFmt(cmd) {
+  editor.focus();
+  document.execCommand(cmd, false, null);
+  syncToHtml();
+}
+
+function insertLink2() {
+  const url = prompt('URL을 입력하세요:');
+  if (url) { editor.focus(); document.execCommand('createLink', false, url); syncToHtml(); }
+}
+
+function insertImage2() {
+  insertBlock('image');
+}
+
+// ── 탭 전환 ──────────────────────────────────────────────────
+function switchEditorTab(mode) {
+  editorMode = mode;
+  const wrap  = document.getElementById('block-editor-wrap');
+  const html  = document.getElementById('editor-html');
+  const bVis  = document.getElementById('btn-visual');
+  const bHtml = document.getElementById('btn-html');
+
+  if (mode === 'html') {
+    syncToHtml();
+    wrap.style.display  = 'none';
+    html.style.display  = 'block';
+    html.style.minHeight= '420px';
+    bVis.classList.remove('active');
+    bHtml.classList.add('active');
+    bHtml.style.background = '#e0e0e0';
+    bVis.style.background  = '';
+  } else {
+    syncFromHtml();
+    html.style.display  = 'none';
+    wrap.style.display  = '';
+    bVis.classList.add('active');
+    bHtml.classList.remove('active');
+    bVis.style.background  = '#e0e0e0';
+    bHtml.style.background = '';
+  }
+}
+
+function syncToHtml() {
+  document.getElementById('editor-html').value = editor.innerHTML;
+}
+
+function syncFromHtml() {
+  editor.innerHTML = document.getElementById('editor-html').value || '<p data-block="paragraph"><br></p>';
+  normalizeBlocks();
+}
+
+// ── 유틸 ─────────────────────────────────────────────────────
+function extractVideoId(url) {
+  const m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\s]+)/);
+  return m ? m[1] : null;
+}
+
+// ── 메타박스 접기/펼치기 ─────────────────────────────────────
+function toggleMetabox(titleEl) {
+  const box = titleEl.closest('.metabox');
+  box.classList.toggle('closed');
+  const id     = box.id;
+  const closed = box.classList.contains('closed');
+  try {
+    const state = JSON.parse(localStorage.getItem('cp_metabox_state') || '{}');
+    state[id] = closed;
+    localStorage.setItem('cp_metabox_state', JSON.stringify(state));
+  } catch(_) {}
+}
+
+(function() {
+  try {
+    const state = JSON.parse(localStorage.getItem('cp_metabox_state') || '{}');
+    Object.entries(state).forEach(([id, closed]) => {
+      const el = document.getElementById(id);
+      if (el) el.classList.toggle('closed', closed);
+    });
+  } catch(_) {}
+})();
+
+// ── 커스텀 필드 ─────────────────────────────────────────────
+let metaRowIdx = ${postMetas.length};
+function addMetaRow() {
+  const key = document.getElementById('new-meta-key').value.trim();
+  const val = document.getElementById('new-meta-value').value;
+  if (!key) { alert('키를 입력하세요.'); return; }
+  const tbody = document.getElementById('custom-fields-body');
+  const tr = document.createElement('tr');
+  tr.innerHTML = \`
+    <td>
+      <input type="hidden" name="meta_id[]" value="new_\${metaRowIdx}">
+      <input type="text" name="meta_key[]" value="\${key.replace(/"/g,'&quot;')}">
+    </td>
+    <td><textarea name="meta_value[]" rows="2">\${val.replace(/</g,'&lt;')}</textarea></td>
+    <td style="text-align:center">
+      <button type="button" class="cp-btn cp-btn-danger" style="padding:3px 8px;font-size:12px"
+              onclick="removeMetaRow(this)">&times;</button>
+    </td>\`;
+  tbody.appendChild(tr);
+  document.getElementById('new-meta-key').value   = '';
+  document.getElementById('new-meta-value').value = '';
+  metaRowIdx++;
+}
+function removeMetaRow(btn) { btn.closest('tr').remove(); }
+
+// ── 태그 ────────────────────────────────────────────────────
+let tags = ${JSON.stringify(existingTags)};
+if (tags.length) renderTags();
+function addTag() {
+  const input = document.getElementById('tag-input');
+  const raw   = input.value.trim();
+  if (!raw) return;
+  raw.split(',').map(t => t.trim()).filter(Boolean).forEach(t => {
+    if (!tags.includes(t)) { tags.push(t); renderTags(); }
+  });
+  input.value = '';
+}
+function removeTag(t) { tags = tags.filter(x => x !== t); renderTags(); }
+function renderTags() {
+  const cloud = document.getElementById('tag-cloud');
+  cloud.innerHTML = tags.map(t =>
+    \`<span style="background:#f0f0f1;border:1px solid #dcdcde;border-radius:12px;padding:2px 10px;font-size:12px;display:flex;align-items:center;gap:4px">
+       \${t}
+       <button type="button" onclick="removeTag('\${t}')" style="background:none;border:none;cursor:pointer;color:#646970;font-size:14px;padding:0;line-height:1">&times;</button>
+     </span>\`
+  ).join('');
+  document.getElementById('post_tags_input').value = tags.join(',');
+}
+
+// ── 특성 이미지 ─────────────────────────────────────────────
+function setFeaturedImage() {
+  const url = prompt('이미지 URL을 입력하세요:');
+  if (url) {
+    document.getElementById('featured-image-url').value = url;
+    document.getElementById('featured-image-wrap').innerHTML =
+      \`<img src="\${url}" style="max-width:100%;border-radius:4px;margin-bottom:8px">
+       <br><a href="#" onclick="clearFeaturedImage();return false" style="font-size:12px;color:#d63638">특성 이미지 제거</a>\`;
+  }
+}
+function clearFeaturedImage() {
+  document.getElementById('featured-image-url').value = '';
+  document.getElementById('featured-image-wrap').innerHTML =
+    \`<div style="background:#f0f0f1;border:2px dashed #dcdcde;border-radius:4px;padding:20px;text-align:center;color:#646970;font-size:13px;cursor:pointer" onclick="setFeaturedImage()">
+       <div style="font-size:28px;margin-bottom:6px">🖼</div>
+       <a style="color:#2271b1">특성 이미지 설정</a>
+     </div>\`;
+}
+
+// ── 제출 전 동기화 ───────────────────────────────────────────
 document.getElementById('post-form').addEventListener('submit', function() {
-  if (!isHtmlMode) syncEditors();
+  if (editorMode === 'visual') syncToHtml();
 });
 
-// Auto-generate slug from title
-document.getElementById('post_title').addEventListener('blur', function() {
-  const slugField = document.querySelector('[name=post_name]');
+// ── 슬러그 자동 생성 ─────────────────────────────────────────
+document.getElementById('title').addEventListener('blur', function() {
+  const slugField = document.getElementById('post_name');
   if (!slugField.value && this.value) {
-    slugField.value = this.value.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+    slugField.value = this.value.toLowerCase()
+      .replace(/[\s]+/g,'-')
+      .replace(/[^a-z0-9\-가-힣]/g,'')
+      .replace(/^-|-$/g,'');
   }
 });
-<\/script>
-`;
-  const html = await renderAdminShell(cp, content, { title: isNew ? `New ${typeLabel}` : `Edit ${typeLabel}`, notices });
-  return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+
+// ── 예약발행 상태 변경 핸들러 ──────────────────────────────────
+function onStatusChange(val) {
+  const wrap = document.getElementById('schedule-date-wrap');
+  const btn  = document.getElementById('publish-btn');
+  if (val === 'publish') {
+    wrap.style.display = 'block';
+    if (btn) btn.textContent = '예약/발행';
+  } else {
+    wrap.style.display = 'none';
+    if (btn) btn.textContent = val === 'draft' ? '임시저장' : '업데이트';
+  }
 }
+
+function submitPublish() {
+  const sel   = document.getElementById('post_status_select');
+  const dateI = document.getElementById('post_date_input');
+  if (sel && sel.value === 'publish' && dateI && dateI.value) {
+    const chosen = new Date(dateI.value);
+    if (chosen > new Date()) {
+      sel.value = 'publish'; // server will set 'future' automatically
+    }
+  }
+  document.getElementById('post-form').submit();
+}
+
+
+</script>
+`;
+
+  const html = await renderAdminShell(cp, pageContent, {
+    title: isNew ? `${L.new} ${typeLabel}` : `${L.edit} ${typeLabel}`,
+    notices,
+  });
+  return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+}
+
+// ---------------------------------------------------------------------------
+// postmeta 저장 헬퍼
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// 카테고리 저장 헬퍼 (term_relationships + term_taxonomy count 갱신)
+// ---------------------------------------------------------------------------
+
+async function savePostCategories(cp, prefix, postId, categoryIds) {
+  if (!postId) return;
+
+  // 기존 카테고리 관계 삭제
+  try {
+    await cp.db.prepare(
+      `DELETE FROM ${prefix}term_relationships
+       WHERE object_id = ?
+         AND term_taxonomy_id IN (
+           SELECT term_taxonomy_id FROM ${prefix}term_taxonomy WHERE taxonomy = 'category'
+         )`
+    ).bind(postId).run();
+  } catch (_) {}
+
+  // 새 카테고리 관계 삽입
+  for (const catId of (categoryIds || [])) {
+    const id = parseInt(catId);
+    if (!id) continue;
+    try {
+      const tt = await cp.db.prepare(
+        `SELECT term_taxonomy_id FROM ${prefix}term_taxonomy WHERE term_id = ? AND taxonomy = 'category' LIMIT 1`
+      ).bind(id).first();
+      if (!tt) continue;
+      await cp.db.prepare(
+        `INSERT OR IGNORE INTO ${prefix}term_relationships (object_id, term_taxonomy_id) VALUES (?, ?)`
+      ).bind(postId, tt.term_taxonomy_id).run();
+    } catch (_) {}
+  }
+
+  // term_taxonomy.count 갱신
+  try {
+    const tts = await cp.db.prepare(
+      `SELECT term_taxonomy_id FROM ${prefix}term_taxonomy WHERE taxonomy = 'category'`
+    ).all();
+    for (const row of (tts?.results || [])) {
+      const cnt = await cp.db.prepare(
+        `SELECT COUNT(*) as n FROM ${prefix}term_relationships tr
+         JOIN ${prefix}posts p ON p.ID = tr.object_id
+         WHERE tr.term_taxonomy_id = ? AND p.post_status = 'publish'`
+      ).bind(row.term_taxonomy_id).first();
+      await cp.db.prepare(
+        `UPDATE ${prefix}term_taxonomy SET count = ? WHERE term_taxonomy_id = ?`
+      ).bind(cnt?.n || 0, row.term_taxonomy_id).run();
+    }
+  } catch (_) {}
+}
+
+// ---------------------------------------------------------------------------
+// 태그 저장 헬퍼
+// ---------------------------------------------------------------------------
+
+async function savePostTags(cp, prefix, postId, tagsStr) {
+  if (!postId) return;
+
+  // 기존 태그 관계 삭제
+  try {
+    await cp.db.prepare(
+      `DELETE FROM ${prefix}term_relationships
+       WHERE object_id = ?
+         AND term_taxonomy_id IN (
+           SELECT term_taxonomy_id FROM ${prefix}term_taxonomy WHERE taxonomy = 'post_tag'
+         )`
+    ).bind(postId).run();
+  } catch (_) {}
+
+  const tagNames = (tagsStr || '').split(',').map(t => t.trim()).filter(Boolean);
+  for (const name of tagNames) {
+    try {
+      // term 있으면 재사용, 없으면 생성
+      let term = await cp.db.prepare(
+        `SELECT t.term_id FROM ${prefix}terms t WHERE t.name = ? LIMIT 1`
+      ).bind(name).first();
+
+      let termId;
+      if (term) {
+        termId = term.term_id;
+      } else {
+        const slug = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\-가-힣]/g, '');
+        const ins = await cp.db.prepare(
+          `INSERT INTO ${prefix}terms (name, slug) VALUES (?, ?)`
+        ).bind(name, slug).run();
+        termId = ins.meta?.last_row_id;
+      }
+
+      // term_taxonomy 확인/생성
+      let tt = await cp.db.prepare(
+        `SELECT term_taxonomy_id FROM ${prefix}term_taxonomy WHERE term_id = ? AND taxonomy = 'post_tag' LIMIT 1`
+      ).bind(termId).first();
+      if (!tt) {
+        const ttIns = await cp.db.prepare(
+          `INSERT INTO ${prefix}term_taxonomy (term_id, taxonomy, description, parent, count) VALUES (?, 'post_tag', '', 0, 0)`
+        ).bind(termId).run();
+        tt = { term_taxonomy_id: ttIns.meta?.last_row_id };
+      }
+
+      // term_relationships 삽입
+      await cp.db.prepare(
+        `INSERT OR IGNORE INTO ${prefix}term_relationships (object_id, term_taxonomy_id) VALUES (?, ?)`
+      ).bind(postId, tt.term_taxonomy_id).run();
+    } catch (_) {}
+  }
+}
+
+async function savePostMeta(cp, prefix, postId, metaIds, metaKeys, metaValues) {
+  if (!postId || !metaKeys?.length) return;
+
+  // 기존 사용자 정의 메타(내부 _ 제외) 삭제 후 재삽입
+  await cp.db.prepare(
+    `DELETE FROM ${prefix}postmeta WHERE post_id=? AND meta_key NOT LIKE '\\_%' ESCAPE '\\'`
+  ).bind(postId).run().catch(() => {});
+
+  for (let i = 0; i < metaKeys.length; i++) {
+    const key = (metaKeys[i] || '').trim();
+    const val = metaValues[i] || '';
+    if (!key || key.startsWith('_')) continue;
+    await cp.db.prepare(
+      `INSERT INTO ${prefix}postmeta (post_id, meta_key, meta_value) VALUES (?,?,?)`
+    ).bind(postId, key, val).run().catch(() => {});
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 언어 레이블
+// ---------------------------------------------------------------------------
+
+function getLabels(lang) {
+  const KO = {
+    postNotFound: '포스트를 찾을 수 없습니다.',
+    postUpdated: '포스트가 업데이트되었습니다.',
+    postPublished: '포스트가 게시되었습니다.',
+    allItems: t => `모든 ${t}`,
+    viewItem: t => `${t} 보기`,
+    addTitle: '제목 추가',
+    permalink: '퍼마링크',
+    editSlug: '편집',
+    content: '본문',
+    excerpt: '발췌문',
+    excerptPlaceholder: '발췌문을 입력하세요 (선택사항)',
+    excerptDesc: '자동 생성된 발췌문 대신 직접 입력할 수 있습니다.',
+    slug: '슬러그',
+    slugPlaceholder: '제목에서 자동 생성',
+    slugDesc: 'URL에 사용될 슬러그를 입력하세요.',
+    customFields: '사용자 정의 필드',
+    name: '이름',
+    value: '값',
+    delete: '삭제',
+    key: '키',
+    addNewField: '새 필드 추가',
+    add: '추가',
+    keyRequired: '키를 입력하세요.',
+    publish: '게시',
+    status: '상태',
+    draft: '초안',
+    published: '게시됨',
+    private: '비공개',
+    pendingReview: '검토 대기',
+    scheduleFor: '예약 발행 시간',
+    scheduleDesc: '미래 날짜를 선택하면 자동 예약 발행됩니다.',
+    scheduled: '예약됨',
+    saveDraft: '초안 저장',
+    update: '업데이트',
+    new: '새',
+    edit: '편집',
+    post: '포스트',
+    page: '페이지',
+    created: '생성',
+    modified: '수정',
+    categories: '카테고리',
+    noCategories: '카테고리가 없습니다.',
+    manageCategories: '카테고리 관리',
+    tags: '태그',
+    tagsPlaceholder: '태그 입력 후 Enter 또는 쉼표',
+    tagsDesc: '쉼표로 구분하여 여러 태그를 추가하세요.',
+    featuredImage: '특성 이미지',
+    setFeaturedImage: '특성 이미지 설정',
+    removeFeaturedImage: '특성 이미지 제거',
+    pageAttributes: '페이지 속성',
+    template: '템플릿',
+    defaultTemplate: '기본 템플릿',
+    fullWidth: '전체 너비',
+    sidebarLeft: '왼쪽 사이드바',
+    blankTemplate: '빈 템플릿',
+    order: '순서',
+    orderDesc: '숫자가 낮을수록 먼저 표시됩니다.',
+    enterUrl: 'URL을 입력하세요:',
+    enterImageUrl: '이미지 URL을 입력하세요:',
+    bold: '굵게', italic: '기울임', underline: '밑줄', strikethrough: '취소선',
+    bulletList: '글머리 기호', numberedList: '번호 목록',
+    indent: '들여쓰기', outdent: '내어쓰기',
+    blockquote: '인용구', separator: '구분선', link: '링크', image: '이미지', removeFormat: '서식 제거',
+  };
+  const EN = {
+    postNotFound: 'Post not found.',
+    postUpdated: 'Post updated.',
+    postPublished: 'Post published.',
+    allItems: t => `All ${t}s`,
+    viewItem: t => `View ${t}`,
+    addTitle: 'Add title',
+    permalink: 'Permalink',
+    editSlug: 'Edit',
+    content: 'Content',
+    excerpt: 'Excerpt',
+    excerptPlaceholder: 'Write an excerpt (optional)',
+    excerptDesc: 'Excerpts are optional hand-crafted summaries.',
+    slug: 'Slug',
+    slugPlaceholder: 'auto-generated-from-title',
+    slugDesc: 'The URL-friendly slug for this post.',
+    customFields: 'Custom Fields',
+    name: 'Name',
+    value: 'Value',
+    delete: 'Delete',
+    key: 'Key',
+    addNewField: 'Add New Custom Field',
+    add: 'Add',
+    keyRequired: 'Please enter a key.',
+    publish: 'Publish',
+    status: 'Status',
+    draft: 'Draft',
+    published: 'Published',
+    private: 'Private',
+    pendingReview: 'Pending Review',
+    scheduleFor: 'Schedule For',
+    scheduleDesc: 'Select a future date to schedule this post.',
+    scheduled: 'Scheduled',
+    saveDraft: 'Save Draft',
+    update: 'Update',
+    new: 'New',
+    edit: 'Edit',
+    post: 'Post',
+    page: 'Page',
+    created: 'Created',
+    modified: 'Modified',
+    categories: 'Categories',
+    noCategories: 'No categories found.',
+    manageCategories: 'Manage Categories',
+    tags: 'Tags',
+    tagsPlaceholder: 'Add tag then Enter or comma',
+    tagsDesc: 'Separate tags with commas.',
+    featuredImage: 'Featured Image',
+    setFeaturedImage: 'Set featured image',
+    removeFeaturedImage: 'Remove featured image',
+    pageAttributes: 'Page Attributes',
+    template: 'Template',
+    defaultTemplate: 'Default Template',
+    fullWidth: 'Full Width',
+    sidebarLeft: 'Sidebar Left',
+    blankTemplate: 'Blank',
+    order: 'Order',
+    orderDesc: 'Pages are usually sorted by this field.',
+    enterUrl: 'Enter URL:',
+    enterImageUrl: 'Enter image URL:',
+    bold: 'Bold', italic: 'Italic', underline: 'Underline', strikethrough: 'Strikethrough',
+    bulletList: 'Bullet List', numberedList: 'Numbered List',
+    indent: 'Indent', outdent: 'Outdent',
+    blockquote: 'Blockquote', separator: 'Horizontal Rule', link: 'Insert Link', image: 'Insert Image', removeFormat: 'Remove Formatting',
+  };
+  return lang === 'ko_KR' ? KO : EN;
+}
+
+// ---------------------------------------------------------------------------
+// 헬퍼
+// ---------------------------------------------------------------------------
+
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function formatDate(d) {
+  if (!d) return '';
+  try { return new Date(d).toLocaleString('ko-KR'); } catch (_) { return d; }
+}
+function slugify(str) {
+  return (str || '').toLowerCase().replace(/[\s]+/g,'-').replace(/[^a-z0-9\-가-힣]/g,'').replace(/^-|-$/g,'');
+}
+
 __name(handlePostEdit, "handlePostEdit");
 function esc4(s) {
   return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -6697,30 +7865,38 @@ async function handleTools(request, cp) {
     const fd = await request.formData().catch(() => new FormData());
     const action = fd.get("action") || "";
     if (action === "flush_kv") {
-      const cacheKeys = ["cp:themes:list"];
-      for (const k of cacheKeys) {
+      const PURGE_PREFIXES = [
+        "cp:themes:list",
+        "cp:template:",
+        "cp:theme:meta:",
+        "cp:option:",
+        "cp:post:",
+        "cp:query:",
+        "cp:update:",
+        "cp:transient:",
+        "cp:doing_cron"
+      ];
+      const singleKeys2 = PURGE_PREFIXES.filter((k) => !k.endsWith(":"));
+      for (const k of singleKeys2) {
+        try { await cp.kv.delete(k); } catch (_) {}
+      }
+      const prefixKeys3 = PURGE_PREFIXES.filter((k) => k.endsWith(":"));
+      let totalDeleted2 = 0;
+      for (const pfx of prefixKeys3) {
         try {
-          await cp.kv.delete(k);
-        } catch (_) {
-        }
+          let cursor;
+          do {
+            const opts = cursor ? { prefix: pfx, cursor } : { prefix: pfx };
+            const listResult = await cp.kv.list(opts);
+            for (const key of (listResult.keys || [])) {
+              await cp.kv.delete(key.name).catch(() => {});
+              totalDeleted2++;
+            }
+            cursor = listResult.list_complete ? null : listResult.cursor;
+          } while (cursor);
+        } catch (_) {}
       }
-      try {
-        const list = await cp.kv.list({ prefix: "cp:template:" });
-        for (const key of list.keys || []) {
-          await cp.kv.delete(key.name).catch(() => {
-          });
-        }
-      } catch (_) {
-      }
-      try {
-        const list2 = await cp.kv.list({ prefix: "cp:theme:meta:" });
-        for (const key of list2.keys || []) {
-          await cp.kv.delete(key.name).catch(() => {
-          });
-        }
-      } catch (_) {
-      }
-      notice = { type: "success", message: "Cache flushed. Template and theme caches cleared." };
+      notice = { type: "success", message: `\uCE90\uC2DC \uC644\uC804 \uC0AD\uC81C \uC644\uB8CC. KV \uD0A4 ${totalDeleted2}\uAC1C \uC81C\uAC70\uB428.` };
     }
     if (action === "recount_terms") {
       try {
@@ -7716,7 +8892,7 @@ function cssResp(css) {
 }
 __name(cssResp, "cssResp");
 function serveInlineCss(path) {
-  const ADMIN_CSS = `:root{--cp-sidebar-w:240px;--cp-topbar-h:48px;--cp-bg:#f0f0f1;--cp-sidebar-bg:#1d2327;--cp-sidebar-text:#a7aaad;--cp-sidebar-hover:#2c3338;--cp-sidebar-active:#2271b1;--cp-topbar-bg:#1d2327;--cp-topbar-text:#a7aaad;--cp-accent:#2271b1;--cp-accent-hover:#135e96;--cp-white:#fff;--cp-border:#dcdcde;--cp-text:#1d2327;--cp-muted:#646970;--cp-radius:4px;--cp-shadow:0 1px 3px rgba(0,0,0,.12)}*,*::before,*::after{box-sizing:border-box}html,body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;background:var(--cp-bg);color:var(--cp-text)}#cp-topbar{position:fixed;top:0;left:0;right:0;height:var(--cp-topbar-h);background:var(--cp-topbar-bg);display:flex;align-items:center;justify-content:space-between;padding:0 16px;z-index:1000;color:var(--cp-topbar-text)}.cp-topbar-left,.cp-topbar-right{display:flex;align-items:center;gap:12px}#cp-menu-toggle{background:none;border:none;cursor:pointer;padding:6px;color:var(--cp-topbar-text);display:none;flex-direction:column;gap:4px}#cp-menu-toggle span{display:block;width:20px;height:2px;background:currentColor;transition:.2s}.cp-site-link{color:var(--cp-topbar-text);text-decoration:none;font-size:13px;opacity:.8;transition:.15s}.cp-site-link:hover{opacity:1;color:var(--cp-white)}.cp-version{font-size:11px;opacity:.5}.cp-user-menu{position:relative}.cp-user-btn{background:none;border:none;color:var(--cp-topbar-text);cursor:pointer;font-size:13px;padding:6px 10px;border-radius:var(--cp-radius);transition:.15s}.cp-user-btn:hover{background:var(--cp-sidebar-hover);color:var(--cp-white)}.cp-user-dropdown{display:none;position:absolute;right:0;top:calc(100% + 4px);background:var(--cp-white);border:1px solid var(--cp-border);border-radius:var(--cp-radius);min-width:150px;box-shadow:var(--cp-shadow);z-index:100}.cp-user-menu.open .cp-user-dropdown{display:block}.cp-user-dropdown a{display:block;padding:8px 14px;color:var(--cp-text);text-decoration:none;font-size:13px;transition:.1s}.cp-user-dropdown a:hover{background:var(--cp-bg)}.cp-user-dropdown hr{border:none;border-top:1px solid var(--cp-border);margin:4px 0}.cp-logout{color:#d63638!important}#cp-layout{display:flex;min-height:100vh;padding-top:var(--cp-topbar-h)}#cp-sidebar{width:var(--cp-sidebar-w);background:var(--cp-sidebar-bg);flex-shrink:0;overflow-y:auto;position:fixed;top:var(--cp-topbar-h);left:0;bottom:0;z-index:500;transition:transform .2s}.cp-sidebar-header{padding:16px 14px 8px;border-bottom:1px solid rgba(255,255,255,.07)}.cp-logo{display:flex;align-items:center;gap:8px;color:var(--cp-white);text-decoration:none;font-weight:700;font-size:16px}.cp-logo span{letter-spacing:-.3px}.cp-nav-list{list-style:none;margin:8px 0;padding:0}.cp-nav-item{margin:1px 0}.cp-nav-link{display:flex;align-items:center;gap:10px;padding:9px 14px;color:var(--cp-sidebar-text);text-decoration:none;border-radius:var(--cp-radius);margin:0 6px;transition:.15s;font-size:13px}.cp-nav-link:hover,.cp-nav-item.active>.cp-nav-link{color:var(--cp-white);background:var(--cp-sidebar-hover)}.cp-nav-item.active>.cp-nav-link{background:var(--cp-sidebar-active)}.cp-nav-icon{font-size:16px;flex-shrink:0;width:20px;text-align:center}.cp-nav-label{flex:1}.cp-nav-arrow{font-size:9px;opacity:.5;transition:transform .2s}.cp-nav-item.has-children.active .cp-nav-arrow,.cp-nav-item.has-children:hover .cp-nav-arrow{transform:rotate(180deg)}.cp-subnav{list-style:none;margin:0;padding:0 0 4px 44px;display:none}.cp-nav-item.has-children.active .cp-subnav,.cp-nav-item.has-children:hover .cp-subnav{display:block}.cp-subnav li a{display:block;padding:6px 10px;color:var(--cp-sidebar-text);text-decoration:none;font-size:12.5px;border-radius:var(--cp-radius);transition:.1s}.cp-subnav li a:hover,.cp-subnav li.active a{color:var(--cp-white);background:rgba(255,255,255,.07)}#cp-main{flex:1;margin-left:var(--cp-sidebar-w);padding:24px;min-height:calc(100vh - var(--cp-topbar-h))}.cp-page-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}.cp-page-title{font-size:23px;font-weight:400;margin:0;color:var(--cp-text)}.cp-notice{border-left:4px solid var(--cp-accent);background:var(--cp-white);padding:10px 14px;border-radius:0 var(--cp-radius) var(--cp-radius) 0;margin-bottom:16px;box-shadow:var(--cp-shadow)}.cp-notice-success{border-color:#00a32a}.cp-notice-error{border-color:#d63638}.cp-notice-warning{border-color:#dba617}.cp-notice p{margin:0;font-size:13.5px}.cp-card{background:var(--cp-white);border:1px solid var(--cp-border);border-radius:var(--cp-radius);padding:20px;margin-bottom:20px;box-shadow:var(--cp-shadow)}.cp-card h2,.cp-card h3{margin:0 0 14px;font-size:15px;color:var(--cp-text)}.cp-table-wrap{background:var(--cp-white);border:1px solid var(--cp-border);border-radius:var(--cp-radius);overflow:hidden;margin-bottom:20px;box-shadow:var(--cp-shadow)}.cp-table{width:100%;border-collapse:collapse;font-size:13px}.cp-table th{background:var(--cp-bg);padding:10px 14px;text-align:left;font-weight:600;border-bottom:1px solid var(--cp-border);color:var(--cp-muted);font-size:12px;text-transform:uppercase;letter-spacing:.4px}.cp-table td{padding:10px 14px;border-bottom:1px solid var(--cp-border);vertical-align:middle}.cp-table tr:last-child td{border-bottom:none}.cp-table tr:hover td{background:#f9f9f9}.cp-table a{color:var(--cp-accent);text-decoration:none}.cp-table a:hover{text-decoration:underline}.cp-btn,.cp-btn-secondary{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:var(--cp-radius);font-size:13px;font-weight:500;cursor:pointer;text-decoration:none;border:1px solid transparent;transition:.15s;line-height:1.4}.cp-btn{background:var(--cp-accent);color:var(--cp-white);border-color:var(--cp-accent)}.cp-btn:hover{background:var(--cp-accent-hover);border-color:var(--cp-accent-hover)}.cp-btn-secondary{background:var(--cp-white);color:var(--cp-text);border-color:var(--cp-border)}.cp-btn-secondary:hover{background:var(--cp-bg);border-color:#8c8f94}.cp-btn-danger{background:#d63638;color:var(--cp-white);border-color:#d63638}.cp-btn-danger:hover{background:#b32d2e}.cp-form-table{width:100%;border-collapse:collapse}.cp-form-table tr{border-bottom:1px solid var(--cp-border)}.cp-form-table tr:last-child{border-bottom:none}.cp-form-table th{padding:14px 20px 14px 0;text-align:right;font-weight:600;width:200px;vertical-align:top;padding-top:18px;font-size:13px}.cp-form-table td{padding:14px 0}.cp-form-input,.cp-form-select,.cp-form-textarea{border:1px solid var(--cp-border);border-radius:var(--cp-radius);padding:7px 10px;font-size:14px;color:var(--cp-text);transition:.15s;width:100%;max-width:400px}.cp-form-input:focus,.cp-form-select:focus,.cp-form-textarea:focus{border-color:var(--cp-accent);outline:2px solid rgba(34,113,177,.2)}.cp-form-textarea{resize:vertical;min-height:80px}.cp-description{color:var(--cp-muted);font-size:12.5px;margin:.4rem 0 0}.cp-dash-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px;margin-bottom:20px}.cp-dash-stat{background:var(--cp-white);border:1px solid var(--cp-border);border-radius:var(--cp-radius);padding:20px;display:flex;align-items:center;gap:16px;box-shadow:var(--cp-shadow)}.cp-dash-stat-icon{font-size:32px;flex-shrink:0}.cp-dash-stat-num{font-size:28px;font-weight:700;color:var(--cp-text);line-height:1}.cp-dash-stat-label{font-size:12px;color:var(--cp-muted);margin-top:4px}.cp-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.4px}.cp-badge-publish{background:#edfaef;color:#00a32a}.cp-badge-draft{background:#f0f0f1;color:var(--cp-muted)}.cp-badge-pending{background:#fff8e5;color:#996800}.cp-badge-private{background:#f0f4f8;color:var(--cp-accent)}.cp-badge-trash{background:#fcf0f1;color:#d63638}#cp-footer{text-align:center;padding:16px;color:var(--cp-muted);font-size:12px;border-top:1px solid var(--cp-border);margin-left:var(--cp-sidebar-w)}#cp-footer a{color:var(--cp-accent);text-decoration:none}@media(max-width:782px){#cp-menu-toggle{display:flex}#cp-sidebar{transform:translateX(-100%)}body.cp-sidebar-open #cp-sidebar{transform:none}#cp-main,#cp-footer{margin-left:0}.cp-form-table th{display:none}.cp-form-table td{display:block;padding:10px 0}.cp-form-input,.cp-form-select,.cp-form-textarea{max-width:100%}.cp-dash-grid{grid-template-columns:1fr}}`;
+  const ADMIN_CSS = `:root{--cp-sidebar-w:240px;--cp-topbar-h:48px;--cp-bg:#f0f0f1;--cp-sidebar-bg:#1d2327;--cp-sidebar-text:#a7aaad;--cp-sidebar-hover:#2c3338;--cp-sidebar-active:#2271b1;--cp-topbar-bg:#1d2327;--cp-topbar-text:#a7aaad;--cp-accent:#2271b1;--cp-accent-hover:#135e96;--cp-white:#fff;--cp-border:#dcdcde;--cp-text:#1d2327;--cp-muted:#646970;--cp-radius:4px;--cp-shadow:0 1px 3px rgba(0,0,0,.12)}*,*::before,*::after{box-sizing:border-box}html,body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;background:var(--cp-bg);color:var(--cp-text)}#cp-topbar{position:fixed;top:0;left:0;right:0;height:var(--cp-topbar-h);background:var(--cp-topbar-bg);display:flex;align-items:center;justify-content:space-between;padding:0 16px;z-index:1000;color:var(--cp-topbar-text)}.cp-topbar-left,.cp-topbar-right{display:flex;align-items:center;gap:12px}#cp-menu-toggle{background:none;border:none;cursor:pointer;padding:6px;color:var(--cp-topbar-text);display:none;flex-direction:column;gap:4px}#cp-menu-toggle span{display:block;width:20px;height:2px;background:currentColor;transition:.2s}.cp-site-link{color:var(--cp-topbar-text);text-decoration:none;font-size:13px;opacity:.8;transition:.15s}.cp-site-link:hover{opacity:1;color:var(--cp-white)}.cp-version{font-size:11px;opacity:.5}.cp-user-menu{position:relative}.cp-user-btn{background:none;border:none;color:var(--cp-topbar-text);cursor:pointer;font-size:13px;padding:6px 10px;border-radius:var(--cp-radius);transition:.15s}.cp-user-btn:hover{background:var(--cp-sidebar-hover);color:var(--cp-white)}.cp-user-dropdown{display:none;position:absolute;right:0;top:calc(100% + 4px);background:var(--cp-white);border:1px solid var(--cp-border);border-radius:var(--cp-radius);min-width:150px;box-shadow:var(--cp-shadow);z-index:100}.cp-user-menu.open .cp-user-dropdown{display:block}.cp-user-dropdown a{display:block;padding:8px 14px;color:var(--cp-text);text-decoration:none;font-size:13px;transition:.1s}.cp-user-dropdown a:hover{background:var(--cp-bg)}.cp-user-dropdown hr{border:none;border-top:1px solid var(--cp-border);margin:4px 0}.cp-logout{color:#d63638!important}#cp-layout{display:flex;min-height:100vh;padding-top:var(--cp-topbar-h)}#cp-sidebar{width:var(--cp-sidebar-w);background:var(--cp-sidebar-bg);flex-shrink:0;overflow-y:auto;position:fixed;top:var(--cp-topbar-h);left:0;bottom:0;z-index:500;transition:transform .2s}.cp-sidebar-header{padding:16px 14px 8px;border-bottom:1px solid rgba(255,255,255,.07)}.cp-logo{display:flex;align-items:center;gap:8px;color:var(--cp-white);text-decoration:none;font-weight:700;font-size:16px}.cp-logo span{letter-spacing:-.3px}.cp-nav-list{list-style:none;margin:8px 0;padding:0}.cp-nav-item{margin:1px 0}.cp-nav-link{display:flex;align-items:center;gap:10px;padding:9px 14px;color:var(--cp-sidebar-text);text-decoration:none;border-radius:var(--cp-radius);margin:0 6px;transition:.15s;font-size:13px}.cp-nav-link:hover,.cp-nav-item.active>.cp-nav-link{color:var(--cp-white);background:var(--cp-sidebar-hover)}.cp-nav-item.active>.cp-nav-link{background:var(--cp-sidebar-active)}.cp-nav-icon{font-size:16px;flex-shrink:0;width:20px;text-align:center}.cp-nav-label{flex:1}.cp-nav-arrow{font-size:9px;opacity:.5;transition:transform .2s}.cp-nav-item.has-children.active .cp-nav-arrow,.cp-nav-item.has-children:hover .cp-nav-arrow{transform:rotate(180deg)}.cp-subnav{list-style:none;margin:0;padding:0 0 4px 44px;display:none}.cp-nav-item.has-children.active .cp-subnav,.cp-nav-item.has-children:hover .cp-subnav{display:block}.cp-subnav li a{display:block;padding:6px 10px;color:var(--cp-sidebar-text);text-decoration:none;font-size:12.5px;border-radius:var(--cp-radius);transition:.1s}.cp-subnav li a:hover,.cp-subnav li.active a{color:var(--cp-white);background:rgba(255,255,255,.07)}#cp-main{flex:1;margin-left:var(--cp-sidebar-w);padding:16px 24px 24px;min-height:calc(100vh - var(--cp-topbar-h))}.cp-page-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:10px;flex-wrap:wrap}.cp-page-title{font-size:22px;font-weight:400;margin:0;color:var(--cp-text);line-height:1.3}.cp-notice{border-left:4px solid var(--cp-accent);background:var(--cp-white);padding:10px 14px;border-radius:0 var(--cp-radius) var(--cp-radius) 0;margin-bottom:16px;box-shadow:var(--cp-shadow)}.cp-notice-success{border-color:#00a32a}.cp-notice-error{border-color:#d63638}.cp-notice-warning{border-color:#dba617}.cp-notice p{margin:0;font-size:13.5px}.cp-card{background:var(--cp-white);border:1px solid var(--cp-border);border-radius:var(--cp-radius);padding:20px;margin-bottom:20px;box-shadow:var(--cp-shadow)}.cp-card h2,.cp-card h3{margin:0 0 14px;font-size:15px;color:var(--cp-text)}.cp-table-wrap{background:var(--cp-white);border:1px solid var(--cp-border);border-radius:var(--cp-radius);overflow:hidden;margin-bottom:20px;box-shadow:var(--cp-shadow)}.cp-table{width:100%;border-collapse:collapse;font-size:13px}.cp-table th{background:var(--cp-bg);padding:10px 14px;text-align:left;font-weight:600;border-bottom:1px solid var(--cp-border);color:var(--cp-muted);font-size:12px;text-transform:uppercase;letter-spacing:.4px}.cp-table td{padding:10px 14px;border-bottom:1px solid var(--cp-border);vertical-align:middle}.cp-table tr:last-child td{border-bottom:none}.cp-table tr:hover td{background:#f9f9f9}.cp-table a{color:var(--cp-accent);text-decoration:none}.cp-table a:hover{text-decoration:underline}.cp-btn,.cp-btn-secondary{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:var(--cp-radius);font-size:13px;font-weight:500;cursor:pointer;text-decoration:none;border:1px solid transparent;transition:.15s;line-height:1.4}.cp-btn{background:var(--cp-accent);color:var(--cp-white);border-color:var(--cp-accent)}.cp-btn:hover{background:var(--cp-accent-hover);border-color:var(--cp-accent-hover)}.cp-btn-secondary{background:var(--cp-white);color:var(--cp-text);border-color:var(--cp-border)}.cp-btn-secondary:hover{background:var(--cp-bg);border-color:#8c8f94}.cp-btn-danger{background:#d63638;color:var(--cp-white);border-color:#d63638}.cp-btn-danger:hover{background:#b32d2e}.cp-form-table{width:100%;border-collapse:collapse}.cp-form-table tr{border-bottom:1px solid var(--cp-border)}.cp-form-table tr:last-child{border-bottom:none}.cp-form-table th{padding:14px 20px 14px 0;text-align:right;font-weight:600;width:200px;vertical-align:top;padding-top:18px;font-size:13px}.cp-form-table td{padding:14px 0}.cp-form-input,.cp-form-select,.cp-form-textarea{border:1px solid var(--cp-border);border-radius:var(--cp-radius);padding:7px 10px;font-size:14px;color:var(--cp-text);transition:.15s;width:100%;max-width:400px}.cp-form-input:focus,.cp-form-select:focus,.cp-form-textarea:focus{border-color:var(--cp-accent);outline:2px solid rgba(34,113,177,.2)}.cp-form-textarea{resize:vertical;min-height:80px}.cp-description{color:var(--cp-muted);font-size:12.5px;margin:.4rem 0 0}.cp-dash-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px;margin-bottom:20px}.cp-dash-stat{background:var(--cp-white);border:1px solid var(--cp-border);border-radius:var(--cp-radius);padding:20px;display:flex;align-items:center;gap:16px;box-shadow:var(--cp-shadow)}.cp-dash-stat-icon{font-size:32px;flex-shrink:0}.cp-dash-stat-num{font-size:28px;font-weight:700;color:var(--cp-text);line-height:1}.cp-dash-stat-label{font-size:12px;color:var(--cp-muted);margin-top:4px}.cp-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.4px}.cp-badge-publish{background:#edfaef;color:#00a32a}.cp-badge-draft{background:#f0f0f1;color:var(--cp-muted)}.cp-badge-pending{background:#fff8e5;color:#996800}.cp-badge-private{background:#f0f4f8;color:var(--cp-accent)}.cp-badge-trash{background:#fcf0f1;color:#d63638}#cp-footer{text-align:center;padding:16px;color:var(--cp-muted);font-size:12px;border-top:1px solid var(--cp-border);margin-left:var(--cp-sidebar-w)}#cp-footer a{color:var(--cp-accent);text-decoration:none}@media(max-width:782px){#cp-menu-toggle{display:flex}#cp-sidebar{transform:translateX(-100%)}body.cp-sidebar-open #cp-sidebar{transform:none}#cp-main,#cp-footer{margin-left:0}.cp-form-table th{display:none}.cp-form-table td{display:block;padding:10px 0}.cp-form-input,.cp-form-select,.cp-form-textarea{max-width:100%}.cp-dash-grid{grid-template-columns:1fr}}`;
   const INSTALLER_CSS = `*,*::before,*::after{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f0f1;margin:0;padding:2rem 1rem;color:#1d2327}.install-wrap{max-width:700px;margin:0 auto}.install-header{text-align:center;margin-bottom:2rem}.install-logo{font-size:2rem;font-weight:800;color:#1d2327;text-decoration:none}.install-logo span{color:#F6821F}.install-card{background:#fff;border-radius:8px;padding:2rem 2.5rem;box-shadow:0 2px 10px rgba(0,0,0,.08);margin-bottom:1.5rem}h2{font-size:1.4rem;margin:0 0 .5rem;color:#1d2327}.lead{color:#646970;margin:0 0 1.5rem}.form-table{width:100%;border-collapse:collapse;margin-bottom:1.5rem}.form-table tr{border-bottom:1px solid #dcdcde}.form-table tr:last-child{border-bottom:none}.form-table th{padding:14px 20px 14px 0;text-align:right;width:180px;font-size:13px;font-weight:600;vertical-align:top;padding-top:18px}.form-table td{padding:12px 0}.regular-text{width:100%;max-width:380px;padding:7px 10px;border:1px solid #8c8f94;border-radius:4px;font-size:14px;transition:.15s}.regular-text:focus{border-color:#2271b1;outline:2px solid rgba(34,113,177,.2)}.description{color:#646970;font-size:12.5px;margin:.4rem 0 0}code{background:#f0f0f1;padding:2px 6px;border-radius:3px;font-size:12px}.btn{display:inline-flex;align-items:center;padding:8px 18px;border-radius:4px;font-size:14px;font-weight:500;cursor:pointer;text-decoration:none;border:1px solid transparent;margin-right:8px;transition:.15s}.btn-primary{background:#2271b1;color:#fff;border-color:#2271b1}.btn-primary:hover{background:#135e96}.btn-secondary{background:#fff;color:#1d2327;border-color:#dcdcde}.btn-secondary:hover{background:#f0f0f1}.submit{margin-top:1rem}.notice-error{background:#fcf0f1;border-left:4px solid #d63638;padding:.8rem 1rem;border-radius:0 4px 4px 0;margin-bottom:1.2rem}.notice-error ul{margin:0;padding:0 0 0 1rem;color:#d63638;font-size:13.5px}.success-card{border-left:4px solid #00a32a}.success-icon{font-size:3rem;color:#00a32a;text-align:center;margin-bottom:1rem}`;
   const LOGIN_CSS = `*,*::before,*::after{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f0f1;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px}.login-wrap{width:100%;max-width:360px}.login-logo{text-align:center;margin-bottom:24px}.login-logo svg{width:64px;height:64px}.login-logo h1{margin:8px 0 0;font-size:22px;font-weight:600;color:#1d2327}.login-box{background:#fff;border-radius:8px;padding:28px 32px;box-shadow:0 2px 12px rgba(0,0,0,.08)}.login-box label{display:block;font-size:13px;font-weight:600;color:#1d2327;margin-bottom:6px}.login-box input[type=text],.login-box input[type=password]{width:100%;padding:10px 14px;font-size:15px;border:1px solid #8c8f94;border-radius:4px;margin-bottom:16px;outline:none;transition:border-color .2s}.login-box input:focus{border-color:#2271b1;box-shadow:0 0 0 1px #2271b1}.login-remember{display:flex;align-items:center;gap:8px;font-size:13px;color:#3c434a;margin-bottom:18px}.login-btn{width:100%;padding:10px;font-size:15px;font-weight:600;background:#2271b1;color:#fff;border:none;border-radius:4px;cursor:pointer;transition:background .2s}.login-btn:hover{background:#135e96}.login-error{background:#fff0f0;border-left:4px solid #d63638;padding:10px 14px;color:#d63638;font-size:13px;border-radius:4px;margin-bottom:16px}.login-footer{text-align:center;margin-top:16px;font-size:12px;color:#646970}.login-footer a{color:#2271b1;text-decoration:none}`;
   const ACTIVATE_CSS = `*,*::before,*::after{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f1f1f1;margin:0;padding:2rem 1rem;color:#333}#signup-content{max-width:600px;margin:2rem auto}.cp-activate-container{background:#fff;border-radius:6px;padding:2rem 2.5rem;box-shadow:0 2px 8px rgba(0,0,0,.1)}h2{font-size:1.4rem;margin:0 0 1.2rem;color:#1d2327}label{font-weight:600;display:block;margin-bottom:.4rem}input[type="text"]{width:100%;padding:.6rem .8rem;font-size:1rem;border:1px solid #8c8f94;border-radius:4px}.cp-btn{background:#2271b1;color:#fff;border:none;padding:.6rem 1.4rem;font-size:1rem;border-radius:4px;cursor:pointer}.cp-btn:hover{background:#135e96}#signup-welcome{background:#f0f6fc;border-left:4px solid #2271b1;padding:1rem 1.4rem;border-radius:0 4px 4px 0;margin:1rem 0}#signup-welcome p{margin:.4rem 0}.h3{font-weight:700}a{color:#2271b1}.lead-in{line-height:1.7}`;
