@@ -1,13 +1,29 @@
-# CloudPress CMS — Cloudflare Workers 배포 설정 v4.0
-# wrangler.toml
+# CloudPress CMS — Cloudflare Workers 배포 설정 v5.0
+# Originless Edge CMS: Edge Cache + KV 이중 캐시 + SWR/ISR + Prewarm + Purge
 #
 # ── 배포 방법 ──────────────────────────────────────────────────────────────
-#  1. D1 생성:   npx wrangler d1 create cloudpress-db
-#  2. KV 생성:   npx wrangler kv:namespace create CP_KV
-#  3. 스키마:    npx wrangler d1 execute cloudpress-db --file=schema.sql --remote
-#  4. 시크릿:    npx wrangler secret put CP_AUTH_KEY
-#  5. 배포:      npx wrangler deploy
-#  6. 접속:      https://<worker>.workers.dev/cp-admin/setup-config
+#  1. D1 생성:     npx wrangler d1 create cloudpress-db
+#  2. KV 생성:     npx wrangler kv:namespace create CP_KV
+#  3. 스키마:      npx wrangler d1 execute cloudpress-db --file=schema.sql --remote
+#  4. 시크릿:      npx wrangler secret put CP_AUTH_KEY
+#                 npx wrangler secret put CP_PURGE_SECRET
+#                 npx wrangler secret put CP_PREWARM_SECRET
+#  5. 배포:        npx wrangler deploy
+#  6. 초기 설치:   https://<worker>.workers.dev/cp-admin/setup-config
+#  7. 설치 후 재설치는 영구 차단됨 (install_lock)
+#
+# ── 캐시 구조 ──────────────────────────────────────────────────────────────
+#  [1] Edge Cache HIT  → 즉시 응답 (< 5ms)
+#  [2] KV HIT          → Edge 저장 후 응답 (< 15ms)
+#  [3] MISS            → Edge SSR → KV + Edge 저장 → 응답
+#  [4] 장애 시         → Stale Cache 응답 (절대 지연/에러 없음)
+#
+# ── 특수 엔드포인트 ────────────────────────────────────────────────────────
+#  /cp-prewarm?secret=XXX          캐시 예열 (콜드 스타트 제거)
+#  /cp-purge (POST, X-Purge-Secret) 정밀 캐시 퍼지
+#    body: {"paths":["/","/slug"]}  특정 경로 퍼지
+#    body: {"post_id": 123}         포스트 관련 경로 자동 퍼지
+#    ?all=1                         전체 캐시 초기화
 
 name               = "cloudflare-cms"
 main               = "worker.js"
@@ -28,13 +44,16 @@ id      = "YOUR_KV_NAMESPACE_ID_HERE"
 [vars]
 CP_SITE_NAME    = "My CloudPress Site"
 CP_SITE_TAGLINE = "Just another CloudPress site"
+# 배포 후 반드시 실제 URL로 변경 (Prewarm cron에서 사용)
+CP_SITE_URL     = "https://your-worker.workers.dev"
 
-# ── 성능 최적화 설정 ──────────────────────────────────────────────────────────
-# Smart Placement: Worker를 요청 발원지에 가장 가까운 Cloudflare PoP에서 실행
+# ── Smart Placement ───────────────────────────────────────────────────────────
+# Worker를 요청 발원지에 가장 가까운 Cloudflare PoP에서 실행 (지연 최소화)
 [placement]
 mode = "smart"
 
 # ── Cron Triggers ─────────────────────────────────────────────────────────────
+# 5분마다 실행: 예약 포스트 발행 + Edge/KV 캐시 자동 예열
 [triggers]
 crons = ["*/5 * * * *"]
 
@@ -44,6 +63,10 @@ name = "cloudflare-cms-production"
 
 [env.production.vars]
 CP_SITE_NAME = "My CloudPress Site"
+CP_SITE_URL  = "https://your-domain.com"
 
 [env.staging]
 name = "cloudflare-cms-staging"
+
+[env.staging.vars]
+CP_SITE_URL = "https://cloudflare-cms-staging.workers.dev"
