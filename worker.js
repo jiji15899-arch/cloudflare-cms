@@ -9450,123 +9450,177 @@ function serveInlineCss(path) {
 }
 __name(serveInlineCss, "serveInlineCss");
 
+
 // =============================================================
-// ORIGINLESS EDGE CMS — 최고 성능 캐시 레이어 v2
+// ORIGINLESS EDGE CMS — Ultra-Performance Cache Layer v4
+// WordPress 대비 수백배 빠른 Cloudflare Edge 전용 아키텍처
 //
-// Client → Edge Worker
-//   [1] Edge Cache API HIT  →  즉시 응답   (1–5ms)
-//   [2] KV HIT              →  Edge 저장 → 응답  (5–20ms)
-//   [3] MISS                →  SSR → KV+Edge 저장 → 응답  (20–80ms)
-//   [4] 실패                →  Stale Cache → 절대 다운 없음
+// ┌─ 요청 흐름 ────────────────────────────────────────────────┐
+// │  Client                                                   │
+// │    ↓                                                      │
+// │  Edge Worker (Cloudflare PoP — 전 세계 300+ 데이터센터)    │
+// │    │                                                      │
+// │  [1] Edge Cache API HIT  →  즉시 응답     (1~5 ms)        │
+// │  [2] KV Cache HIT        →  Edge 승격 → 응답(5~20 ms)     │
+// │  [3] MISS                →  Edge SSR → KV+Edge 저장       │
+// │  [4] SSR 실패            →  Stale 응답 (절대 다운 없음)    │
+// └───────────────────────────────────────────────────────────┘
 //
-// 추가 기능:
-//   - 한 번 설치하면 재설치 불가 (KV 영구 잠금)
-//   - SWR (Stale-While-Revalidate) 백그라운드 갱신
-//   - ISR (Incremental Static Regeneration)
-//   - 정밀 Purge (포스트/카테고리/전체)
-//   - Prewarm (배포 후 자동 캐시 워밍)
-//   - D1 쓰기 전용 (읽기는 KV 캐시)
-//   - 다중 Failover (Edge → KV → Stale → 503)
+// 핵심 기능:
+//   ✓ Edge Cache API + KV 이중 캐시 (L1/L2)
+//   ✓ SWR (Stale-While-Revalidate) 백그라운드 갱신
+//   ✓ ISR (Incremental Static Regeneration) — 포스트 저장 시 즉시 Purge
+//   ✓ Prewarm — 배포 직후 주요 경로 자동 워밍
+//   ✓ 정밀 Purge — 전체/포스트/카테고리/개별 경로
+//   ✓ D1 쓰기 전용 (읽기는 항상 KV 캐시 우선)
+//   ✓ 다중 Failover: Edge → KV → Stale → 503
+//   ✓ 한 번 설치 후 재설치 불가 (KV 영구 잠금)
+//   ✓ Security Headers 자동 주입
+//   ✓ Vary: Accept-Encoding 자동 처리
+//   ✓ ETag 기반 304 Not Modified 지원
+//   ✓ /__edge/health 상태 엔드포인트
 // =============================================================
 
-var EDGE_VER     = "e2";
-var KV_TTL       = 3600;
-var CACHE_TTL    = 86400;
-var STALE_TTL    = 604800;
-var SWR_WINDOW   = 60;
+var EDGE_VER      = "e4";           // 캐시 키 네임스페이스 버전
+var KV_TTL        = 3600;           // KV 신선도 TTL (초) — 1시간
+var CACHE_TTL     = 86400;          // Edge Cache TTL (초) — 24시간
+var STALE_TTL     = 604800;         // Stale 보관 TTL (초) — 7일
+var SWR_WINDOW    = 60;             // SWR 윈도우 (초) — 1분
+var PREWARM_PATHS = ["/", "/feed", "/sitemap.xml", "/cp-sitemap.xml"];
 
-var SKIP_CACHE = new Set([
+// 캐시 제외 경로 Set (정확 일치)
+var SKIP_CACHE_EXACT = new Set([
   "/cp-admin", "/cp-login", "/cp-logout", "/cp-signup",
-  "/cp-activate", "/cp-comments-post", "/cp-cron"
+  "/cp-activate", "/cp-comments-post", "/cp-cron",
+  "/cp-mail", "/cp-trackback"
 ]);
 
+// 보안 헤더 (모든 응답에 자동 주입)
+var SECURITY_HEADERS = {
+  "X-Content-Type-Options":  "nosniff",
+  "X-Frame-Options":         "SAMEORIGIN",
+  "X-XSS-Protection":       "1; mode=block",
+  "Referrer-Policy":         "strict-origin-when-cross-origin",
+  "Permissions-Policy":      "geolocation=(), microphone=(), camera=()"
+};
+
+// ── 캐시 가능 여부 판별 ────────────────────────────────────────
 function edgeIsCacheable(req, path) {
-  if (req.method !== "GET") return false;
-  if (SKIP_CACHE.has(path)) return false;
-  if (path.startsWith("/cp-admin/") || path.startsWith("/cp-includes/")) return false;
-  if (path.startsWith("/__edge/")) return false;
+  if (req.method !== "GET" && req.method !== "HEAD") return false;
+  if (SKIP_CACHE_EXACT.has(path)) return false;
+  if (path.startsWith("/cp-admin/"))    return false;
+  if (path.startsWith("/cp-includes/")) return false;
+  if (path.startsWith("/__edge/"))      return false;
+  if (path.startsWith("/uploads/"))     return false;  // 미디어는 R2/별도 캐시
+  // 로그인 쿠키가 있으면 개인화 콘텐츠 → 캐시 불가
   var cookie = req.headers.get("cookie") || "";
   if (cookie.includes("cp_token=") || cookie.includes("cp_session=")) return false;
   return true;
 }
 __name(edgeIsCacheable, "edgeIsCacheable");
 
+// ── 캐시 키 생성 ──────────────────────────────────────────────
 function edgeKvKey(url) {
-  return EDGE_VER + ":" + url.pathname + (url.search || "");
+  // query string 포함 (페이지네이션 등 구분)
+  var qs = url.search || "";
+  return EDGE_VER + ":" + url.pathname + qs;
 }
 __name(edgeKvKey, "edgeKvKey");
 
-function edgeCacheRequest(key) {
-  return new Request("https://cf-edge-cache.internal/" + encodeURIComponent(key));
+// Edge Cache API용 내부 Request (실제 네트워크 요청 없음)
+function edgeCacheReq(key) {
+  return new Request("https://cp-edge-cache.internal/" + encodeURIComponent(key));
 }
-__name(edgeCacheRequest, "edgeCacheRequest");
+__name(edgeCacheReq, "edgeCacheReq");
 
-function edgeTagResponse(res, src) {
+// ── 보안 헤더 + 캐시 태그 주입 ────────────────────────────────
+function edgeTagResponse(res, src, extra) {
   var h = new Headers(res.headers);
-  h.set("X-Cache", src);
-  h.set("X-Powered-By", "CloudPress-Edge/" + EDGE_VER);
+  h.set("X-Cache",        src);
+  h.set("X-Powered-By",   "CloudPress-Edge/" + EDGE_VER);
+  h.set("X-CF-Colo",      (extra && extra.colo) || "");
+  // 보안 헤더
+  for (var k in SECURITY_HEADERS) h.set(k, SECURITY_HEADERS[k]);
   return new Response(res.body, { status: res.status, headers: h });
 }
 __name(edgeTagResponse, "edgeTagResponse");
 
-// [1] Edge Cache API 조회
+// ── ETag 기반 304 처리 ────────────────────────────────────────
+function edgeMaybe304(req, res) {
+  var etag    = res.headers.get("ETag");
+  var ifNone  = req.headers.get("If-None-Match");
+  if (etag && ifNone && etag === ifNone) {
+    return new Response(null, {
+      status: 304,
+      headers: { "ETag": etag, "Cache-Control": res.headers.get("Cache-Control") || "" }
+    });
+  }
+  return null;
+}
+__name(edgeMaybe304, "edgeMaybe304");
+
+// ── [L1] Edge Cache API 조회 ──────────────────────────────────
 async function edgeFromCache(key) {
   try {
-    var cache = caches.default;
-    var r = await cache.match(edgeCacheRequest(key));
+    var r = await caches.default.match(edgeCacheReq(key));
     if (!r) return null;
     var cachedAt = Number(r.headers.get("X-Cached-At") || 0);
     var age = Math.floor(Date.now() / 1000) - cachedAt;
-    return { res: r, stale: age > CACHE_TTL };
+    return { res: r, stale: age > CACHE_TTL, age: age };
   } catch(e) { return null; }
 }
 __name(edgeFromCache, "edgeFromCache");
 
-// [2] KV 조회
+// ── [L2] KV Cache 조회 ────────────────────────────────────────
 async function edgeFromKV(env, key) {
   if (!env.CP_KV) return null;
   try {
-    var result = await env.CP_KV.getWithMetadata(key, { type: "text" });
-    if (!result || !result.value) return null;
-    var m = result.metadata || {};
+    var r = await env.CP_KV.getWithMetadata(key, { type: "text" });
+    if (!r || !r.value) return null;
+    var m   = r.metadata || {};
     var age = Math.floor((Date.now() - (m.ts || 0)) / 1000);
     return {
-      html: result.value,
+      html:    r.value,
       headers: m.h || {},
-      age: age,
-      stale: age > KV_TTL,
+      etag:    m.etag || null,
+      age:     age,
+      stale:   age > KV_TTL,
       expired: age > KV_TTL + SWR_WINDOW
     };
   } catch(e) { return null; }
 }
 __name(edgeFromKV, "edgeFromKV");
 
-// Edge Cache에 저장
+// ── Edge Cache 저장 (비동기 waitUntil) ────────────────────────
 function edgeSaveCache(key, res, ctx) {
   ctx.waitUntil((async () => {
     try {
       var h = new Headers(res.headers);
       h.set("X-Cached-At", String(Math.floor(Date.now() / 1000)));
       h.set("Cache-Control", "public, max-age=" + CACHE_TTL + ", stale-while-revalidate=" + SWR_WINDOW);
-      await caches.default.put(edgeCacheRequest(key), new Response(res.body, { status: res.status, headers: h }));
+      // body를 clone해야 하므로 text로 소비 후 재생성
+      var body = await res.clone().text();
+      await caches.default.put(edgeCacheReq(key), new Response(body, { status: res.status, headers: h }));
     } catch(e) {}
   })());
 }
 __name(edgeSaveCache, "edgeSaveCache");
 
-// KV에 저장
+// ── KV 저장 (비동기 waitUntil) ────────────────────────────────
 function edgeSaveKV(env, key, html, headersObj, ctx) {
   if (!env.CP_KV) return;
+  // ETag 생성 (간단한 길이+타임스탬프 기반)
+  var etag = '"' + html.length.toString(16) + "-" + Date.now().toString(16) + '"';
   ctx.waitUntil(
     env.CP_KV.put(key, html, {
       expirationTtl: STALE_TTL,
-      metadata: { ts: Date.now(), h: headersObj }
+      metadata: { ts: Date.now(), h: headersObj, etag: etag }
     }).catch(() => {})
   );
 }
 __name(edgeSaveKV, "edgeSaveKV");
 
-// KV → Edge Cache 승격
+// ── KV → Edge Cache 승격 ──────────────────────────────────────
 function edgePromoteToCache(key, html, headersObj, ctx) {
   ctx.waitUntil((async () => {
     try {
@@ -9574,144 +9628,202 @@ function edgePromoteToCache(key, html, headersObj, ctx) {
       h.set("X-Cached-At", String(Math.floor(Date.now() / 1000)));
       h.set("Cache-Control", "public, max-age=" + CACHE_TTL + ", stale-while-revalidate=" + SWR_WINDOW);
       h.set("Content-Type", h.get("Content-Type") || "text/html; charset=utf-8");
-      await caches.default.put(edgeCacheRequest(key), new Response(html, { headers: h }));
+      await caches.default.put(edgeCacheReq(key), new Response(html, { headers: h }));
     } catch(e) {}
   })());
 }
 __name(edgePromoteToCache, "edgePromoteToCache");
 
-// SWR 백그라운드 재생성
+// ── SWR 백그라운드 재생성 ─────────────────────────────────────
 function edgeBgRevalidate(req, env, ctx, key) {
   ctx.waitUntil((async () => {
     try {
       var fresh = await route(req.clone(), env, ctx);
-      if (!fresh || fresh.status >= 500) return;
+      if (!fresh || fresh.status >= 400) return;
       var html = await fresh.clone().text();
-      var headersObj = {};
-      fresh.headers.forEach(function(v, k) { headersObj[k] = v; });
-      edgeSaveKV(env, key, html, headersObj, ctx);
-      edgePromoteToCache(key, html, headersObj, ctx);
+      var ho = {};
+      fresh.headers.forEach(function(v, k) { ho[k] = v; });
+      edgeSaveKV(env, key, html, ho, ctx);
+      edgePromoteToCache(key, html, ho, ctx);
     } catch(e) {}
   })());
 }
 __name(edgeBgRevalidate, "edgeBgRevalidate");
 
-// 설치 잠금 확인
+// ── 설치 잠금 확인 ────────────────────────────────────────────
 async function edgeIsLocked(env) {
-  try { return (await env.CP_KV.get("cp:installed_lock")) === "1"; }
-  catch(e) { return false; }
+  try {
+    return (await env.CP_KV.get("cp:installed_lock")) === "1";
+  } catch(e) { return false; }
 }
 __name(edgeIsLocked, "edgeIsLocked");
 
-// 설치 잠금 설정 (10년 만료)
+// ── 설치 잠금 설정 (10년 — 사실상 영구) ──────────────────────
 async function edgeSetLock(env) {
-  try { await env.CP_KV.put("cp:installed_lock", "1", { expirationTtl: 315360000 }); }
-  catch(e) {}
+  try {
+    await env.CP_KV.put("cp:installed_lock", "1", { expirationTtl: 315360000 });
+  } catch(e) {}
 }
 __name(edgeSetLock, "edgeSetLock");
 
-// 정밀 Purge API  POST /__edge/purge?type=all|post|path&path=/...
+// ── 정밀 Purge API ────────────────────────────────────────────
+// POST /__edge/purge?type=all|post|category|path&path=/...
+// Header: X-Purge-Key: <AUTH_KEY>
 async function edgeHandlePurge(req, env) {
+  // 인증
   var authKey = req.headers.get("X-Purge-Key") || "";
   try {
     var cfg = await env.CP_KV.get("cp:config", { type: "json" });
     if (!cfg || !cfg.AUTH_KEY || authKey !== cfg.AUTH_KEY)
       return new Response("Unauthorized", { status: 401 });
-  } catch(e) { return new Response("Unauthorized", { status: 401 }); }
+  } catch(e) {
+    return new Response("Unauthorized", { status: 401 });
+  }
 
   var url    = new URL(req.url);
   var type   = url.searchParams.get("type") || "path";
-  var target = url.searchParams.get("path") || "";
-  var purged = [];
+  var target = url.searchParams.get("path") || "/";
   var cache  = caches.default;
+  var purged = [];
 
   try {
     if (type === "all") {
-      var list = await env.CP_KV.list({ prefix: EDGE_VER + ":" });
-      for (var k of (list.keys || [])) {
-        await env.CP_KV.delete(k.name).catch(() => {});
-        await cache.delete(edgeCacheRequest(k.name)).catch(() => {});
-        purged.push(k.name);
-      }
-    } else {
-      var paths = type === "post"
-        ? [target, "/", "/feed", "/sitemap.xml", "/cp-sitemap.xml"]
-        : [target];
-      for (var p of paths) {
+      // 전체 KV 캐시 삭제 (페이지네이션 지원)
+      var cursor;
+      do {
+        var list = await env.CP_KV.list({ prefix: EDGE_VER + ":", cursor: cursor });
+        for (var k of (list.keys || [])) {
+          await env.CP_KV.delete(k.name).catch(() => {});
+          await cache.delete(edgeCacheReq(k.name)).catch(() => {});
+          purged.push(k.name);
+        }
+        cursor = list.list_complete ? null : list.cursor;
+      } while (cursor);
+
+    } else if (type === "post") {
+      // 포스트 관련 경로 + 공통 경로 모두 Purge
+      var postPaths = [
+        target,
+        "/",
+        "/feed",
+        "/sitemap.xml",
+        "/cp-sitemap.xml",
+        "/page/2",   // 페이지네이션도 무효화
+      ];
+      // 카테고리/태그 경로도 포함 (쿼리 기반이면 KV 키로 처리)
+      for (var p of postPaths) {
         var ck = EDGE_VER + ":" + p;
         await env.CP_KV.delete(ck).catch(() => {});
-        await cache.delete(edgeCacheRequest(ck)).catch(() => {});
+        await cache.delete(edgeCacheReq(ck)).catch(() => {});
         purged.push(p);
       }
+
+    } else if (type === "category") {
+      // 카테고리 아카이브 + 홈 + 피드 Purge
+      var catPaths = [target, "/", "/feed"];
+      for (var cp2 of catPaths) {
+        var ck2 = EDGE_VER + ":" + cp2;
+        await env.CP_KV.delete(ck2).catch(() => {});
+        await cache.delete(edgeCacheReq(ck2)).catch(() => {});
+        purged.push(cp2);
+      }
+
+    } else {
+      // 개별 경로 Purge
+      var ck3 = EDGE_VER + ":" + target;
+      await env.CP_KV.delete(ck3).catch(() => {});
+      await cache.delete(edgeCacheReq(ck3)).catch(() => {});
+      purged.push(target);
     }
   } catch(e) {}
 
-  return new Response(JSON.stringify({ ok: true, purged: purged }), {
+  return new Response(JSON.stringify({ ok: true, type: type, purged: purged, ts: Date.now() }), {
     headers: { "Content-Type": "application/json" }
   });
 }
 __name(edgeHandlePurge, "edgeHandlePurge");
 
-// Prewarm API  POST /__edge/prewarm
+// ── Prewarm API ───────────────────────────────────────────────
+// POST /__edge/prewarm
+// Header: X-Purge-Key: <AUTH_KEY>
 async function edgeHandlePrewarm(req, env, ctx) {
   var authKey = req.headers.get("X-Purge-Key") || "";
   try {
     var cfg = await env.CP_KV.get("cp:config", { type: "json" });
     if (!cfg || !cfg.AUTH_KEY || authKey !== cfg.AUTH_KEY)
       return new Response("Unauthorized", { status: 401 });
-  } catch(e) { return new Response("Unauthorized", { status: 401 }); }
+  } catch(e) {
+    return new Response("Unauthorized", { status: 401 });
+  }
 
-  var origin = new URL(req.url).origin;
-  var warmPaths = ["/", "/feed", "/sitemap.xml"];
+  var origin    = new URL(req.url).origin;
+  var warmed    = [];
+  var failed    = [];
 
   ctx.waitUntil((async () => {
-    for (var wp of warmPaths) {
+    for (var wp of PREWARM_PATHS) {
       try {
-        var r = await fetch(new Request(origin + wp, { headers: { "X-Prewarm": "1" } }));
+        var r = await fetch(new Request(origin + wp, {
+          headers: { "X-Prewarm": "1", "X-CF-Worker": "1" }
+        }));
         if (r.ok) {
           var html = await r.text();
-          var ho = {};
+          var ho   = {};
           r.headers.forEach(function(v, k) { ho[k] = v; });
           var wk = EDGE_VER + ":" + wp;
           if (env.CP_KV) {
-            await env.CP_KV.put(wk, html, { expirationTtl: STALE_TTL, metadata: { ts: Date.now(), h: ho } });
+            await env.CP_KV.put(wk, html, {
+              expirationTtl: STALE_TTL,
+              metadata: { ts: Date.now(), h: ho }
+            }).catch(() => {});
           }
           edgePromoteToCache(wk, html, ho, ctx);
+          warmed.push(wp);
+        } else {
+          failed.push(wp);
         }
-      } catch(e) {}
+      } catch(e) {
+        failed.push(wp);
+      }
     }
   })());
 
-  return new Response(JSON.stringify({ ok: true, warming: warmPaths }), {
+  return new Response(JSON.stringify({ ok: true, warming: PREWARM_PATHS, ts: Date.now() }), {
     headers: { "Content-Type": "application/json" }
   });
 }
 __name(edgeHandlePrewarm, "edgeHandlePrewarm");
 
-// 메인 엣지 fetch 핸들러
+// ── 메인 Edge Fetch 핸들러 ────────────────────────────────────
 async function edgeFetch(req, env, ctx) {
-  var url  = new URL(req.url);
-  var path = url.pathname;
+  var url    = new URL(req.url);
+  var path   = url.pathname;
   var method = req.method;
+  var colo   = (req.cf && req.cf.colo) || "UNK";
 
-  // 특수 엔드포인트
-  if (method === "POST" && path === "/__edge/purge")   return edgeHandlePurge(req, env);
-  if (method === "POST" && path === "/__edge/prewarm") return edgeHandlePrewarm(req, env, ctx);
+  // ── 특수 엔드포인트 ────────────────────────────────────────
+  if (method === "POST" && path === "/__edge/purge")
+    return edgeHandlePurge(req, env);
+  if (method === "POST" && path === "/__edge/prewarm")
+    return edgeHandlePrewarm(req, env, ctx);
   if (path === "/__edge/health") {
     return new Response(JSON.stringify({
-      ok: true, ver: EDGE_VER,
-      dc: (req.cf && req.cf.colo) || "unknown",
-      ts: Date.now()
+      ok:      true,
+      ver:     EDGE_VER,
+      colo:    colo,
+      country: (req.cf && req.cf.country) || null,
+      ts:      Date.now()
     }), { headers: { "Content-Type": "application/json" } });
   }
 
-  // 설치 경로 — 잠금 확인 (한 번 설치하면 재설치 불가)
+  // ── 설치 경로 — 한 번 설치 후 재설치 불가 (KV 잠금) ───────
   if (path === "/cp-admin/setup-config" || path === "/cp-admin/install") {
     if (await edgeIsLocked(env)) {
+      // 이미 설치됨 → 관리자 페이지로 리다이렉트
       return Response.redirect(url.origin + "/cp-admin", 302);
     }
     var installRes = await route(req, env, ctx);
-    // 설치 완료 확인 후 잠금
+    // 설치 완료되면 KV에 영구 잠금 기록
     ctx.waitUntil((async () => {
       try {
         var cfg = await env.CP_KV.get("cp:config", { type: "json" });
@@ -9721,86 +9833,139 @@ async function edgeFetch(req, env, ctx) {
     return installRes;
   }
 
-  // 캐시 불가 요청 → 바로 라우팅
-  if (!edgeIsCacheable(req, path)) return route(req, env, ctx);
+  // ── 캐시 불가 요청 → 직접 라우팅 (관리자, 로그인 등) ──────
+  if (!edgeIsCacheable(req, path)) {
+    var bypass = await route(req, env, ctx);
+    // 관리자 응답에도 보안 헤더 주입
+    var bh = new Headers(bypass.headers);
+    for (var sk in SECURITY_HEADERS) bh.set(sk, SECURITY_HEADERS[sk]);
+    return new Response(bypass.body, { status: bypass.status, headers: bh });
+  }
 
   var cacheKey = edgeKvKey(url);
 
-  // ═══ [1] Edge Cache HIT ══════════════════════════════════════
+  // ══════════════════════════════════════════════════════════
+  // [1] Edge Cache API HIT — L1 캐시 (1~5ms)
+  // ══════════════════════════════════════════════════════════
   var ec = await edgeFromCache(cacheKey);
-  if (ec && !ec.stale) return edgeTagResponse(ec.res, "EDGE-HIT");
-
-  // ═══ [2] KV HIT ══════════════════════════════════════════════
-  var kv = await edgeFromKV(env, cacheKey);
-  if (kv && !kv.expired) {
-    edgePromoteToCache(cacheKey, kv.html, kv.headers, ctx);
-    if (kv.stale) edgeBgRevalidate(req, env, ctx, cacheKey);  // SWR
-    var kvHeaders = new Headers(kv.headers);
-    kvHeaders.set("Content-Type", kvHeaders.get("Content-Type") || "text/html; charset=utf-8");
-    kvHeaders.set("Cache-Control", "public, max-age=" + KV_TTL + ", stale-while-revalidate=" + SWR_WINDOW);
-    return edgeTagResponse(new Response(kv.html, { headers: kvHeaders }), kv.stale ? "KV-STALE" : "KV-HIT");
+  if (ec && !ec.stale) {
+    var r304 = edgeMaybe304(req, ec.res);
+    if (r304) return r304;
+    return edgeTagResponse(ec.res, "EDGE-HIT", { colo: colo });
   }
 
-  // ═══ [3] MISS → Edge SSR ═════════════════════════════════════
-  var fresh = null;
-  try { fresh = await route(req, env, ctx); } catch(e) { fresh = null; }
+  // ══════════════════════════════════════════════════════════
+  // [2] KV Cache HIT — L2 캐시 (5~20ms)
+  // ══════════════════════════════════════════════════════════
+  var kv = await edgeFromKV(env, cacheKey);
+  if (kv && !kv.expired) {
+    // KV → Edge Cache 승격 (다음 요청은 L1에서 HIT)
+    edgePromoteToCache(cacheKey, kv.html, kv.headers, ctx);
+    // Stale이면 SWR 백그라운드 갱신
+    if (kv.stale) edgeBgRevalidate(req, env, ctx, cacheKey);
 
-  // ═══ [4] Failover — SSR 실패 시 stale 반환 ══════════════════
+    var kvH = new Headers(kv.headers);
+    kvH.set("Content-Type", kvH.get("Content-Type") || "text/html; charset=utf-8");
+    kvH.set("Cache-Control", "public, max-age=" + KV_TTL + ", stale-while-revalidate=" + SWR_WINDOW);
+    if (kv.etag) kvH.set("ETag", kv.etag);
+
+    var kvRes = new Response(kv.html, { headers: kvH });
+    var r304kv = edgeMaybe304(req, kvRes);
+    if (r304kv) return r304kv;
+    return edgeTagResponse(kvRes, kv.stale ? "KV-STALE" : "KV-HIT", { colo: colo });
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // [3] MISS → Edge SSR → KV + Edge Cache 저장
+  // ══════════════════════════════════════════════════════════
+  var fresh = null;
+  try {
+    fresh = await route(req, env, ctx);
+  } catch(e) {
+    fresh = null;
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // [4] Failover — SSR 실패 시 Stale 응답 (절대 다운 없음)
+  // ══════════════════════════════════════════════════════════
   if (!fresh || fresh.status >= 500) {
+    // KV Stale 응답
     if (kv) {
-      var staleHeaders = new Headers(kv.headers);
-      return edgeTagResponse(new Response(kv.html, { headers: staleHeaders }), "STALE-FAILOVER");
+      var staleH = new Headers(kv.headers);
+      staleH.set("Warning", "110 - \"Response is Stale\"");
+      return edgeTagResponse(new Response(kv.html, { headers: staleH }), "STALE-FAILOVER", { colo: colo });
     }
-    if (ec && ec.res) return edgeTagResponse(ec.res, "EDGE-STALE-FAILOVER");
+    // Edge Cache Stale 응답
+    if (ec && ec.res) {
+      return edgeTagResponse(ec.res, "EDGE-STALE-FAILOVER", { colo: colo });
+    }
+    // 최후 수단 503
     return new Response(
-      "<!doctype html><html><head><title>503</title></head><body><h1>Service Temporarily Unavailable</h1><p>Please retry in a moment.</p></body></html>",
+      "<!doctype html><html lang='ko'><head><meta charset='utf-8'><title>503 Service Unavailable</title>" +
+      "<style>body{font-family:sans-serif;text-align:center;padding:60px;background:#f8f8f8}" +
+      "h1{color:#c00}p{color:#555}</style></head>" +
+      "<body><h1>503</h1><p>일시적으로 서비스를 이용할 수 없습니다. 잠시 후 다시 시도해주세요.</p></body></html>",
       { status: 503, headers: { "Content-Type": "text/html; charset=utf-8", "Retry-After": "10" } }
     );
   }
 
-  // 2xx → KV + Edge Cache 저장
+  // ── 2xx → KV + Edge Cache 저장 ────────────────────────────
   if (fresh.status < 300) {
     var freshHtml = await fresh.clone().text();
     var freshHeaders = {};
     fresh.headers.forEach(function(v, k) { freshHeaders[k] = v; });
     edgeSaveKV(env, cacheKey, freshHtml, freshHeaders, ctx);
-    var freshWithCC = new Response(fresh.body, {
+    var freshCC = new Response(freshHtml, {
       status: fresh.status,
       headers: Object.assign({}, freshHeaders, {
         "Cache-Control": "public, max-age=" + KV_TTL + ", stale-while-revalidate=" + SWR_WINDOW
       })
     });
-    edgeSaveCache(cacheKey, freshWithCC.clone(), ctx);
-    return edgeTagResponse(freshWithCC, "MISS");
+    edgeSaveCache(cacheKey, freshCC.clone(), ctx);
+    return edgeTagResponse(freshCC, "MISS", { colo: colo });
   }
 
-  return edgeTagResponse(fresh, "BYPASS");
+  // 3xx 등 — 캐시 없이 그대로 반환
+  return edgeTagResponse(fresh, "BYPASS", { colo: colo });
 }
 __name(edgeFetch, "edgeFetch");
 
-// Cron (scheduled) — KV 만료 정리 + 기존 cron
+// ── Cron Handler — KV 만료 정리 + 기존 cron 작업 ─────────────
 async function edgeScheduled(event, env, ctx) {
   ctx.waitUntil((async () => {
+    // 1. 만료된 KV 캐시 항목 정리
     try {
       if (env.CP_KV) {
-        var list = await env.CP_KV.list({ prefix: EDGE_VER + ":" });
+        var cursor;
         var now = Date.now();
-        for (var k of (list.keys || [])) {
-          var age = (now - ((k.metadata && k.metadata.ts) || 0)) / 1000;
-          if (age > STALE_TTL) await env.CP_KV.delete(k.name).catch(() => {});
-        }
+        do {
+          var list = await env.CP_KV.list({ prefix: EDGE_VER + ":", cursor: cursor });
+          for (var k of (list.keys || [])) {
+            var ts  = (k.metadata && k.metadata.ts) || 0;
+            var age = (now - ts) / 1000;
+            if (age > STALE_TTL) {
+              await env.CP_KV.delete(k.name).catch(() => {});
+            }
+          }
+          cursor = list.list_complete ? null : list.cursor;
+        } while (cursor);
       }
     } catch(e) {}
-    try { await handleCronRequest(new Request("https://internal/cp-cron"), env, ctx); } catch(e) {}
+
+    // 2. 기존 CMS cron 작업 실행
+    try {
+      await handleCronRequest(new Request("https://internal/cp-cron"), env, ctx);
+    } catch(e) {}
   })());
 }
 __name(edgeScheduled, "edgeScheduled");
 
 // =============================================================
-// Worker 진입점 (ESM export default)
+// Worker 진입점 — ES Modules 형식 (export default 필수)
+// wrangler.toml 에 [build] command="" 없어야 ESM으로 인식됨
 // =============================================================
 var worker_default = {
-  fetch: edgeFetch,
+  fetch:     edgeFetch,
   scheduled: edgeScheduled
 };
 export default worker_default;
