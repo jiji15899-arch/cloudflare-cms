@@ -1,4 +1,4 @@
-# CloudPress CMS — Cloudflare Workers 배포 설정 v5.0
+# CloudPress CMS — Cloudflare Workers 배포 설정 v5.1
 # Originless Edge CMS: Edge Cache + KV 이중 캐시 + SWR/ISR + Prewarm + Purge + Failover
 #
 # ── 최초 배포 순서 ─────────────────────────────────────────────────
@@ -8,48 +8,44 @@
 #  4. 시크릿:     npx wrangler secret put CP_AUTH_KEY
 #  5. 배포:       npx wrangler deploy
 #  6. 설치:       https://<worker>.workers.dev/cp-admin/setup-config
-#  7. (선택) Prewarm: curl -X POST https://<site>/__edge/prewarm \
-#                       -H "X-Purge-Key: <AUTH_KEY>"
+#     (재배포 시 설치 화면 없음 — KV 잠금으로 /cp-admin 리다이렉트)
 #
-# ── 재배포 시 ────────────────────────────────────────────────────
-#  - 설치 화면은 다시 뜨지 않음 (KV cp:installed_lock 으로 영구 잠금)
-#  - 캐시 무효화: POST /__edge/purge?type=all  -H "X-Purge-Key: <key>"
+# ── 캐시 관리 ────────────────────────────────────────────────────
+#  전체 Purge:  POST /__edge/purge?type=all   -H "X-Purge-Key: <AUTH_KEY>"
+#  포스트 Purge: POST /__edge/purge?type=post&path=/2024/01/slug
+#  Prewarm:     POST /__edge/prewarm          -H "X-Purge-Key: <AUTH_KEY>"
+#  상태 확인:   GET  /__edge/health
 # ─────────────────────────────────────────────────────────────────
 
 name               = "cloudflare-cms"
 main               = "worker.js"
 compatibility_date = "2024-09-23"
 
-# ── D1 Database (쓰기 전용 — 읽기는 KV 캐시) ─────────────────────
+# ── D1 Database ───────────────────────────────────────────────────
 [[d1_databases]]
 binding       = "CP_DB"
 database_name = "cloudpress-db"
 database_id   = "YOUR_D1_DATABASE_ID_HERE"
 
-# ── KV Namespace (이중 캐시 레이어 + 설치 잠금) ───────────────────
+# ── KV Namespace ─────────────────────────────────────────────────
 [[kv_namespaces]]
 binding = "CP_KV"
 id      = "YOUR_KV_NAMESPACE_ID_HERE"
 
-# ── 환경 변수 ────────────────────────────────────────────────────
+# ── 환경 변수 ─────────────────────────────────────────────────────
 [vars]
 CP_SITE_NAME    = "My CloudPress Site"
 CP_SITE_TAGLINE = "Just another CloudPress site"
 
-# ── Smart Placement: 요청 발원지 PoP에서 실행 ─────────────────────
+# ── Smart Placement: 요청 발원지에 가장 가까운 PoP에서 실행 ──────
 [placement]
 mode = "smart"
 
-# ── Cron: 만료 캐시 정리 + 기존 cron ────────────────────────────
+# ── Cron: 만료 KV 캐시 정리 (5분마다) ───────────────────────────
 [triggers]
 crons = ["*/5 * * * *"]
 
-# ── HTTP Cache 헤더 규칙 (Cloudflare Cache Rules 보완) ─────────────
-# 프론트엔드 정적 자산 장기 캐시
-[[rules]]
-type = "ESModule"
-
-# ── Production 환경 ──────────────────────────────────────────────
+# ── Production ───────────────────────────────────────────────────
 [env.production]
 name = "cloudflare-cms-production"
 
