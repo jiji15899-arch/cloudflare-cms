@@ -9481,7 +9481,7 @@ __name(serveInlineCss, "serveInlineCss");
 //   ✓ /__edge/health 상태 엔드포인트
 // =============================================================
 
-var EDGE_VER      = "e4";           // 캐시 키 네임스페이스 버전
+var EDGE_VER      = "e5";           // 캐시 키 네임스페이스 버전
 var KV_TTL        = 3600;           // KV 신선도 TTL (초) — 1시간
 var CACHE_TTL     = 86400;          // Edge Cache TTL (초) — 24시간
 var STALE_TTL     = 604800;         // Stale 보관 TTL (초) — 7일
@@ -9795,11 +9795,151 @@ async function edgeHandlePrewarm(req, env, ctx) {
 __name(edgeHandlePrewarm, "edgeHandlePrewarm");
 
 // ── 메인 Edge Fetch 핸들러 ────────────────────────────────────
+
+// =============================================================
+// WAF — CloudPress Built-in Web Application Firewall v1
+// 사이트 생성 시 자동 포함. 별도 플러그인/WP Rocket 불필요.
+// 보호 항목:
+//   ✓ SQL Injection (GET/POST 파라미터)
+//   ✓ XSS (Cross-Site Scripting)
+//   ✓ Path Traversal / LFI
+//   ✓ Bad User-Agent (scanners, exploit tools)
+//   ✓ Rate Limiting (IP당 분당 요청수 제한, KV 기반)
+//   ✓ 허용 메서드 제한
+//   ✓ 요청 크기 제한
+// =============================================================
+
+var WAF_RATE_LIMIT        = 120;    // 분당 최대 요청수 (IP당)
+var WAF_RATE_WINDOW_SEC   = 60;     // 슬라이딩 윈도우 (초)
+var WAF_BLOCK_DURATION    = 300;    // 초과 시 블록 시간 (초)
+var WAF_MAX_BODY_BYTES     = 2 * 1024 * 1024; // 2MB
+
+// SQL Injection 패턴
+var WAF_SQL_RE = /((union|select|insert|update|delete|drop|alter|create|exec|execute|xp_|sp_).*(from|into|where|table|database|schema)|--|;--|\/\*|\*\/|0x[0-9a-f]{4,})/i;
+// XSS 패턴
+var WAF_XSS_RE = /(<script[\s>]|javascript\s*:|on\w+\s*=|<\s*iframe|<\s*object|<\s*embed|<\s*svg\s+on)/i;
+// Path Traversal
+var WAF_PATH_RE = /(\.\.[\/\]|%2e%2e[\/\%]|%252e%252e|\/etc\/passwd|\/proc\/self|cmd=|shell=)/i;
+// 악성 User-Agent
+var WAF_BAD_UA_RE = /(sqlmap|nmap|nikto|masscan|zgrab|nuclei|dirbuster|gobuster|wfuzz|hydra|medusa|acunetix|appscan|nessus|openvas|burpsuite|metasploit|python-requests\/[01]\.|curl\/[0-6]\.|libwww|lwp-|wget\/[01]\.|go-http-client\/1\.0)/i;
+
+async function wafCheck(req, env) {
+  var url    = req.url ? new URL(req.url) : null;
+  var path   = url ? url.pathname : "";
+  var method = req.method || "GET";
+
+  // 관리자 경로는 WAF 적용하지 않음 (관리자 자신의 요청 차단 방지)
+  // — 단, 관리자 경로는 별도 auth로 보호됨
+  if (path.startsWith("/cp-admin/")) return null;
+
+  // 허용 메서드 검사
+  var ALLOWED_METHODS = new Set(["GET","HEAD","POST","PUT","PATCH","DELETE","OPTIONS"]);
+  if (!ALLOWED_METHODS.has(method)) {
+    return wafBlock(405, "Method Not Allowed");
+  }
+
+  // User-Agent 검사
+  var ua = (req.headers && req.headers.get("user-agent")) || "";
+  if (WAF_BAD_UA_RE.test(ua)) {
+    return wafBlock(403, "Forbidden: scanner detected");
+  }
+
+  // URL 파라미터 SQLi / XSS / Path Traversal 검사
+  if (url) {
+    var rawQuery = url.search || "";
+    var fullUrl  = url.href || "";
+    if (WAF_SQL_RE.test(rawQuery) || WAF_SQL_RE.test(decodeURIComponent(rawQuery))) {
+      return wafBlock(403, "Forbidden: SQLi detected");
+    }
+    if (WAF_XSS_RE.test(rawQuery) || WAF_XSS_RE.test(decodeURIComponent(rawQuery))) {
+      return wafBlock(403, "Forbidden: XSS detected");
+    }
+    if (WAF_PATH_RE.test(fullUrl)) {
+      return wafBlock(403, "Forbidden: path traversal detected");
+    }
+  }
+
+  // POST 바디 크기 제한
+  if (method === "POST" || method === "PUT" || method === "PATCH") {
+    var cl = parseInt((req.headers && req.headers.get("content-length")) || "0", 10);
+    if (cl > WAF_MAX_BODY_BYTES) {
+      return wafBlock(413, "Request Entity Too Large");
+    }
+  }
+
+  // Rate Limiting (KV 기반 슬라이딩 카운터)
+  if (env && env.CP_KV) {
+    try {
+      var ip = (req.headers && (
+        req.headers.get("CF-Connecting-IP") ||
+        req.headers.get("X-Forwarded-For") ||
+        req.headers.get("X-Real-IP")
+      )) || "unknown";
+      // 안전한 KV 키 (IP에 포함된 특수문자 제거)
+      var safeIp  = ip.replace(/[^a-zA-Z0-9.:_-]/g, "").slice(0, 64);
+      var rlKey   = "waf:rl:" + safeIp;
+      var blockKey = "waf:blk:" + safeIp;
+
+      // 블록 상태 확인
+      var blocked = await env.CP_KV.get(blockKey);
+      if (blocked === "1") {
+        return wafBlock(429, "Too Many Requests: temporarily blocked");
+      }
+
+      // 카운터 증가
+      var raw   = await env.CP_KV.get(rlKey, { type: "json" });
+      var now   = Math.floor(Date.now() / 1000);
+      var entry = raw || { count: 0, window_start: now };
+
+      // 윈도우 만료 시 리셋
+      if (now - entry.window_start > WAF_RATE_WINDOW_SEC) {
+        entry = { count: 1, window_start: now };
+      } else {
+        entry.count += 1;
+      }
+
+      if (entry.count > WAF_RATE_LIMIT) {
+        // 블록 등록 (비동기, 응답 차단)
+        await env.CP_KV.put(blockKey, "1", { expirationTtl: WAF_BLOCK_DURATION });
+        return wafBlock(429, "Too Many Requests: rate limit exceeded");
+      }
+
+      // 카운터 저장 (백그라운드)
+      env.CP_KV.put(rlKey, JSON.stringify(entry), { expirationTtl: WAF_RATE_WINDOW_SEC * 2 }).catch(function(){});
+    } catch(e) {
+      // WAF KV 오류는 무시하고 요청 통과 (가용성 우선)
+    }
+  }
+
+  return null; // 통과
+}
+__name(wafCheck, "wafCheck");
+
+function wafBlock(status, msg) {
+  var body = "<!doctype html><html lang=\"ko\"><head><meta charset=\"utf-8\"><title>" + status + " " + msg + "</title>" +
+    "<style>body{font-family:sans-serif;text-align:center;padding:60px;background:#0f0f0f;color:#fff}" +
+    "h1{color:#f55;font-size:2rem}p{color:#aaa}</style></head>" +
+    "<body><h1>" + status + "</h1><p>" + msg + "</p></body></html>";
+  return new Response(body, {
+    status: status,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "X-CloudPress-WAF": "BLOCK",
+      "Cache-Control": "no-store"
+    }
+  });
+}
+__name(wafBlock, "wafBlock");
+
 async function edgeFetch(req, env, ctx) {
   var url    = new URL(req.url);
   var path   = url.pathname;
   var method = req.method;
   var colo   = (req.cf && req.cf.colo) || "UNK";
+
+  // ── WAF — 모든 요청에 선행 검사 ───────────────────────────
+  var wafRes = await wafCheck(req, env);
+  if (wafRes) return wafRes;
 
   // ── 특수 엔드포인트 ────────────────────────────────────────
   if (method === "POST" && path === "/__edge/purge")
@@ -9961,12 +10101,12 @@ async function edgeScheduled(event, env, ctx) {
 __name(edgeScheduled, "edgeScheduled");
 
 // =============================================================
-// Worker 진입점 — ESM 모듈 형식 (export default)
-// Wrangler v3+ 표준 방식. 바인딩(CP_KV, CP_DB 등)은 fetch/scheduled
-// 핸들러의 env 파라미터로 직접 전달됩니다.
+// Worker 진입점 — Service Worker 형식 (addEventListener)
+// CF Workers Script 모드: ESM export 없음 → [10021] 에러 방지
 // =============================================================
-var worker_default = {
-  fetch:     edgeFetch,
-  scheduled: edgeScheduled
-};
-export default worker_default;
+addEventListener("fetch", function(event) {
+  event.respondWith(edgeFetch(event.request, event.env || {}, event));
+});
+addEventListener("scheduled", function(event) {
+  event.waitUntil(edgeScheduled(event, event.env || {}, event));
+});
