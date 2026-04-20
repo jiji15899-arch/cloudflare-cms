@@ -21,7 +21,7 @@
 name               = "cloudflare-cms"
 main               = "worker.js"
 compatibility_date = "2024-09-23"
-workers_dev        = true
+node_compat = false
 # ══════════════════════════════════════════════════════════════════
 # ★ [10021] Unexpected token 'export' 에러 수정 설명 (v5.3)
 #
@@ -70,5 +70,12 @@ name = "cloudflare-cms-production"
 [env.production.vars]
 CP_SITE_NAME = "My CloudPress Site"
 
+# ESM 모듈 포맷 명시 — 이 줄이 없으면 [10021] 에러 발생
+[build]
+command = ""
+
+[[rules]]
+type = "ESModule"
+globs = ["**/*.js"]
 [env.staging]
 name = "cloudflare-cms-staging"
