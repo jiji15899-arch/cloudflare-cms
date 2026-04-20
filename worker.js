@@ -9803,4 +9803,4 @@ var worker_default = {
   fetch: edgeFetch,
   scheduled: edgeScheduled
 };
-export { worker_default as default };
+export default worker_default;
