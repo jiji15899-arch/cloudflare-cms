@@ -10101,12 +10101,13 @@ async function edgeScheduled(event, env, ctx) {
 __name(edgeScheduled, "edgeScheduled");
 
 // =============================================================
-// Worker 진입점 — Service Worker 형식 (addEventListener)
-// CF Workers Script 모드: ESM export 없음 → [10021] 에러 방지
+// Worker 진입점 — ESM 모듈 형식 (export default)
+// main_module 지정 필수: CF Workers Upload API [10021] 대응
+// var 기반 번들 + export default 혼용 → SyntaxError 방지를 위해
+// 파일 최하단에만 export 구문을 배치하고 나머지는 var/function 유지
 // =============================================================
-addEventListener("fetch", function(event) {
-  event.respondWith(edgeFetch(event.request, event.env || {}, event));
-});
-addEventListener("scheduled", function(event) {
-  event.waitUntil(edgeScheduled(event, event.env || {}, event));
-});
+var _edgeWorker = {
+  fetch:     edgeFetch,
+  scheduled: edgeScheduled
+};
+export default _edgeWorker;
