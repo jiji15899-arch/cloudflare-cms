@@ -21,7 +21,7 @@
 name               = "cloudflare-cms"
 main               = "worker.js"
 compatibility_date = "2024-09-23"
-
+workers_dev        = true
 # ══════════════════════════════════════════════════════════════════
 # ★ [10021] Unexpected token 'export' 에러 수정 설명 (v5.3)
 #
