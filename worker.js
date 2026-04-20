@@ -9435,31 +9435,372 @@ function cssResp(css) {
   return new Response(css, { headers: { "Content-Type": "text/css; charset=utf-8", "Cache-Control": "public, max-age=3600" } });
 }
 __name(cssResp, "cssResp");
+
 function serveInlineCss(path) {
-// ── CSS constants (split to avoid long-line parser issues) ──────────────────
-var ADMIN_CSS =
-  ":root{--cp-sidebar-w:240px;--cp-topbar-h:48px;--cp-bg:#f0f0f1;--cp-sidebar-bg:#1d2327;--cp-sidebar-text:#a7aaad;--cp-sidebar-hover:#2c3338;--cp-sidebar-active:#2271b1;--cp-topbar-bg:#1d2327;--cp-topba" +
-  "r-text:#a7aaad;--cp-accent:#2271b1;--cp-accent-hover:#135e96;--cp-white:#fff;--cp-border:#dcdcde;--cp-text:#1d2327;--cp-muted:#646970;--cp-radius:4px;--cp-shadow:0 1px 3px rgba(0,0,0,.12)} " +
-  "*,*::before,*::after{box-sizing:border-box} html,body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe " +
-  "UI',Roboto,sans-serif;font-size:14px;background:var(--cp-bg);color:var(--cp-text)} #cp-topbar{position:fixed;top:0;left:0;right:0;height:var(--cp-topbar-h);background:var(--cp-topbar-bg);display:flex;" +
-  "align-items:center;justify-content:space-between;padding:0 16px;z-index:1000;color:var(--cp-topbar-text)} .cp-topbar-left,.cp-topbar-right{display:flex;align-items:center;gap:12px} " +
-  "#cp-menu-toggle{background:none;border:none;cursor:pointer;padding:6px;color:var(--cp-topbar-text);display:none;flex-direction:column;gap:4px} #cp-menu-toggle " +
-  "span{display:block;width:20px;height:2px;background:currentColor;transition:.2s} .cp-site-link{color:var(--cp-topbar-text);text-decoration:none;font-size:13px;opacity:.8;transition:.15s} " +
-  ".cp-site-link:hover{opacity:1;color:var(--cp-white)} .cp-version{font-size:11px;opacity:.5} .cp-user-menu{position:relative} " +
-  ".cp-user-btn{background:none;border:none;color:var(--cp-topbar-text);cursor:pointer;font-size:13px;padding:6px 10px;border-radius:var(--cp-radius);transition:.15s} " +
-  ".cp-user-btn:hover{background:var(--cp-sidebar-hover);color:var(--cp-white)} .cp-user-dropdown{display:none;position:absolute;right:0;top:calc(100% + 4px);background:var(--cp-white);border:1px solid " +
-  "var(--cp-border);border-radius:var(--cp-radius);min-width:150px;box-shadow:var(--cp-shadow);z-index:100} .cp-user-menu.open .cp-user-dropdown{display:block} .cp-user-dropdown " +
-  "a{display:block;padding:8px 14px;color:var(--cp-text);text-decoration:none;font-size:13px;transition:.1s} .cp-user-dropdown a:hover{background:var(--cp-bg)} .cp-user-dropdown " +
-  "hr{border:none;border-top:1px solid var(--cp-border);margin:4px 0} .cp-logout{color:#d63638!important} #cp-layout{display:flex;min-height:100vh;padding-top:var(--cp-topbar-h)} " +
-  "#cp-sidebar{width:var(--cp-sidebar-w);background:var(--cp-sidebar-bg);flex-shrink:0;overflow-y:auto;position:fixed;top:var(--cp-topbar-h);left:0;bottom:0;z-index:500;transition:transform .2s} " +
-  ".cp-sidebar-header{padding:16px 14px 8px;border-bottom:1px solid rgba(255,255,255,.07)} .cp-logo{display:flex;align-items:center;gap:8px;color:var(--cp-white);text-decoration:none;font-weight:700;font" +
-  "-size:16px} .cp-logo span{letter-spacing:-.3px} .cp-nav-list{list-style:none;margin:8px 0;padding:0} .cp-nav-item{margin:1px 0} .cp-nav-link{display:flex;align-items:center;gap:10px;padding:9px " +
-  "14px;color:var(--cp-sidebar-text);text-decoration:none;border-radius:var(--cp-radius);margin:0 6px;transition:.15s;font-size:13px} " +
-  ".cp-nav-link:hover,.cp-nav-item.active>.cp-nav-link{color:var(--cp-white);background:var(--cp-sidebar-hover)} .cp-nav-item.active>.cp-nav-link{background:var(--cp-sidebar-active)} " +
-  ".cp-nav-icon{font-size:16px;flex-shrink:0;width:20px;text-align:center} .cp-nav-label{flex:1} .cp-nav-arrow{font-size:9px;opacity:.5;transition:transform .2s} .cp-nav-item.has-children.active " +
-  ".cp-nav-arrow,.cp-nav-item.has-children:hover .cp-nav-arrow{transform:rotate(180deg)} .cp-subnav{list-style:none;margin:0;padding:0 0 4px 44px;display:none} .cp-nav-item.has-children.active " +
-  ".cp-subnav,.cp-nav-item.has-children:hover .cp-subnav{display:block} .cp-subnav li a{display:block;padding:6px " +
-  "10px;color:var(--cp-sidebar-text);text-decoration:none;font-size:12.5px;border-radius:var(--cp-radius);transition:.1s} .cp-subnav li a:hover,.cp-subnav li.active " +
-  "a{color:var(--cp-white);background:rgba(255,255,255,.07)} #cp-main{flex:1;margin-left:var(--cp-sidebar-w);padding:24px;min-height:calc(100vh - var(--cp-topbar-h))} " +
-  ".cp-page-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px} .cp-page-title{font-size:23px;font-weight:400;margin:0;color:var(--cp-text)} " +
-  ".cp-notice{borde
+  switch(path) {
+    case "/cp-admin/css/admin.css": return cssResp(":root{--cp-sidebar-w:240px;--cp-topbar-h:48px;--cp-bg:#f0f0f1;--cp-sidebar-bg:#1d2327;--cp-sidebar-text:#a7aaad;--cp-sidebar-hover:#2c3338;--cp-sidebar-active:#2271b1;--cp-topbar-bg:#1d2327;--cp-topbar-text:#a7aaad;--cp-accent:#2271b1;--cp-accent-hover:#135e96;--cp-white:#fff;--cp-border:#dcdcde;--cp-text:#1d2327;--cp-muted:#646970;--cp-radius:4px;--cp-shadow:0 1px 3px rgba(0,0,0,.12);}*,*::before,*::after{box-sizing:border-box}html,body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;background:var(--cp-bg);color:var(--cp-text)}#cp-topbar{position:fixed;top:0;left:0;right:0;height:var(--cp-topbar-h);background:var(--cp-topbar-bg);display:flex;align-items:center;justify-content:space-between;padding:0 16px;z-index:1000;color:var(--cp-topbar-text)}.cp-topbar-left,.cp-topbar-right{display:flex;align-items:center;gap:12px}#cp-menu-toggle{background:none;border:none;cursor:pointer;padding:6px;color:var(--cp-topbar-text);display:none;flex-direction:column;gap:4px}#cp-menu-toggle span{display:block;width:20px;height:2px;background:currentColor;transition:.2s}.cp-site-link{color:var(--cp-topbar-text);text-decoration:none;font-size:13px;opacity:.8;transition:.15s}.cp-site-link:hover{opacity:1;color:var(--cp-white)}.cp-version{font-size:11px;opacity:.5}.cp-user-menu{position:relative}.cp-user-btn{background:none;border:none;color:var(--cp-topbar-text);cursor:pointer;font-size:13px;padding:6px 10px;border-radius:var(--cp-radius);transition:.15s}.cp-user-btn:hover{background:var(--cp-sidebar-hover);color:var(--cp-white)}.cp-user-dropdown{display:none;position:absolute;right:0;top:calc(100%+4px);background:var(--cp-white);border:1px solid var(--cp-border);border-radius:var(--cp-radius);min-width:150px;box-shadow:var(--cp-shadow);z-index:100}.cp-user-menu.open .cp-user-dropdown{display:block}.cp-user-dropdown a{display:block;padding:8px 14px;color:var(--cp-text);text-decoration:none;font-size:13px;transition:.1s}.cp-user-dropdown a:hover{background:var(--cp-bg)}.cp-user-dropdown hr{border:none;border-top:1px solid var(--cp-border);margin:4px 0}.cp-logout{color:#d63638 !important}#cp-layout{display:flex;min-height:100vh;padding-top:var(--cp-topbar-h)}#cp-sidebar{width:var(--cp-sidebar-w);background:var(--cp-sidebar-bg);flex-shrink:0;overflow-y:auto;position:fixed;top:var(--cp-topbar-h);left:0;bottom:0;z-index:500;transition:transform .2s}.cp-sidebar-header{padding:16px 14px 8px;border-bottom:1px solid rgba(255,255,255,.07)}.cp-logo{display:flex;align-items:center;gap:8px;color:var(--cp-white);text-decoration:none;font-weight:700;font-size:16px}.cp-logo span{letter-spacing:-.3px}.cp-nav-list{list-style:none;margin:8px 0;padding:0}.cp-nav-item{margin:1px 0}.cp-nav-link{display:flex;align-items:center;gap:10px;padding:9px 14px;color:var(--cp-sidebar-text);text-decoration:none;border-radius:var(--cp-radius);margin:0 6px;transition:.15s;font-size:13px}.cp-nav-link:hover,.cp-nav-item.active>.cp-nav-link{color:var(--cp-white);background:var(--cp-sidebar-hover)}.cp-nav-item.active>.cp-nav-link{background:var(--cp-sidebar-active)}.cp-nav-icon{font-size:16px;flex-shrink:0;width:20px;text-align:center}.cp-nav-label{flex:1}.cp-nav-arrow{font-size:9px;opacity:.5;transition:transform .2s}.cp-nav-item.has-children.active .cp-nav-arrow,.cp-nav-item.has-children:hover .cp-nav-arrow{transform:rotate(180deg)}.cp-subnav{list-style:none;margin:0;padding:0 0 4px 44px;display:none}.cp-nav-item.has-children.active .cp-subnav,.cp-nav-item.has-children:hover .cp-subnav{display:block}.cp-subnav li a{display:block;padding:6px 10px;color:var(--cp-sidebar-text);text-decoration:none;font-size:12.5px;border-radius:var(--cp-radius);transition:.1s}.cp-subnav li a:hover,.cp-subnav li.active a{color:var(--cp-white);background:rgba(255,255,255,.07)}#cp-main{flex:1;margin-left:var(--cp-sidebar-w);padding:24px;min-height:calc(100vh - var(--cp-topbar-h))}.cp-page-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}.cp-page-title{font-size:23px;font-weight:400;margin:0;color:var(--cp-text)}.cp-notice{border-left:4px solid var(--cp-accent);background:var(--cp-white);padding:10px 14px;border-radius:0 var(--cp-radius) var(--cp-radius) 0;margin-bottom:16px;box-shadow:var(--cp-shadow)}.cp-notice-success{border-color:#00a32a}.cp-notice-error{border-color:#d63638}.cp-notice-warning{border-color:#dba617}.cp-notice p{margin:0;font-size:13.5px}.cp-card{background:var(--cp-white);border:1px solid var(--cp-border);border-radius:var(--cp-radius);padding:20px;margin-bottom:20px;box-shadow:var(--cp-shadow)}.cp-card h2,.cp-card h3{margin:0 0 14px;font-size:15px;color:var(--cp-text)}.cp-table-wrap{background:var(--cp-white);border:1px solid var(--cp-border);border-radius:var(--cp-radius);overflow:hidden;margin-bottom:20px;box-shadow:var(--cp-shadow)}.cp-table{width:100%;border-collapse:collapse;font-size:13px}.cp-table th{background:var(--cp-bg);padding:10px 14px;text-align:left;font-weight:600;border-bottom:1px solid var(--cp-border);color:var(--cp-muted);font-size:12px;text-transform:uppercase;letter-spacing:.4px}.cp-table td{padding:10px 14px;border-bottom:1px solid var(--cp-border);vertical-align:middle}.cp-table tr:last-child td{border-bottom:none}.cp-table tr:hover td{background:#f9f9f9}.cp-table a{color:var(--cp-accent);text-decoration:none}.cp-table a:hover{text-decoration:underline}.cp-btn,.cp-btn-secondary{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:var(--cp-radius);font-size:13px;font-weight:500;cursor:pointer;text-decoration:none;border:1px solid transparent;transition:.15s;line-height:1.4}.cp-btn{background:var(--cp-accent);color:var(--cp-white);border-color:var(--cp-accent)}.cp-btn:hover{background:var(--cp-accent-hover);border-color:var(--cp-accent-hover)}.cp-btn-secondary{background:var(--cp-white);color:var(--cp-text);border-color:var(--cp-border)}.cp-btn-secondary:hover{background:var(--cp-bg);border-color:#8c8f94}.cp-btn-danger{background:#d63638;color:var(--cp-white);border-color:#d63638}.cp-btn-danger:hover{background:#b32d2e}.cp-form-table{width:100%;border-collapse:collapse}.cp-form-table tr{border-bottom:1px solid var(--cp-border)}.cp-form-table tr:last-child{border-bottom:none}.cp-form-table th{padding:14px 20px 14px 0;text-align:right;font-weight:600;width:200px;vertical-align:top;padding-top:18px;font-size:13px}.cp-form-table td{padding:14px 0}.cp-form-input,.cp-form-select,.cp-form-textarea{border:1px solid var(--cp-border);border-radius:var(--cp-radius);padding:7px 10px;font-size:14px;color:var(--cp-text);transition:.15s;width:100%;max-width:400px}.cp-form-input:focus,.cp-form-select:focus,.cp-form-textarea:focus{border-color:var(--cp-accent);outline:2px solid rgba(34,113,177,.2)}.cp-form-textarea{resize:vertical;min-height:80px}.cp-description{color:var(--cp-muted);font-size:12.5px;margin:.4rem 0 0}.cp-dash-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px;margin-bottom:20px}.cp-dash-stat{background:var(--cp-white);border:1px solid var(--cp-border);border-radius:var(--cp-radius);padding:20px;display:flex;align-items:center;gap:16px;box-shadow:var(--cp-shadow)}.cp-dash-stat-icon{font-size:32px;flex-shrink:0}.cp-dash-stat-num{font-size:28px;font-weight:700;color:var(--cp-text);line-height:1}.cp-dash-stat-label{font-size:12px;color:var(--cp-muted);margin-top:4px}.cp-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.4px}.cp-badge-publish{background:#edfaef;color:#00a32a}.cp-badge-draft{background:#f0f0f1;color:var(--cp-muted)}.cp-badge-pending{background:#fff8e5;color:#996800}.cp-badge-private{background:#f0f4f8;color:var(--cp-accent)}.cp-badge-trash{background:#fcf0f1;color:#d63638}#cp-footer{text-align:center;padding:16px;color:var(--cp-muted);font-size:12px;border-top:1px solid var(--cp-border);margin-left:var(--cp-sidebar-w)}#cp-footer a{color:var(--cp-accent);text-decoration:none}@media(max-width:782px){#cp-menu-toggle{display:flex}#cp-sidebar{transform:translateX(-100%)}body.cp-sidebar-open #cp-sidebar{transform:none}#cp-main,#cp-footer{margin-left:0}.cp-form-table th{display:none}.cp-form-table td{display:block;padding:10px 0}.cp-form-input,.cp-form-select,.cp-form-textarea{max-width:100%}.cp-dash-grid{grid-template-columns:1fr}}");
+    case "/cp-admin/css/installer.css": return cssResp("*,*::before,*::after{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f0f1;margin:0;padding:2rem 1rem;color:#1d2327}.install-wrap{max-width:700px;margin:0 auto}.install-header{text-align:center;margin-bottom:2rem}.install-logo{font-size:2rem;font-weight:800;color:#1d2327;text-decoration:none}.install-logo span{color:#F6821F}.install-card{background:#fff;border-radius:8px;padding:2rem 2.5rem;box-shadow:0 2px 10px rgba(0,0,0,.08);margin-bottom:1.5rem}h2{font-size:1.4rem;margin:0 0 .5rem;color:#1d2327}.lead{color:#646970;margin:0 0 1.5rem}.form-table{width:100%;border-collapse:collapse;margin-bottom:1.5rem}.form-table tr{border-bottom:1px solid #dcdcde}.form-table tr:last-child{border-bottom:none}.form-table th{padding:14px 20px 14px 0;text-align:right;width:180px;font-size:13px;font-weight:600;vertical-align:top;padding-top:18px}.form-table td{padding:12px 0}.regular-text{width:100%;max-width:380px;padding:7px 10px;border:1px solid #8c8f94;border-radius:4px;font-size:14px;transition:.15s}.regular-text:focus{border-color:#2271b1;outline:2px solid rgba(34,113,177,.2)}.description{color:#646970;font-size:12.5px;margin:.4rem 0 0}code{background:#f0f0f1;padding:2px 6px;border-radius:3px;font-size:12px}.btn{display:inline-flex;align-items:center;padding:8px 18px;border-radius:4px;font-size:14px;font-weight:500;cursor:pointer;text-decoration:none;border:1px solid transparent;margin-right:8px;transition:.15s}.btn-primary{background:#2271b1;color:#fff;border-color:#2271b1}.btn-primary:hover{background:#135e96}.btn-secondary{background:#fff;color:#1d2327;border-color:#dcdcde}.btn-secondary:hover{background:#f0f0f1}.submit{margin-top:1rem}.notice-error{background:#fcf0f1;border-left:4px solid #d63638;padding:.8rem 1rem;border-radius:0 4px 4px 0;margin-bottom:1.2rem}.notice-error ul{margin:0;padding:0 0 0 1rem;color:#d63638;font-size:13.5px}.success-card{border-left:4px solid #00a32a}.success-icon{font-size:3rem;color:#00a32a;text-align:center;margin-bottom:1rem}");
+    case "/cp-includes/css/login.css": return cssResp("*,*::before,*::after{box-sizing:border-box;}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f0f1;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;}.login-wrap{width:100%;max-width:360px;}.login-logo{text-align:center;margin-bottom:24px;}.login-logo svg{width:64px;height:64px;}.login-logo h1{margin:8px 0 0;font-size:22px;font-weight:600;color:#1d2327;}.login-box{background:#fff;border-radius:8px;padding:28px 32px;box-shadow:0 2px 12px rgba(0,0,0,.08);}.login-box label{display:block;font-size:13px;font-weight:600;color:#1d2327;margin-bottom:6px;}.login-box input[type=text],.login-box input[type=password]{width:100%;padding:10px 14px;font-size:15px;border:1px solid #8c8f94;border-radius:4px;margin-bottom:16px;outline:none;transition:border-color .2s;}.login-box input:focus{border-color:#2271b1;box-shadow:0 0 0 1px #2271b1;}.login-remember{display:flex;align-items:center;gap:8px;font-size:13px;color:#3c434a;margin-bottom:18px;}.login-btn{width:100%;padding:10px;font-size:15px;font-weight:600;background:#2271b1;color:#fff;border:none;border-radius:4px;cursor:pointer;transition:background .2s;}.login-btn:hover{background:#135e96;}.login-error{background:#fff0f0;border-left:4px solid #d63638;padding:10px 14px;color:#d63638;font-size:13px;border-radius:4px;margin-bottom:16px;}.login-footer{text-align:center;margin-top:16px;font-size:12px;color:#646970;}.login-footer a{color:#2271b1;text-decoration:none;}");
+    case "/cp-includes/css/signup.css": return cssResp("*,*::before,*::after{box-sizing:border-box;}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f1f1f1;margin:0;padding:2rem 1rem;color:#333;}.signup-wrapper{max-width:560px;margin:0 auto;}.signup-box{background:#fff;border-radius:8px;padding:2.5rem;box-shadow:0 2px 10px rgba(0,0,0,.08);}h1{font-size:1.6rem;color:#1d2327;margin:0 0 .4rem;}.site-name{text-align:center;margin-bottom:1.5rem;}.site-name a{color:#1d2327;text-decoration:none;font-size:1.3rem;font-weight:700;}h2{font-size:1.2rem;margin:0 0 1.5rem;color:#1d2327;}label{display:block;font-weight:600;margin-bottom:.3rem;font-size:.9rem;}input[type=\"text\"],input[type=\"email\"]{width:100%;padding:.55rem .75rem;font-size:1rem;border:1px solid #8c8f94;border-radius:4px;margin-bottom:1rem;}input:focus{outline:2px solid #2271b1;border-color:#2271b1;}.cp-btn{background:#2271b1;color:#fff;border:none;padding:.65rem 1.5rem;font-size:1rem;border-radius:4px;cursor:pointer;width:100%;margin-top:.5rem;}.cp-btn:hover{background:#135e96;}.error-list{background:#fcf0f1;border-left:4px solid #d63638;border-radius:0 4px 4px 0;padding:.8rem 1rem;margin-bottom:1.2rem;list-style:none;padding-left:1rem;}.error-list li{color:#d63638;margin:.2rem 0;font-size:.9rem;}.hint{font-size:.8rem;color:#666;margin-top:-.7rem;margin-bottom:1rem;}.success{background:#edfaef;border-left:4px solid #00a32a;border-radius:0 4px 4px 0;padding:1rem 1.2rem;}.success h2{color:#00a32a;}");
+    case "/cp-includes/css/activate.css": return cssResp("*,*::before,*::after{box-sizing:border-box;}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f1f1f1;margin:0;padding:2rem 1rem;color:#333;}#signup-content{max-width:600px;margin:2rem auto;}.cp-activate-container{background:#fff;border-radius:6px;padding:2rem 2.5rem;box-shadow:0 2px 8px rgba(0,0,0,.1);}h2{font-size:1.4rem;margin:0 0 1.2rem;color:#1d2327;}label{font-weight:600;display:block;margin-bottom:.4rem;}input[type=\"text\"]{width:100%;padding:.6rem .8rem;font-size:1rem;border:1px solid #8c8f94;border-radius:4px;}.cp-btn{background:#2271b1;color:#fff;border:none;padding:.6rem 1.4rem;font-size:1rem;border-radius:4px;cursor:pointer;}.cp-btn:hover{background:#135e96;}#signup-welcome{background:#f0f6fc;border-left:4px solid #2271b1;padding:1rem 1.4rem;border-radius:0 4px 4px 0;margin:1rem 0;}#signup-welcome p{margin:.4rem 0;}.h3{font-weight:700;}a{color:#2271b1;}.lead-in{line-height:1.7;}");
+    case "/cp-includes/css/comments.css": return cssResp("body{font-family:-apple-system,sans-serif;background:#f1f1f1;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;}.box{background:#fff;padding:2rem 2.5rem;border-radius:6px;border-left:4px solid #d63638;max-width:480px;box-shadow:0 2px 8px rgba(0,0,0,.1);}h1{color:#d63638;font-size:1.2rem;margin:0 0 1rem;}a{color:#2271b1;}");
+    case "/cp-includes/css/error.css": return cssResp("body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f1f1f1;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;}.error-box{background:#fff;border-left:4px solid #e74c3c;border-radius:4px;padding:2rem 2.5rem;max-width:560px;box-shadow:0 2px 8px rgba(0,0,0,.1);}h1{color:#e74c3c;font-size:1.3rem;margin:0 0 1rem;}p{color:#444;line-height:1.6;}code{background:#f8f8f8;padding:2px 6px;border-radius:3px;font-family:monospace;color:#c0392b;}a{color:#0073aa;}");
+    default: return new Response("Not found", { status: 404 });
+  }
+}
+__name(serveInlineCss, "serveInlineCss");
+
+// =============================================================
+// ORIGINLESS EDGE CMS — 최고 성능 캐시 레이어 v2
+//
+// Client → Edge Worker
+//   [1] Edge Cache API HIT  →  즉시 응답   (1–5ms)
+//   [2] KV HIT              →  Edge 저장 → 응답  (5–20ms)
+//   [3] MISS                →  SSR → KV+Edge 저장 → 응답  (20–80ms)
+//   [4] 실패                →  Stale Cache → 절대 다운 없음
+//
+// 추가 기능:
+//   - 한 번 설치하면 재설치 불가 (KV 영구 잠금)
+//   - SWR (Stale-While-Revalidate) 백그라운드 갱신
+//   - ISR (Incremental Static Regeneration)
+//   - 정밀 Purge (포스트/카테고리/전체)
+//   - Prewarm (배포 후 자동 캐시 워밍)
+//   - D1 쓰기 전용 (읽기는 KV 캐시)
+//   - 다중 Failover (Edge → KV → Stale → 503)
+// =============================================================
+
+var EDGE_VER     = "e2";
+var KV_TTL       = 3600;
+var CACHE_TTL    = 86400;
+var STALE_TTL    = 604800;
+var SWR_WINDOW   = 60;
+
+var SKIP_CACHE = new Set([
+  "/cp-admin", "/cp-login", "/cp-logout", "/cp-signup",
+  "/cp-activate", "/cp-comments-post", "/cp-cron"
+]);
+
+function edgeIsCacheable(req, path) {
+  if (req.method !== "GET") return false;
+  if (SKIP_CACHE.has(path)) return false;
+  if (path.startsWith("/cp-admin/") || path.startsWith("/cp-includes/")) return false;
+  if (path.startsWith("/__edge/")) return false;
+  var cookie = req.headers.get("cookie") || "";
+  if (cookie.includes("cp_token=") || cookie.includes("cp_session=")) return false;
+  return true;
+}
+__name(edgeIsCacheable, "edgeIsCacheable");
+
+function edgeKvKey(url) {
+  return EDGE_VER + ":" + url.pathname + (url.search || "");
+}
+__name(edgeKvKey, "edgeKvKey");
+
+function edgeCacheRequest(key) {
+  return new Request("https://cf-edge-cache.internal/" + encodeURIComponent(key));
+}
+__name(edgeCacheRequest, "edgeCacheRequest");
+
+function edgeTagResponse(res, src) {
+  var h = new Headers(res.headers);
+  h.set("X-Cache", src);
+  h.set("X-Powered-By", "CloudPress-Edge/" + EDGE_VER);
+  return new Response(res.body, { status: res.status, headers: h });
+}
+__name(edgeTagResponse, "edgeTagResponse");
+
+// [1] Edge Cache API 조회
+async function edgeFromCache(key) {
+  try {
+    var cache = caches.default;
+    var r = await cache.match(edgeCacheRequest(key));
+    if (!r) return null;
+    var cachedAt = Number(r.headers.get("X-Cached-At") || 0);
+    var age = Math.floor(Date.now() / 1000) - cachedAt;
+    return { res: r, stale: age > CACHE_TTL };
+  } catch(e) { return null; }
+}
+__name(edgeFromCache, "edgeFromCache");
+
+// [2] KV 조회
+async function edgeFromKV(env, key) {
+  if (!env.CP_KV) return null;
+  try {
+    var result = await env.CP_KV.getWithMetadata(key, { type: "text" });
+    if (!result || !result.value) return null;
+    var m = result.metadata || {};
+    var age = Math.floor((Date.now() - (m.ts || 0)) / 1000);
+    return {
+      html: result.value,
+      headers: m.h || {},
+      age: age,
+      stale: age > KV_TTL,
+      expired: age > KV_TTL + SWR_WINDOW
+    };
+  } catch(e) { return null; }
+}
+__name(edgeFromKV, "edgeFromKV");
+
+// Edge Cache에 저장
+function edgeSaveCache(key, res, ctx) {
+  ctx.waitUntil((async () => {
+    try {
+      var h = new Headers(res.headers);
+      h.set("X-Cached-At", String(Math.floor(Date.now() / 1000)));
+      h.set("Cache-Control", "public, max-age=" + CACHE_TTL + ", stale-while-revalidate=" + SWR_WINDOW);
+      await caches.default.put(edgeCacheRequest(key), new Response(res.body, { status: res.status, headers: h }));
+    } catch(e) {}
+  })());
+}
+__name(edgeSaveCache, "edgeSaveCache");
+
+// KV에 저장
+function edgeSaveKV(env, key, html, headersObj, ctx) {
+  if (!env.CP_KV) return;
+  ctx.waitUntil(
+    env.CP_KV.put(key, html, {
+      expirationTtl: STALE_TTL,
+      metadata: { ts: Date.now(), h: headersObj }
+    }).catch(() => {})
+  );
+}
+__name(edgeSaveKV, "edgeSaveKV");
+
+// KV → Edge Cache 승격
+function edgePromoteToCache(key, html, headersObj, ctx) {
+  ctx.waitUntil((async () => {
+    try {
+      var h = new Headers(headersObj);
+      h.set("X-Cached-At", String(Math.floor(Date.now() / 1000)));
+      h.set("Cache-Control", "public, max-age=" + CACHE_TTL + ", stale-while-revalidate=" + SWR_WINDOW);
+      h.set("Content-Type", h.get("Content-Type") || "text/html; charset=utf-8");
+      await caches.default.put(edgeCacheRequest(key), new Response(html, { headers: h }));
+    } catch(e) {}
+  })());
+}
+__name(edgePromoteToCache, "edgePromoteToCache");
+
+// SWR 백그라운드 재생성
+function edgeBgRevalidate(req, env, ctx, key) {
+  ctx.waitUntil((async () => {
+    try {
+      var fresh = await route(req.clone(), env, ctx);
+      if (!fresh || fresh.status >= 500) return;
+      var html = await fresh.clone().text();
+      var headersObj = {};
+      fresh.headers.forEach(function(v, k) { headersObj[k] = v; });
+      edgeSaveKV(env, key, html, headersObj, ctx);
+      edgePromoteToCache(key, html, headersObj, ctx);
+    } catch(e) {}
+  })());
+}
+__name(edgeBgRevalidate, "edgeBgRevalidate");
+
+// 설치 잠금 확인
+async function edgeIsLocked(env) {
+  try { return (await env.CP_KV.get("cp:installed_lock")) === "1"; }
+  catch(e) { return false; }
+}
+__name(edgeIsLocked, "edgeIsLocked");
+
+// 설치 잠금 설정 (10년 만료)
+async function edgeSetLock(env) {
+  try { await env.CP_KV.put("cp:installed_lock", "1", { expirationTtl: 315360000 }); }
+  catch(e) {}
+}
+__name(edgeSetLock, "edgeSetLock");
+
+// 정밀 Purge API  POST /__edge/purge?type=all|post|path&path=/...
+async function edgeHandlePurge(req, env) {
+  var authKey = req.headers.get("X-Purge-Key") || "";
+  try {
+    var cfg = await env.CP_KV.get("cp:config", { type: "json" });
+    if (!cfg || !cfg.AUTH_KEY || authKey !== cfg.AUTH_KEY)
+      return new Response("Unauthorized", { status: 401 });
+  } catch(e) { return new Response("Unauthorized", { status: 401 }); }
+
+  var url    = new URL(req.url);
+  var type   = url.searchParams.get("type") || "path";
+  var target = url.searchParams.get("path") || "";
+  var purged = [];
+  var cache  = caches.default;
+
+  try {
+    if (type === "all") {
+      var list = await env.CP_KV.list({ prefix: EDGE_VER + ":" });
+      for (var k of (list.keys || [])) {
+        await env.CP_KV.delete(k.name).catch(() => {});
+        await cache.delete(edgeCacheRequest(k.name)).catch(() => {});
+        purged.push(k.name);
+      }
+    } else {
+      var paths = type === "post"
+        ? [target, "/", "/feed", "/sitemap.xml", "/cp-sitemap.xml"]
+        : [target];
+      for (var p of paths) {
+        var ck = EDGE_VER + ":" + p;
+        await env.CP_KV.delete(ck).catch(() => {});
+        await cache.delete(edgeCacheRequest(ck)).catch(() => {});
+        purged.push(p);
+      }
+    }
+  } catch(e) {}
+
+  return new Response(JSON.stringify({ ok: true, purged: purged }), {
+    headers: { "Content-Type": "application/json" }
+  });
+}
+__name(edgeHandlePurge, "edgeHandlePurge");
+
+// Prewarm API  POST /__edge/prewarm
+async function edgeHandlePrewarm(req, env, ctx) {
+  var authKey = req.headers.get("X-Purge-Key") || "";
+  try {
+    var cfg = await env.CP_KV.get("cp:config", { type: "json" });
+    if (!cfg || !cfg.AUTH_KEY || authKey !== cfg.AUTH_KEY)
+      return new Response("Unauthorized", { status: 401 });
+  } catch(e) { return new Response("Unauthorized", { status: 401 }); }
+
+  var origin = new URL(req.url).origin;
+  var warmPaths = ["/", "/feed", "/sitemap.xml"];
+
+  ctx.waitUntil((async () => {
+    for (var wp of warmPaths) {
+      try {
+        var r = await fetch(new Request(origin + wp, { headers: { "X-Prewarm": "1" } }));
+        if (r.ok) {
+          var html = await r.text();
+          var ho = {};
+          r.headers.forEach(function(v, k) { ho[k] = v; });
+          var wk = EDGE_VER + ":" + wp;
+          if (env.CP_KV) {
+            await env.CP_KV.put(wk, html, { expirationTtl: STALE_TTL, metadata: { ts: Date.now(), h: ho } });
+          }
+          edgePromoteToCache(wk, html, ho, ctx);
+        }
+      } catch(e) {}
+    }
+  })());
+
+  return new Response(JSON.stringify({ ok: true, warming: warmPaths }), {
+    headers: { "Content-Type": "application/json" }
+  });
+}
+__name(edgeHandlePrewarm, "edgeHandlePrewarm");
+
+// 메인 엣지 fetch 핸들러
+async function edgeFetch(req, env, ctx) {
+  var url  = new URL(req.url);
+  var path = url.pathname;
+  var method = req.method;
+
+  // 특수 엔드포인트
+  if (method === "POST" && path === "/__edge/purge")   return edgeHandlePurge(req, env);
+  if (method === "POST" && path === "/__edge/prewarm") return edgeHandlePrewarm(req, env, ctx);
+  if (path === "/__edge/health") {
+    return new Response(JSON.stringify({
+      ok: true, ver: EDGE_VER,
+      dc: (req.cf && req.cf.colo) || "unknown",
+      ts: Date.now()
+    }), { headers: { "Content-Type": "application/json" } });
+  }
+
+  // 설치 경로 — 잠금 확인 (한 번 설치하면 재설치 불가)
+  if (path === "/cp-admin/setup-config" || path === "/cp-admin/install") {
+    if (await edgeIsLocked(env)) {
+      return Response.redirect(url.origin + "/cp-admin", 302);
+    }
+    var installRes = await route(req, env, ctx);
+    // 설치 완료 확인 후 잠금
+    ctx.waitUntil((async () => {
+      try {
+        var cfg = await env.CP_KV.get("cp:config", { type: "json" });
+        if (cfg && cfg.installed) await edgeSetLock(env);
+      } catch(e) {}
+    })());
+    return installRes;
+  }
+
+  // 캐시 불가 요청 → 바로 라우팅
+  if (!edgeIsCacheable(req, path)) return route(req, env, ctx);
+
+  var cacheKey = edgeKvKey(url);
+
+  // ═══ [1] Edge Cache HIT ══════════════════════════════════════
+  var ec = await edgeFromCache(cacheKey);
+  if (ec && !ec.stale) return edgeTagResponse(ec.res, "EDGE-HIT");
+
+  // ═══ [2] KV HIT ══════════════════════════════════════════════
+  var kv = await edgeFromKV(env, cacheKey);
+  if (kv && !kv.expired) {
+    edgePromoteToCache(cacheKey, kv.html, kv.headers, ctx);
+    if (kv.stale) edgeBgRevalidate(req, env, ctx, cacheKey);  // SWR
+    var kvHeaders = new Headers(kv.headers);
+    kvHeaders.set("Content-Type", kvHeaders.get("Content-Type") || "text/html; charset=utf-8");
+    kvHeaders.set("Cache-Control", "public, max-age=" + KV_TTL + ", stale-while-revalidate=" + SWR_WINDOW);
+    return edgeTagResponse(new Response(kv.html, { headers: kvHeaders }), kv.stale ? "KV-STALE" : "KV-HIT");
+  }
+
+  // ═══ [3] MISS → Edge SSR ═════════════════════════════════════
+  var fresh = null;
+  try { fresh = await route(req, env, ctx); } catch(e) { fresh = null; }
+
+  // ═══ [4] Failover — SSR 실패 시 stale 반환 ══════════════════
+  if (!fresh || fresh.status >= 500) {
+    if (kv) {
+      var staleHeaders = new Headers(kv.headers);
+      return edgeTagResponse(new Response(kv.html, { headers: staleHeaders }), "STALE-FAILOVER");
+    }
+    if (ec && ec.res) return edgeTagResponse(ec.res, "EDGE-STALE-FAILOVER");
+    return new Response(
+      "<!doctype html><html><head><title>503</title></head><body><h1>Service Temporarily Unavailable</h1><p>Please retry in a moment.</p></body></html>",
+      { status: 503, headers: { "Content-Type": "text/html; charset=utf-8", "Retry-After": "10" } }
+    );
+  }
+
+  // 2xx → KV + Edge Cache 저장
+  if (fresh.status < 300) {
+    var freshHtml = await fresh.clone().text();
+    var freshHeaders = {};
+    fresh.headers.forEach(function(v, k) { freshHeaders[k] = v; });
+    edgeSaveKV(env, cacheKey, freshHtml, freshHeaders, ctx);
+    var freshWithCC = new Response(fresh.body, {
+      status: fresh.status,
+      headers: Object.assign({}, freshHeaders, {
+        "Cache-Control": "public, max-age=" + KV_TTL + ", stale-while-revalidate=" + SWR_WINDOW
+      })
+    });
+    edgeSaveCache(cacheKey, freshWithCC.clone(), ctx);
+    return edgeTagResponse(freshWithCC, "MISS");
+  }
+
+  return edgeTagResponse(fresh, "BYPASS");
+}
+__name(edgeFetch, "edgeFetch");
+
+// Cron (scheduled) — KV 만료 정리 + 기존 cron
+async function edgeScheduled(event, env, ctx) {
+  ctx.waitUntil((async () => {
+    try {
+      if (env.CP_KV) {
+        var list = await env.CP_KV.list({ prefix: EDGE_VER + ":" });
+        var now = Date.now();
+        for (var k of (list.keys || [])) {
+          var age = (now - ((k.metadata && k.metadata.ts) || 0)) / 1000;
+          if (age > STALE_TTL) await env.CP_KV.delete(k.name).catch(() => {});
+        }
+      }
+    } catch(e) {}
+    try { await handleCronRequest(new Request("https://internal/cp-cron"), env, ctx); } catch(e) {}
+  })());
+}
+__name(edgeScheduled, "edgeScheduled");
+
+// =============================================================
+// Worker 진입점 (ESM export default)
+// =============================================================
+var worker_default = {
+  fetch: edgeFetch,
+  scheduled: edgeScheduled
+};
+export { worker_default as default };
