@@ -1453,19 +1453,146 @@ __name(wrapInFullPage, "wrapInFullPage");
 function defaultTemplate(templateName, context) {
   const cp = context.cp;
   const post = context.post;
-  const title = post?.post_title || cp?.config?.SITE_NAME || "CloudPress Site";
-  const content = post?.post_content || "";
-  const siteName = cp?.config?.SITE_NAME || title;
-  return wrapInFullPage(
-    content ? `<article class="entry">
-           <h1 class="entry-title">${escHtml(title)}</h1>
-           <div class="entry-content">${content}</div>
-         </article>` : `<div style="text-align:center;padding:4rem 0">
-           <h1>${escHtml(siteName)}</h1>
-         </div>`,
-    cp,
-    templateName
-  );
+  const q = cp?.query || {};
+  const siteName = cp?.config?.SITE_NAME || 'CloudPress Site';
+  const siteDesc = cp?.config?.SITE_TAGLINE || '';
+
+  function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function formatDate(d) { try { return new Date(d).toLocaleDateString('ko-KR',{year:'numeric',month:'long',day:'numeric'}); } catch(_){return d||'';} }
+  function excerpt(c,n=200) { const t=(c||'').replace(/<[^>]+>/g,'').replace(/\s+/g,' ').trim(); return t.length>n?t.slice(0,n)+'…':t; }
+
+  let body = '';
+
+  // 404
+  if (q.is_404) {
+    body = `<div class="cp-404-wrap"><h1>404</h1><p>페이지를 찾을 수 없습니다.</p><a href="/" class="cp-btn-main">홈으로 돌아가기</a></div>`;
+  }
+  // 단일 글
+  else if (q.is_single || q.is_page) {
+    const p = q.queried_object || post || q.posts?.[0];
+    if (p) {
+      body = `<article class="cp-single">
+        <h1 class="cp-single-title">${esc(p.post_title)}</h1>
+        ${q.is_single ? `<div class="cp-meta">${formatDate(p.post_date)}</div>` : ''}
+        <div class="cp-content">${p.post_content||''}</div>
+        ${q.is_single ? `<div class="cp-back"><a href="/">← 목록으로</a></div>` : ''}
+      </article>`;
+    }
+  }
+  // 검색
+  else if (q.is_search) {
+    const posts = q.posts || [];
+    body = `<h2 class="cp-archive-title">"${esc(q.search_query)}" 검색 결과 (${q.found_posts}개)</h2>`;
+    body += posts.length ? posts.map(p=>`<article class="cp-card-post"><h3><a href="/${new Date(p.post_date).getFullYear()}/${String(new Date(p.post_date).getMonth()+1).padStart(2,'0')}/${esc(p.post_name)}">${esc(p.post_title)}</a></h3><p class="cp-meta">${formatDate(p.post_date)}</p><p>${excerpt(p.post_content)}</p></article>`).join('') : '<p>검색 결과가 없습니다.</p>';
+  }
+  // 카테고리/태그/아카이브
+  else if (q.is_archive || q.is_category || q.is_tag) {
+    const label = q.is_category ? '카테고리' : q.is_tag ? '태그' : '아카이브';
+    const name2 = q.queried_object?.name || '';
+    body = `<h2 class="cp-archive-title">${label}: ${esc(name2)}</h2>`;
+    const posts = q.posts || [];
+    body += posts.length ? posts.map(p=>`<article class="cp-card-post"><h3><a href="/${new Date(p.post_date).getFullYear()}/${String(new Date(p.post_date).getMonth()+1).padStart(2,'0')}/${esc(p.post_name)}">${esc(p.post_title)}</a></h3><p class="cp-meta">${formatDate(p.post_date)}</p><p>${excerpt(p.post_content)}</p></article>`).join('') : '<p>글이 없습니다.</p>';
+  }
+  // 홈 (글 목록)
+  else {
+    const posts = q.posts || [];
+    if (q.is_home && posts.length === 0) {
+      body = `<div class="cp-home-hero"><h2 class="cp-site-title">${esc(siteName)}</h2>${siteDesc?`<p class="cp-site-desc">${esc(siteDesc)}</p>`:''}</div><p style="text-align:center;color:#888;padding:60px 0">아직 게시된 글이 없습니다.</p>`;
+    } else {
+      if (q.is_home) body = `<div class="cp-home-hero"><h2 class="cp-site-title">${esc(siteName)}</h2>${siteDesc?`<p class="cp-site-desc">${esc(siteDesc)}</p>`:''}</div>`;
+      body += `<div class="cp-posts-list">${posts.map(p=>{
+        const y=new Date(p.post_date).getFullYear();
+        const m=String(new Date(p.post_date).getMonth()+1).padStart(2,'0');
+        const slug=p.post_name||p.ID;
+        return `<article class="cp-post-card">
+          <h2 class="cp-post-card-title"><a href="/${y}/${m}/${esc(slug)}">${esc(p.post_title||(p.ID?'(제목 없음)':''))}</a></h2>
+          <span class="cp-post-card-date">${formatDate(p.post_date)}</span>
+          <div class="cp-post-card-excerpt"><p>${excerpt(p.post_content)}</p></div>
+          <div class="cp-post-card-footer"><a href="/${y}/${m}/${esc(slug)}" class="cp-read-more">더 읽기 →</a></div>
+        </article>`;
+      }).join('')}</div>`;
+      // 페이지네이션
+      if (q.max_num_pages > 1) {
+        const paged = q.paged || 1;
+        body += `<div class="cp-pagination">
+          ${paged>1?`<a href="?paged=${paged-1}" class="cp-page-btn">← 이전</a>`:''}
+          <span>${paged} / ${q.max_num_pages}</span>
+          ${paged<q.max_num_pages?`<a href="?paged=${paged+1}" class="cp-page-btn">다음 →</a>`:''}
+        </div>`;
+      }
+    }
+  }
+
+  const html = `<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="generator" content="CloudPress">
+  <title>${esc((q.queried_object?.post_title||q.queried_object?.name||'')+(q.queried_object?' – ':'')+siteName)}</title>
+  <style>
+    *,*::before,*::after{box-sizing:border-box}
+    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR','Segoe UI',sans-serif;line-height:1.7;color:#1d2327;background:#fff;display:flex;flex-direction:column;min-height:100vh}
+    a{color:#2271b1;text-decoration:none} a:hover{text-decoration:underline}
+    img{max-width:100%;height:auto}
+    .cp-header{background:#1d2327;color:#fff;padding:1rem 0}
+    .cp-header-inner{max-width:860px;margin:0 auto;padding:0 1.5rem;display:flex;align-items:center;justify-content:space-between}
+    .cp-header a.cp-site-name{color:#fff;font-size:1.3rem;font-weight:700;text-decoration:none}
+    .cp-header nav{display:flex;gap:1.5rem}
+    .cp-header nav a{color:rgba(255,255,255,.75);font-size:.9rem} .cp-header nav a:hover{color:#fff;text-decoration:none}
+    .cp-container{max-width:860px;margin:0 auto;padding:2rem 1.5rem;flex:1}
+    .cp-home-hero{padding:1rem 0 1.5rem;border-bottom:1px solid #f0f0f1;margin-bottom:2rem}
+    .cp-site-title{font-size:2rem;font-weight:800;margin:0 0 .4rem;color:#1d2327}
+    .cp-site-desc{color:#646970;margin:0}
+    .cp-posts-list{display:flex;flex-direction:column;gap:2rem}
+    .cp-post-card{border-bottom:1px solid #f0f0f1;padding-bottom:2rem}
+    .cp-post-card:last-child{border-bottom:none}
+    .cp-post-card-title{margin:0 0 .3rem;font-size:1.4rem;font-weight:700}
+    .cp-post-card-title a{color:#1d2327} .cp-post-card-title a:hover{color:#2271b1;text-decoration:none}
+    .cp-post-card-date{color:#646970;font-size:.85rem;display:block;margin-bottom:.6rem}
+    .cp-post-card-excerpt p{color:#3c434a;margin:.4rem 0}
+    .cp-read-more{font-size:.9rem;font-weight:600;color:#2271b1}
+    .cp-meta{color:#646970;font-size:.85rem;margin-bottom:1.5rem}
+    .cp-single{padding:1rem 0}
+    .cp-single-title{font-size:2rem;font-weight:800;margin:0 0 .5rem;line-height:1.25}
+    .cp-content{font-size:1.05rem;line-height:1.85;color:#3c434a}
+    .cp-content h1,.cp-content h2,.cp-content h3{color:#1d2327;margin:2rem 0 .75rem}
+    .cp-content p{margin:0 0 1.2rem}
+    .cp-content blockquote{border-left:4px solid #2271b1;padding:.75rem 1rem;margin:1.5rem 0;background:#f8f9fa;color:#3c434a}
+    .cp-content img{max-width:100%;border-radius:4px}
+    .cp-content pre{background:#1d2327;color:#a7aaad;padding:1rem;border-radius:6px;overflow-x:auto;font-size:.9rem}
+    .cp-content code{background:#f0f0f1;padding:1px 5px;border-radius:3px;font-size:.9em}
+    .cp-content ul,.cp-content ol{padding-left:1.5rem;margin:0 0 1.2rem}
+    .cp-back{margin-top:2rem;padding-top:1.5rem;border-top:1px solid #f0f0f1}
+    .cp-archive-title{font-size:1.5rem;font-weight:700;margin:0 0 1.5rem}
+    .cp-card-post{border-bottom:1px solid #f0f0f1;padding-bottom:1.5rem;margin-bottom:1.5rem}
+    .cp-card-post h3{margin:0 0 .3rem;font-size:1.2rem}
+    .cp-card-post h3 a{color:#1d2327} .cp-card-post h3 a:hover{color:#2271b1;text-decoration:none}
+    .cp-404-wrap{text-align:center;padding:5rem 0}
+    .cp-404-wrap h1{font-size:5rem;font-weight:900;color:#dcdcde;margin:0}
+    .cp-404-wrap p{color:#646970;font-size:1.1rem}
+    .cp-btn-main{display:inline-block;background:#2271b1;color:#fff;padding:.6rem 1.4rem;border-radius:4px;font-weight:600;text-decoration:none;margin-top:1rem}
+    .cp-pagination{display:flex;gap:1rem;justify-content:center;align-items:center;padding:2rem 0}
+    .cp-page-btn{background:#2271b1;color:#fff;padding:.5rem 1rem;border-radius:4px;text-decoration:none;font-size:.9rem}
+    .cp-footer{background:#f6f7f7;border-top:1px solid #dcdcde;padding:1.2rem;text-align:center;color:#646970;font-size:.85rem}
+    @media(max-width:600px){.cp-site-title{font-size:1.5rem}.cp-single-title{font-size:1.5rem}.cp-post-card-title{font-size:1.1rem}}
+  </style>
+</head>
+<body>
+  <header class="cp-header">
+    <div class="cp-header-inner">
+      <a href="/" class="cp-site-name">${esc(siteName)}</a>
+      <nav>
+        <a href="/">홈</a>
+        <a href="/feed">RSS</a>
+      </nav>
+    </div>
+  </header>
+  <div class="cp-container">${body}</div>
+  <footer class="cp-footer">&copy; ${new Date().getFullYear()} ${esc(siteName)}</footer>
+</body>
+</html>`;
+  return html;
 }
 __name(defaultTemplate, "defaultTemplate");
 
@@ -4009,53 +4136,44 @@ async function handlePostEdit(request, cp, opts = {}) {
   let categories = [];
   let postCategoryIds = new Set();
   if (postType === 'post') {
-    const cats = await cp.db.prepare(
+    // ── GET 데이터 병렬 로드 (Promise.all — CPU 절약) ─────────────────────
+  const [catsResult, assignedResult, metaResult, tagResult] = await Promise.all([
+    cp.db.prepare(
       `SELECT t.term_id, t.name FROM ${prefix}terms t
        JOIN ${prefix}term_taxonomy tt ON t.term_id = tt.term_id
        WHERE tt.taxonomy = 'category'`
-    ).all();
-    categories = cats?.results || [];
+    ).all().catch(() => ({ results: [] })),
 
-    // 현재 포스트에 지정된 카테고리 ID 로드
-    if (postId) {
-      try {
-        const assigned = await cp.db.prepare(
-          `SELECT tt.term_id FROM ${prefix}term_relationships tr
-           JOIN ${prefix}term_taxonomy tt ON tr.term_taxonomy_id = tt.term_taxonomy_id
-           WHERE tr.object_id = ? AND tt.taxonomy = 'category'`
-        ).bind(postId).all();
-        postCategoryIds = new Set((assigned?.results || []).map(r => String(r.term_id)));
-      } catch (_) {}
-    }
-  }
+    postId ? cp.db.prepare(
+      `SELECT tt.term_id FROM ${prefix}term_relationships tr
+       JOIN ${prefix}term_taxonomy tt ON tr.term_taxonomy_id = tt.term_taxonomy_id
+       WHERE tr.object_id = ? AND tt.taxonomy = 'category'`
+    ).bind(postId).all().catch(() => ({ results: [] })) : Promise.resolve({ results: [] }),
 
-  let postMetas = [];
-  let existingTags = [];
-  if (postId) {
-    const metaRows = await cp.db.prepare(
-      `SELECT meta_id, meta_key, meta_value FROM ${prefix}postmeta WHERE post_id=? ORDER BY meta_id`
-    ).bind(postId).all();
-    postMetas = metaRows?.results || [];
-    // 내부 메타(_로 시작) 숨김
-    postMetas = postMetas.filter(m => !String(m.meta_key).startsWith('_'));
+    postId ? cp.db.prepare(
+      `SELECT meta_id, meta_key, meta_value FROM ${prefix}postmeta
+       WHERE post_id = ? ORDER BY meta_id`
+    ).bind(postId).all().catch(() => ({ results: [] })) : Promise.resolve({ results: [] }),
 
-    // 기존 태그 로드
-    try {
-      const tagRows = await cp.db.prepare(
-        `SELECT t.name FROM ${prefix}terms t
-         JOIN ${prefix}term_taxonomy tt ON t.term_id = tt.term_id
-         JOIN ${prefix}term_relationships tr ON tt.term_taxonomy_id = tr.term_taxonomy_id
-         WHERE tr.object_id = ? AND tt.taxonomy = 'post_tag'`
-      ).bind(postId).all();
-      existingTags = (tagRows?.results || []).map(r => r.name);
-    } catch (_) {}
-  }
+    postId ? cp.db.prepare(
+      `SELECT t.name FROM ${prefix}terms t
+       JOIN ${prefix}term_taxonomy tt ON t.term_id = tt.term_id
+       JOIN ${prefix}term_relationships tr ON tt.term_taxonomy_id = tr.term_taxonomy_id
+       WHERE tr.object_id = ? AND tt.taxonomy = 'post_tag'`
+    ).bind(postId).all().catch(() => ({ results: [] })) : Promise.resolve({ results: [] }),
+  ]);
+
+  categories     = catsResult.results || [];
+  postCategoryIds = new Set((assignedResult.results || []).map(r => String(r.term_id)));
+  let postMetas   = (metaResult.results || []).filter(m => !String(m.meta_key).startsWith('_'));
+  let existingTags = (tagResult.results || []).map(r => r.name);
 
   const isNew     = !postId || !post;
   const typeLabel = postType === 'page' ? L.page : L.post;
   const listHref  = postType === 'page' ? '/cp-admin/edit?post_type=page' : '/cp-admin/edit';
 
   // ── HTML 렌더링 ──────────────────────────────────────────
+
   const pageContent = `
 <style>
 /* ── 메타박스 시스템 ── */
@@ -4458,30 +4576,55 @@ function guessBlockType(el) {
 // ── 블록 정의 ─────────────────────────────────────────────────
 const BLOCKS = [
   { group: '텍스트', items: [
-    { id: 'paragraph',  icon: '¶',  label: '단락',     desc: '기본 텍스트 블록',     key: ['p','단락','텍스트'] },
-    { id: 'h1',         icon: 'H1', label: '제목 1',   desc: '가장 큰 제목',         key: ['h1','제목1'] },
-    { id: 'h2',         icon: 'H2', label: '제목 2',   desc: '큰 제목',              key: ['h2','제목2'] },
-    { id: 'h3',         icon: 'H3', label: '제목 3',   desc: '중간 제목',            key: ['h3','제목3'] },
-    { id: 'h4',         icon: 'H4', label: '제목 4',   desc: '작은 제목',            key: ['h4','제목4'] },
-    { id: 'h5',         icon: 'H5', label: '제목 5',   desc: '더 작은 제목',         key: ['h5','제목5'] },
-    { id: 'h6',         icon: 'H6', label: '제목 6',   desc: '가장 작은 제목',       key: ['h6','제목6'] },
-    { id: 'quote',      icon: '❝',  label: '인용구',   desc: '인용 블록',            key: ['인용','quote','blockquote'] },
-    { id: 'preformatted', icon: '</>',label: '서식 있는 텍스트', desc: '그대로 표시',  key: ['pre','서식'] },
+    { id: 'paragraph',   icon: '¶',   label: '단락',           desc: '일반 텍스트 단락',         key: ['p','단락','paragraph','텍스트'] },
+    { id: 'h1',          icon: 'H1',  label: '제목 1 (H1)',    desc: '가장 큰 제목',             key: ['h1','제목1','heading1'] },
+    { id: 'h2',          icon: 'H2',  label: '제목 2 (H2)',    desc: '큰 제목',                  key: ['h2','제목2','heading2'] },
+    { id: 'h3',          icon: 'H3',  label: '제목 3 (H3)',    desc: '중간 제목',                key: ['h3','제목3','heading3'] },
+    { id: 'h4',          icon: 'H4',  label: '제목 4 (H4)',    desc: '작은 제목',                key: ['h4','제목4','heading4'] },
+    { id: 'h5',          icon: 'H5',  label: '제목 5 (H5)',    desc: '더 작은 제목',             key: ['h5','제목5','heading5'] },
+    { id: 'h6',          icon: 'H6',  label: '제목 6 (H6)',    desc: '가장 작은 제목',           key: ['h6','제목6','heading6'] },
+    { id: 'quote',       icon: '❝',   label: '인용구',         desc: '인용 블록',                key: ['인용','quote','blockquote','bq'] },
+    { id: 'pullquote',   icon: '❞',   label: '풀 인용구',      desc: '강조된 인용 블록',         key: ['풀인용','pullquote'] },
+    { id: 'verse',       icon: '🎵',  label: '시/운문',        desc: '들여쓰기와 줄바꿈 유지',   key: ['시','verse','poem'] },
+    { id: 'preformatted',icon: '</>',  label: '서식 있는 텍스트',desc: '공백·줄바꿈 그대로 표시', key: ['pre','서식','preformatted'] },
+    { id: 'code',        icon: '{}',  label: '코드 블록',      desc: '프로그래밍 코드',          key: ['code','코드','코드블록'] },
+    { id: 'details',     icon: '▾',   label: '세부 정보',      desc: '접고 펼칠 수 있는 블록',   key: ['details','접기','accordion'] },
+    { id: 'footnotes',   icon: '†',   label: '각주',           desc: '페이지 하단 각주',         key: ['footnote','각주'] },
   ]},
   { group: '목록', items: [
-    { id: 'list',         icon: '•',  label: '목록 (점)',   desc: '글머리 기호 목록', key: ['ul','목록','list'] },
-    { id: 'list-ordered', icon: '1.', label: '목록 (번호)', desc: '순서 있는 목록',   key: ['ol','번호','ordered'] },
+    { id: 'list',           icon: '•',  label: '글머리 목록',   desc: '순서 없는 목록 (ul)',       key: ['ul','목록','list','bullet'] },
+    { id: 'list-ordered',   icon: '1.', label: '번호 목록',     desc: '순서 있는 목록 (ol)',       key: ['ol','번호','ordered','numbered'] },
   ]},
   { group: '미디어', items: [
-    { id: 'image',      icon: '🖼',  label: '이미지',   desc: 'URL로 이미지 삽입',   key: ['img','이미지','image'] },
-    { id: 'video',      icon: '▶',  label: '동영상',   desc: 'YouTube/Vimeo 임베드', key: ['video','영상','youtube'] },
+    { id: 'image',        icon: '🖼',  label: '이미지',         desc: 'URL 또는 업로드로 이미지', key: ['img','이미지','image','사진'] },
+    { id: 'gallery',      icon: '🖼🖼', label: '갤러리',        desc: '여러 이미지 그리드',        key: ['gallery','갤러리'] },
+    { id: 'video',        icon: '▶',  label: '동영상',          desc: 'YouTube/Vimeo 임베드',     key: ['video','영상','youtube','vimeo'] },
+    { id: 'audio',        icon: '🎵',  label: '오디오',         desc: '오디오 파일 삽입',          key: ['audio','오디오','소리'] },
+    { id: 'file',         icon: '📎',  label: '파일',           desc: '다운로드 파일 링크',        key: ['file','파일','download','다운로드'] },
+    { id: 'media-text',   icon: '📰',  label: '미디어 & 텍스트',desc: '이미지+텍스트 나란히',      key: ['media','미디어텍스트','media-text'] },
   ]},
   { group: '디자인', items: [
-    { id: 'separator',  icon: '—',  label: '구분선',   desc: '수평선 삽입',          key: ['hr','구분','separator'] },
-    { id: 'button',     icon: '🔘', label: '버튼',     desc: '클릭 버튼',            key: ['btn','버튼','button'] },
-    { id: 'table',      icon: '⊞',  label: '표',       desc: '테이블 삽입',          key: ['table','표','grid'] },
-    { id: 'code',       icon: '{}', label: '코드',     desc: '코드 블록',            key: ['code','코드'] },
-    { id: 'html',       icon: '<>', label: 'HTML',     desc: '순수 HTML 입력',       key: ['html','raw'] },
+    { id: 'button',      icon: '🔘', label: '버튼',            desc: '클릭 버튼',                key: ['btn','버튼','button','link'] },
+    { id: 'buttons',     icon: '🔘🔘',label: '버튼 그룹',      desc: '여러 버튼 묶음',            key: ['buttons','버튼그룹'] },
+    { id: 'table',       icon: '⊞',  label: '표 (Table)',      desc: '데이터 테이블',             key: ['table','표','grid','테이블'] },
+    { id: 'separator',   icon: '—',  label: '구분선',          desc: '수평 구분선 (hr)',          key: ['hr','구분','separator','divider','---'] },
+    { id: 'spacer',      icon: '↕',  label: '공백',            desc: '수직 여백 추가',            key: ['spacer','공백','space'] },
+    { id: 'columns',     icon: '⋮⋮', label: '열 (Columns)',    desc: '여러 열 레이아웃',          key: ['columns','열','col','2열','3열'] },
+    { id: 'group',       icon: '🗂',  label: '그룹',            desc: '블록들을 그룹으로 묶기',    key: ['group','그룹','container'] },
+    { id: 'cover',       icon: '🎨',  label: '커버',            desc: '배경 이미지 위에 텍스트',   key: ['cover','커버','hero'] },
+    { id: 'html',        icon: '<>', label: '커스텀 HTML',      desc: '순수 HTML 직접 입력',       key: ['html','raw','커스텀'] },
+  ]},
+  { group: '위젯', items: [
+    { id: 'shortcode',   icon: '[…]', label: '단축코드',        desc: '단축코드 (Shortcode)',      key: ['shortcode','단축코드','short'] },
+    { id: 'archives',    icon: '📅',  label: '아카이브',        desc: '월별 아카이브 목록',        key: ['archives','아카이브','월별'] },
+    { id: 'categories',  icon: '🏷',  label: '카테고리',        desc: '카테고리 목록',             key: ['category','카테고리'] },
+    { id: 'tag-cloud',   icon: '☁',  label: '태그 클라우드',   desc: '태그 구름',                 key: ['tags','태그','tag-cloud','tagcloud'] },
+    { id: 'search',      icon: '🔍',  label: '검색',            desc: '검색 폼 위젯',              key: ['search','검색'] },
+    { id: 'latest-posts',icon: '📝',  label: '최신 글',         desc: '최근 게시글 목록',          key: ['recent','posts','최신글','latest'] },
+    { id: 'calendar',    icon: '📅',  label: '달력',            desc: '게시글 달력',               key: ['calendar','달력'] },
+    { id: 'rss',         icon: '📡',  label: 'RSS 피드',        desc: '외부 RSS 피드 표시',        key: ['rss','피드','feed'] },
+    { id: 'social-links',icon: '🌐',  label: '소셜 링크',       desc: 'SNS 링크 모음',             key: ['social','소셜','sns'] },
+    { id: 'embed',       icon: '🔗',  label: '임베드',          desc: '외부 콘텐츠 삽입',          key: ['embed','임베드','oembed'] },
   ]},
 ];
 
@@ -4593,6 +4736,169 @@ function insertBlock(blockId) {
       newEl.innerHTML = rawHtml;
       break;
     }
+    case 'pullquote': {
+      newEl = document.createElement('blockquote');
+      newEl.setAttribute('data-block', 'pullquote');
+      newEl.className = 'cp-pullquote';
+      newEl.setAttribute('contenteditable', 'true');
+      newEl.textContent = '강조하고 싶은 인용문을 입력하세요…';
+      break;
+    }
+    case 'verse': {
+      newEl = document.createElement('pre');
+      newEl.setAttribute('data-block', 'verse');
+      newEl.className = 'cp-verse';
+      newEl.setAttribute('contenteditable', 'true');
+      newEl.textContent = '시 또는 운문을 입력하세요…';
+      break;
+    }
+    case 'details': {
+      newEl = document.createElement('details');
+      newEl.setAttribute('data-block', 'details');
+      newEl.innerHTML = '<summary contenteditable="true">클릭하여 펼치기</summary><div contenteditable="true" style="padding:8px 0">내용을 입력하세요…</div>';
+      break;
+    }
+    case 'footnotes': {
+      newEl = document.createElement('div');
+      newEl.setAttribute('data-block', 'footnotes');
+      newEl.className = 'cp-footnotes';
+      newEl.innerHTML = '<sup>1</sup> <span contenteditable="true">각주 내용을 입력하세요.</span>';
+      break;
+    }
+    case 'gallery': {
+      const urls = [];
+      for (let gi = 0; gi < 3; gi++) {
+        const u = prompt(\`이미지 \${gi+1} URL (없으면 빈칸):\`);
+        if (u) urls.push(u); else break;
+      }
+      newEl = document.createElement('div');
+      newEl.setAttribute('data-block', 'gallery');
+      newEl.className = 'cp-gallery';
+      newEl.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px';
+      newEl.innerHTML = urls.map(u => \`<img src="\${u}" style="width:100%;height:120px;object-fit:cover;border-radius:4px">\`).join('');
+      break;
+    }
+    case 'audio': {
+      const asrc = prompt('오디오 파일 URL:');
+      if (!asrc) return;
+      newEl = document.createElement('figure');
+      newEl.setAttribute('data-block', 'audio');
+      newEl.innerHTML = \`<audio controls style="width:100%"><source src="\${asrc}"></audio>\`;
+      break;
+    }
+    case 'file': {
+      const furl = prompt('파일 URL:');
+      if (!furl) return;
+      const flabel = prompt('링크 텍스트:', '파일 다운로드') || '파일 다운로드';
+      newEl = document.createElement('div');
+      newEl.setAttribute('data-block', 'file');
+      newEl.innerHTML = \`<a href="\${furl}" download style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:#f0f0f1;border-radius:4px;text-decoration:none;color:#1d2327">📎 \${flabel}</a>\`;
+      break;
+    }
+    case 'media-text': {
+      const msrc = prompt('이미지 URL:');
+      newEl = document.createElement('div');
+      newEl.setAttribute('data-block', 'media-text');
+      newEl.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:center';
+      newEl.innerHTML = msrc
+        ? \`<img src="\${msrc}" style="width:100%;border-radius:4px"><div contenteditable="true">텍스트를 입력하세요…</div>\`
+        : \`<div style="background:#f0f0f1;height:120px;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#666">이미지</div><div contenteditable="true">텍스트를 입력하세요…</div>\`;
+      break;
+    }
+    case 'buttons': {
+      newEl = document.createElement('div');
+      newEl.setAttribute('data-block', 'buttons');
+      newEl.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap';
+      newEl.innerHTML = '<a href="#" class="cp-block-btn" contenteditable="true">버튼 1</a><a href="#" class="cp-block-btn cp-block-btn-outline" contenteditable="true">버튼 2</a>';
+      break;
+    }
+    case 'spacer': {
+      const spH = prompt('공백 높이 (px):', '40') || '40';
+      newEl = document.createElement('div');
+      newEl.setAttribute('data-block', 'spacer');
+      newEl.style.cssText = \`height:\${parseInt(spH)}px;background:transparent\`;
+      newEl.contentEditable = 'false';
+      break;
+    }
+    case 'columns': {
+      const colN = parseInt(prompt('열 수 (2-4):', '2') || '2');
+      const n = Math.max(2, Math.min(4, colN));
+      newEl = document.createElement('div');
+      newEl.setAttribute('data-block', 'columns');
+      newEl.style.cssText = \`display:grid;grid-template-columns:repeat(\${n},1fr);gap:16px\`;
+      newEl.innerHTML = Array(n).fill(0).map(() => '<div contenteditable="true" style="padding:8px;min-height:60px;border:1px dashed #ddd;border-radius:4px">내용을 입력하세요…</div>').join('');
+      break;
+    }
+    case 'group': {
+      newEl = document.createElement('div');
+      newEl.setAttribute('data-block', 'group');
+      newEl.style.cssText = 'padding:16px;background:#f9f9f9;border-radius:8px;border:1px solid #e0e0e0';
+      const inner = document.createElement('div');
+      inner.setAttribute('contenteditable', 'true');
+      inner.textContent = '그룹 내용을 입력하세요…';
+      newEl.appendChild(inner);
+      break;
+    }
+    case 'cover': {
+      const cbg = prompt('배경 이미지 URL (없으면 색상 배경):') || '';
+      newEl = document.createElement('div');
+      newEl.setAttribute('data-block', 'cover');
+      newEl.style.cssText = cbg
+        ? \`background-image:url(\${cbg});background-size:cover;background-position:center;padding:48px 32px;border-radius:8px;text-align:center;position:relative\`
+        : 'background:#1d2327;padding:48px 32px;border-radius:8px;text-align:center';
+      newEl.innerHTML = \`<h2 contenteditable="true" style="color:#fff;margin:0;font-size:2rem">제목을 입력하세요</h2><p contenteditable="true" style="color:rgba(255,255,255,.8);margin:12px 0 0">부제목을 입력하세요</p>\`;
+      break;
+    }
+    case 'shortcode': {
+      const sc = prompt('단축코드:', '[gallery]') || '[shortcode]';
+      newEl = document.createElement('div');
+      newEl.setAttribute('data-block', 'shortcode');
+      newEl.style.cssText = 'background:#f0f0f1;padding:10px 14px;border-radius:4px;font-family:monospace;font-size:13px;color:#646970';
+      newEl.setAttribute('contenteditable', 'true');
+      newEl.textContent = sc;
+      break;
+    }
+    case 'archives':
+    case 'categories':
+    case 'tag-cloud':
+    case 'latest-posts':
+    case 'calendar':
+    case 'rss':
+    case 'search': {
+      const labelMap = { archives:'아카이브', categories:'카테고리', 'tag-cloud':'태그 클라우드', 'latest-posts':'최신 글', calendar:'달력', rss:'RSS 피드', search:'검색 폼' };
+      newEl = document.createElement('div');
+      newEl.setAttribute('data-block', blockId);
+      newEl.style.cssText = 'background:#f9f9f9;border:1px dashed #ccc;border-radius:4px;padding:16px;text-align:center;color:#646970;font-size:13px';
+      newEl.innerHTML = \`[위젯: \${labelMap[blockId]||blockId}]\`;
+      newEl.contentEditable = 'false';
+      break;
+    }
+    case 'social-links': {
+      newEl = document.createElement('div');
+      newEl.setAttribute('data-block', 'social-links');
+      newEl.style.cssText = 'display:flex;gap:12px;flex-wrap:wrap';
+      ['Twitter','Facebook','Instagram','YouTube','GitHub'].forEach(sn => {
+        const a = document.createElement('a');
+        a.href = '#'; a.textContent = sn;
+        a.style.cssText = 'padding:6px 12px;background:#f0f0f1;border-radius:4px;text-decoration:none;color:#1d2327;font-size:13px';
+        a.contentEditable = 'true';
+        newEl.appendChild(a);
+      });
+      break;
+    }
+    case 'embed': {
+      const eurl = prompt('삽입할 URL (YouTube, Twitter 등):');
+      if (!eurl) return;
+      newEl = document.createElement('div');
+      newEl.setAttribute('data-block', 'embed');
+      const vid2 = extractVideoId(eurl);
+      if (vid2) {
+        newEl.innerHTML = \`<iframe src="https://www.youtube.com/embed/\${vid2}" width="100%" height="315" frameborder="0" allowfullscreen style="border-radius:4px;display:block"></iframe>\`;
+      } else {
+        newEl.innerHTML = \`<blockquote style="border:1px solid #ddd;padding:16px;border-radius:4px"><a href="\${eurl}" target="_blank">\${eurl}</a></blockquote>\`;
+      }
+      break;
+    }
     default:
       newEl = makeBlock('p', 'paragraph', '');
   }
@@ -4609,7 +4915,7 @@ function insertBlock(blockId) {
   }
 
   // 뒤에 빈 단락 추가 (HR, image 등)
-  if (['separator','image','video','table','button','html'].includes(blockId)) {
+  if (['separator','image','video','table','button','html','gallery','audio','file','media-text','buttons','spacer','columns','group','cover','shortcode','archives','categories','tag-cloud','latest-posts','calendar','rss','search','social-links','embed'].includes(blockId)) {
     const after = makeBlock('p', 'paragraph', '');
     newEl.insertAdjacentElement('afterend', after);
     placeCursorIn(after);
@@ -5809,62 +6115,151 @@ __name(esc8, "esc");
 async function handleThemes(request, cp) {
   const method = request.method.toUpperCase();
   let notice = null;
-  if (method === "POST") {
+  const prefix = cp.db_prefix || 'cp_';
+
+  if (method === 'POST') {
     const fd = await request.formData().catch(() => new FormData());
-    const action = fd.get("action") || "";
-    const slug = (fd.get("theme") || "").trim();
-    if (action === "activate" && slug) {
-      await switchTheme(cp, slug);
-      notice = { type: "success", message: `Theme "${esc8(slug)}" activated.` };
+    const action = fd.get('action') || '';
+    const slug = (fd.get('theme') || '').trim();
+
+    if (action === 'activate' && slug) {
+      await updateOption(cp, 'template', slug);
+      await updateOption(cp, 'stylesheet', slug);
+      notice = { type: 'success', message: `테마 "${esc8(slug)}"이(가) 활성화되었습니다.` };
     }
-    if (action === "install_builtin") {
-      const builtinSlug = "cloudpress-default";
-      await updateOption(cp, "template", builtinSlug);
-      await updateOption(cp, "stylesheet", builtinSlug);
-      const meta = { name: "CloudPress Default", version: "1.2.0", description: "The default CloudPress theme.", author: "CloudPress" };
-      await cp.kv.put(`cp:theme:meta:${builtinSlug}`, JSON.stringify(meta)).catch(() => {
-      });
-      await cp.kv.put("cp:themes:list", JSON.stringify([{ slug: builtinSlug, ...meta }])).catch(() => {
-      });
-      notice = { type: "success", message: "Default theme installed and activated." };
-      cp.theme = { slug: builtinSlug, ...meta };
+
+    if (action === 'delete' && slug) {
+      try {
+        const list = JSON.parse(await cp.kv.get('cp:themes:list') || '[]');
+        await cp.kv.put('cp:themes:list', JSON.stringify(list.filter(t => t.slug !== slug)));
+        await cp.kv.delete(`cp:theme:meta:${slug}`);
+        notice = { type: 'success', message: `테마 "${esc8(slug)}"이(가) 삭제되었습니다.` };
+      } catch(_) {}
+    }
+
+    // WordPress.org에서 설치
+    if (action === 'install_wporg' && slug) {
+      try {
+        const res = await fetch(`https://api.wordpress.org/themes/info/1.1/?action=theme_information&request[slug]=${encodeURIComponent(slug)}&request[fields][description]=1&request[fields][screenshot_url]=1`);
+        const data = await res.json();
+        if (data && data.slug) {
+          const meta = { slug: data.slug, name: data.name, version: data.version, description: data.sections?.description || '', author: data.author, screenshot: data.screenshot_url || '', source: 'wporg', download_link: data.download_link };
+          const list = JSON.parse(await cp.kv.get('cp:themes:list') || '[]');
+          if (!list.find(t => t.slug === data.slug)) list.push(meta);
+          await cp.kv.put('cp:themes:list', JSON.stringify(list));
+          await cp.kv.put(`cp:theme:meta:${data.slug}`, JSON.stringify(meta));
+          await updateOption(cp, 'template', data.slug);
+          await updateOption(cp, 'stylesheet', data.slug);
+          notice = { type: 'success', message: `"${esc8(data.name)}" 테마가 설치 및 활성화되었습니다.` };
+        } else {
+          notice = { type: 'error', message: '테마를 찾을 수 없습니다.' };
+        }
+      } catch(e) { notice = { type: 'error', message: '설치 실패: ' + e.message }; }
+    }
+
+    // ZIP 업로드 설치
+    if (action === 'upload_theme') {
+      const file = fd.get('themezip');
+      if (file && file.name) {
+        const slugName = file.name.replace(/\.zip$/i, '').replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
+        const meta = { slug: slugName, name: slugName, version: '1.0.0', description: '업로드된 테마', author: '', source: 'upload' };
+        const list = JSON.parse(await cp.kv.get('cp:themes:list') || '[]');
+        if (!list.find(t => t.slug === slugName)) list.push(meta);
+        await cp.kv.put('cp:themes:list', JSON.stringify(list));
+        await cp.kv.put(`cp:theme:meta:${slugName}`, JSON.stringify(meta));
+        notice = { type: 'success', message: `"${esc8(slugName)}" 테마가 업로드되었습니다.` };
+      }
     }
   }
-  const themes = await getThemes(cp);
-  const activeSlug = await getOption(cp, "template", "").catch(() => "");
-  const themeCards = themes.length ? themes.map((t) => {
+
+  // WordPress.org 테마 검색
+  const searchQ = new URL(request.url).searchParams.get('search') || '';
+  const tab = new URL(request.url).searchParams.get('tab') || 'installed';
+  let wporgThemes = [];
+  if (tab === 'search' || tab === 'featured') {
+    try {
+      const q = searchQ || 'popular';
+      const apiUrl = searchQ
+        ? `https://api.wordpress.org/themes/info/1.1/?action=query_themes&request[search]=${encodeURIComponent(searchQ)}&request[per_page]=24&request[fields][screenshot_url]=1&request[fields][description]=1`
+        : `https://api.wordpress.org/themes/info/1.1/?action=query_themes&request[browse]=popular&request[per_page]=24&request[fields][screenshot_url]=1`;
+      const res = await fetch(apiUrl);
+      const data = await res.json();
+      wporgThemes = (data.themes || []).map(t => ({ slug: t.slug, name: t.name, version: t.version, description: t.sections?.description || '', author: t.author, screenshot: t.screenshot_url || '', rating: t.rating }));
+    } catch(_) {}
+  }
+
+  const installedThemes = JSON.parse(await cp.kv.get('cp:themes:list') || '[]');
+  const activeSlug = await getOption(cp, 'template', '').catch(() => '');
+
+  const installedCards = installedThemes.length ? installedThemes.map(t => {
     const isActive = t.slug === activeSlug;
-    return `
-  <div class="cp-card" style="position:relative${isActive ? ";border:2px solid #0073aa" : ""}">
-    ${isActive ? '<div style="position:absolute;top:10px;right:10px;background:#0073aa;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px">Active</div>' : ""}
-    <h3 style="margin:0 0 6px">${esc8(t.name || t.slug)}</h3>
-    <p style="color:#666;font-size:13px;margin:0 0 4px">${esc8(t.description || "")}</p>
-    <p style="color:#999;font-size:12px;margin:0 0 12px">v${esc8(t.version || "1.0.0")} by ${esc8(t.author || "")}</p>
-    ${!isActive ? `
-    <form method="post">
-      <input type="hidden" name="action" value="activate">
-      <input type="hidden" name="theme" value="${esc8(t.slug)}">
-      <button type="submit" class="cp-btn">Activate</button>
-    </form>` : '<span style="color:#0073aa;font-weight:600">Currently Active</span>'}
-  </div>`;
-  }).join("") : `<div class="cp-card" style="grid-column:1/-1;text-align:center;color:#888">
-        <p>No themes installed.</p>
-        <form method="post">
-          <input type="hidden" name="action" value="install_builtin">
-          <button type="submit" class="cp-btn">Install Default Theme</button>
-        </form>
-       </div>`;
+    return `<div style="border:${isActive?'2px solid #2271b1':'1px solid #dcdcde'};border-radius:6px;padding:16px;background:#fff;position:relative">
+      ${isActive ? '<span style="position:absolute;top:8px;right:8px;background:#2271b1;color:#fff;padding:2px 8px;border-radius:3px;font-size:11px;font-weight:600">활성</span>' : ''}
+      ${t.screenshot ? `<img src="${esc8(t.screenshot)}" style="width:100%;height:140px;object-fit:cover;border-radius:4px;margin-bottom:10px">` : '<div style="height:80px;background:#f0f0f1;border-radius:4px;margin-bottom:10px;display:flex;align-items:center;justify-content:center;color:#999">미리보기 없음</div>'}
+      <strong>${esc8(t.name||t.slug)}</strong>
+      <div style="color:#666;font-size:12px;margin:4px 0">v${esc8(t.version||'')} · ${esc8(t.author||'')}</div>
+      <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
+        ${!isActive ? `<form method="post" style="margin:0"><input type="hidden" name="action" value="activate"><input type="hidden" name="theme" value="${esc8(t.slug)}"><button class="cp-btn" style="font-size:12px;padding:4px 10px">활성화</button></form>` : ''}
+        <form method="post" style="margin:0" onsubmit="return confirm('삭제하시겠습니까?')"><input type="hidden" name="action" value="delete"><input type="hidden" name="theme" value="${esc8(t.slug)}"><button class="cp-btn cp-btn-secondary" style="font-size:12px;padding:4px 10px;color:#d63638">삭제</button></form>
+      </div>
+    </div>`;
+  }).join('') : '<div style="grid-column:1/-1;text-align:center;color:#888;padding:40px">설치된 테마가 없습니다.</div>';
+
+  const wporgCards = wporgThemes.map(t => {
+    const installed = installedThemes.find(i => i.slug === t.slug);
+    return `<div style="border:1px solid #dcdcde;border-radius:6px;padding:0;background:#fff;overflow:hidden">
+      ${t.screenshot ? `<img src="${esc8(t.screenshot)}" style="width:100%;height:140px;object-fit:cover">` : '<div style="height:120px;background:#f0f0f1;display:flex;align-items:center;justify-content:center;color:#999">미리보기 없음</div>'}
+      <div style="padding:12px">
+        <strong style="font-size:14px">${esc8(t.name)}</strong>
+        <div style="color:#666;font-size:12px;margin:3px 0">v${esc8(t.version||'')} · ${esc8(t.author||'')}</div>
+        ${t.rating ? `<div style="color:#f0b429;font-size:12px">${'★'.repeat(Math.round((t.rating||0)/20))}${'☆'.repeat(5-Math.round((t.rating||0)/20))}</div>` : ''}
+        <div style="margin-top:8px">
+          ${installed
+            ? `<span style="color:#00a32a;font-size:12px;font-weight:600">✓ 설치됨</span>`
+            : `<form method="post" style="margin:0"><input type="hidden" name="action" value="install_wporg"><input type="hidden" name="theme" value="${esc8(t.slug)}"><button class="cp-btn" style="font-size:12px;padding:4px 10px;width:100%">설치 및 활성화</button></form>`}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
   const content = `
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
-  <h1>Themes</h1>
+<div style="margin-bottom:16px;border-bottom:1px solid #dcdcde;padding-bottom:0;display:flex;gap:0">
+  <a href="?tab=installed" style="padding:8px 16px;text-decoration:none;font-weight:600;border-bottom:${tab==='installed'?'2px solid #2271b1;color:#2271b1':'2px solid transparent;color:#646970'}">설치된 테마 (${installedThemes.length})</a>
+  <a href="?tab=featured" style="padding:8px 16px;text-decoration:none;font-weight:600;border-bottom:${tab==='featured'?'2px solid #2271b1;color:#2271b1':'2px solid transparent;color:#646970'}">인기 테마</a>
+  <a href="?tab=search" style="padding:8px 16px;text-decoration:none;font-weight:600;border-bottom:${tab==='search'?'2px solid #2271b1;color:#2271b1':'2px solid transparent;color:#646970'}">테마 검색</a>
+  <a href="?tab=upload" style="padding:8px 16px;text-decoration:none;font-weight:600;border-bottom:${tab==='upload'?'2px solid #2271b1;color:#2271b1':'2px solid transparent;color:#646970'}">ZIP 업로드</a>
 </div>
-<p style="color:#666;margin-bottom:20px">Themes are loaded from GitHub. Set your GitHub repo in <a href="/cp-admin/options-general">General Settings</a>.</p>
-<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:20px">
-  ${themeCards}
-</div>`;
+
+${tab === 'installed' ? `
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px">
+  ${installedCards}
+</div>` : ''}
+
+${tab === 'featured' || tab === 'search' ? `
+<form method="get" style="margin-bottom:16px;display:flex;gap:8px">
+  <input type="hidden" name="tab" value="search">
+  <input type="text" name="search" value="${esc8(searchQ)}" placeholder="테마 검색..." style="flex:1;padding:8px 12px;border:1px solid #ccc;border-radius:4px">
+  <button type="submit" class="cp-btn">검색</button>
+</form>
+${wporgThemes.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px">${wporgCards}</div>` : '<p style="color:#888;text-align:center;padding:40px">결과 없음</p>'}` : ''}
+
+${tab === 'upload' ? `
+<div class="cp-card" style="max-width:500px">
+  <h3 style="margin:0 0 12px">테마 ZIP 파일 업로드</h3>
+  <form method="post" enctype="multipart/form-data">
+    <input type="hidden" name="action" value="upload_theme">
+    <div style="margin-bottom:12px">
+      <label style="display:block;margin-bottom:6px;font-weight:500">테마 ZIP 파일 선택</label>
+      <input type="file" name="themezip" accept=".zip" required style="display:block;width:100%">
+      <p style="color:#666;font-size:12px;margin-top:4px">WordPress 호환 테마 ZIP 파일을 업로드하세요.</p>
+    </div>
+    <button type="submit" class="cp-btn">업로드 및 설치</button>
+  </form>
+</div>` : ''}`;
+
   return new Response(
-    await renderAdminShell(cp, content, { title: "Themes", notices: notice ? [notice] : [] }),
-    { headers: { "Content-Type": "text/html; charset=utf-8" } }
+    await renderAdminShell(cp, content, { title: '테마', notices: notice ? [notice] : [] }),
+    { headers: { 'Content-Type': 'text/html; charset=utf-8' } }
   );
 }
 __name(handleThemes, "handleThemes");
@@ -5896,100 +6291,165 @@ __name(getActivePlugins, "getActivePlugins");
 async function handlePlugins(request, cp) {
   const method = request.method.toUpperCase();
   let notice = null;
-  if (method === "POST") {
+
+  if (method === 'POST') {
     const fd = await request.formData().catch(() => new FormData());
-    const action = fd.get("action") || "";
-    const slug = (fd.get("plugin") || "").trim();
+    const action = fd.get('action') || '';
+    const slug = (fd.get('plugin') || '').trim();
     const active2 = await getActivePlugins(cp);
-    if (action === "activate" && slug && !active2.includes(slug)) {
+
+    if (action === 'activate' && slug && !active2.includes(slug)) {
       active2.push(slug);
-      await cp.kv.put("cp:plugins:active", JSON.stringify(active2)).catch(() => {
-      });
-      notice = { type: "success", message: `Plugin "${esc9(slug)}" activated.` };
+      await cp.kv.put('cp:plugins:active', JSON.stringify(active2)).catch(() => {});
+      notice = { type: 'success', message: `플러그인 "${esc9(slug)}"이(가) 활성화되었습니다.` };
     }
-    if (action === "deactivate" && slug) {
-      const updated = active2.filter((p) => p !== slug);
-      await cp.kv.put("cp:plugins:active", JSON.stringify(updated)).catch(() => {
-      });
-      notice = { type: "success", message: `Plugin "${esc9(slug)}" deactivated.` };
+    if (action === 'deactivate' && slug) {
+      await cp.kv.put('cp:plugins:active', JSON.stringify(active2.filter(p => p !== slug))).catch(() => {});
+      notice = { type: 'success', message: `플러그인 "${esc9(slug)}"이(가) 비활성화되었습니다.` };
     }
-    if (action === "delete" && slug) {
-      const plugins2 = await getPlugins(cp);
-      const updated = plugins2.filter((p) => p.slug !== slug);
-      await cp.kv.put("cp:plugins:list", JSON.stringify(updated)).catch(() => {
-      });
-      const active22 = (await getActivePlugins(cp)).filter((p) => p !== slug);
-      await cp.kv.put("cp:plugins:active", JSON.stringify(active22)).catch(() => {
-      });
-      notice = { type: "success", message: `Plugin "${esc9(slug)}" deleted.` };
+    if (action === 'delete' && slug) {
+      const list = await getPlugins(cp);
+      await cp.kv.put('cp:plugins:list', JSON.stringify(list.filter(p => p.slug !== slug))).catch(() => {});
+      await cp.kv.put('cp:plugins:active', JSON.stringify(active2.filter(p => p !== slug))).catch(() => {});
+      notice = { type: 'success', message: `플러그인 "${esc9(slug)}"이(가) 삭제되었습니다.` };
     }
-    if (action === "install_github") {
-      const repo = (fd.get("github_repo") || "").trim();
-      const plugSlug = repo.split("/").pop() || repo;
-      if (repo) {
-        const plugins2 = await getPlugins(cp);
-        if (!plugins2.find((p) => p.slug === plugSlug)) {
-          plugins2.push({ slug: plugSlug, name: plugSlug, github_repo: repo, version: "1.2.0", description: `GitHub: ${repo}` });
-          await cp.kv.put("cp:plugins:list", JSON.stringify(plugins2)).catch(() => {
-          });
-          notice = { type: "success", message: `Plugin "${esc9(plugSlug)}" added from GitHub.` };
+
+    // WordPress.org 설치
+    if (action === 'install_wporg' && slug) {
+      try {
+        const res = await fetch(`https://api.wordpress.org/plugins/info/1.2/?action=plugin_information&request[slug]=${encodeURIComponent(slug)}&request[fields][short_description]=1&request[fields][sections]=0&request[fields][versions]=0`);
+        const data = await res.json();
+        if (data && data.slug && !data.error) {
+          const meta = { slug: data.slug, name: data.name, version: data.version, description: data.short_description || '', author: data.author || '', source: 'wporg', download_link: data.download_link, active_installs: data.active_installs };
+          const list = await getPlugins(cp);
+          if (!list.find(p => p.slug === data.slug)) list.push(meta);
+          await cp.kv.put('cp:plugins:list', JSON.stringify(list)).catch(() => {});
+          const act = await getActivePlugins(cp);
+          if (!act.includes(data.slug)) act.push(data.slug);
+          await cp.kv.put('cp:plugins:active', JSON.stringify(act)).catch(() => {});
+          notice = { type: 'success', message: `"${esc9(data.name)}" 플러그인이 설치 및 활성화되었습니다.` };
         } else {
-          notice = { type: "error", message: "Plugin already exists." };
+          notice = { type: 'error', message: '플러그인을 찾을 수 없습니다.' };
         }
+      } catch(e) { notice = { type: 'error', message: '설치 실패: ' + e.message }; }
+    }
+
+    // ZIP 업로드 설치
+    if (action === 'upload_plugin') {
+      const file = fd.get('pluginzip');
+      if (file && file.name) {
+        const slugName = file.name.replace(/\.zip$/i, '').replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
+        const meta = { slug: slugName, name: slugName, version: '1.0.0', description: '업로드된 플러그인', author: '', source: 'upload' };
+        const list = await getPlugins(cp);
+        if (!list.find(p => p.slug === slugName)) list.push(meta);
+        await cp.kv.put('cp:plugins:list', JSON.stringify(list)).catch(() => {});
+        notice = { type: 'success', message: `"${esc9(slugName)}" 플러그인이 업로드되었습니다.` };
       }
     }
   }
+
+  const url2 = new URL(request.url);
+  const tab = url2.searchParams.get('tab') || 'installed';
+  const searchQ = url2.searchParams.get('s') || '';
+
+  // WordPress.org 플러그인 검색/목록
+  let wporgPlugins = [];
+  if (tab === 'search' || tab === 'featured' || tab === 'popular') {
+    try {
+      const apiUrl = searchQ
+        ? `https://api.wordpress.org/plugins/info/1.2/?action=query_plugins&request[search]=${encodeURIComponent(searchQ)}&request[per_page]=24&request[fields][short_description]=1&request[fields][icons]=1`
+        : `https://api.wordpress.org/plugins/info/1.2/?action=query_plugins&request[browse]=popular&request[per_page]=24&request[fields][short_description]=1&request[fields][icons]=1`;
+      const res = await fetch(apiUrl);
+      const data = await res.json();
+      wporgPlugins = (data.plugins || []).map(p => ({ slug: p.slug, name: p.name, version: p.version, description: p.short_description || '', author: p.author || '', rating: p.rating, active_installs: p.active_installs, icons: p.icons || {} }));
+    } catch(_) {}
+  }
+
   const plugins = await getPlugins(cp);
   const active = await getActivePlugins(cp);
-  const rows = plugins.map((p) => {
+
+  const installedRows = plugins.map(p => {
     const isActive = active.includes(p.slug);
-    return `
-  <tr>
-    <td>
-      <strong>${esc9(p.name || p.slug)}</strong>
-      <div style="color:#666;font-size:12px;margin-top:2px">${esc9(p.description || "")}</div>
-      <div class="row-actions" style="margin-top:4px">
-        ${isActive ? `<form method="post" style="display:inline"><input type="hidden" name="action" value="deactivate"><input type="hidden" name="plugin" value="${esc9(p.slug)}"><button type="submit" class="cp-btn-link" style="color:#a00">Deactivate</button></form>` : `<form method="post" style="display:inline"><input type="hidden" name="action" value="activate"><input type="hidden" name="plugin" value="${esc9(p.slug)}"><button type="submit" class="cp-btn-link">Activate</button></form>`}
-        &nbsp;|&nbsp;
-        <form method="post" style="display:inline" onsubmit="return confirm('Delete plugin?')">
-          <input type="hidden" name="action" value="delete">
-          <input type="hidden" name="plugin" value="${esc9(p.slug)}">
-          <button type="submit" class="cp-btn-link" style="color:#a00">Delete</button>
-        </form>
+    return `<tr>
+      <td>
+        <strong>${esc9(p.name||p.slug)}</strong>
+        <div style="color:#666;font-size:12px;margin-top:2px">${esc9((p.description||'').replace(/<[^>]+>/g,'').slice(0,100))}</div>
+        <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">
+          ${isActive
+            ? `<form method="post" style="margin:0"><input type="hidden" name="action" value="deactivate"><input type="hidden" name="plugin" value="${esc9(p.slug)}"><button class="cp-btn cp-btn-secondary" style="padding:3px 10px;font-size:12px;color:#d63638">비활성화</button></form>`
+            : `<form method="post" style="margin:0"><input type="hidden" name="action" value="activate"><input type="hidden" name="plugin" value="${esc9(p.slug)}"><button class="cp-btn" style="padding:3px 10px;font-size:12px">활성화</button></form>`}
+          <form method="post" style="margin:0" onsubmit="return confirm('삭제하시겠습니까?')"><input type="hidden" name="action" value="delete"><input type="hidden" name="plugin" value="${esc9(p.slug)}"><button class="cp-btn cp-btn-secondary" style="padding:3px 10px;font-size:12px;color:#d63638">삭제</button></form>
+        </div>
+      </td>
+      <td style="white-space:nowrap">v${esc9(p.version||'?')}</td>
+      <td><span class="cp-badge ${isActive?'cp-badge-publish':'cp-badge-draft'}">${isActive?'활성':'비활성'}</span></td>
+      <td style="font-size:12px;color:#666">${esc9(p.source||'')}</td>
+    </tr>`;
+  }).join('');
+
+  const wporgCards = wporgPlugins.map(p => {
+    const installed = plugins.find(i => i.slug === p.slug);
+    const icon = p.icons['1x'] || p.icons['svg'] || '';
+    const installs = p.active_installs >= 1000000 ? Math.floor(p.active_installs/1000000)+'M+' : p.active_installs >= 1000 ? Math.floor(p.active_installs/1000)+'K+' : p.active_installs;
+    return `<div style="border:1px solid #dcdcde;border-radius:6px;padding:14px;background:#fff;display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;gap:10px;align-items:flex-start">
+        ${icon ? `<img src="${esc9(icon)}" style="width:48px;height:48px;border-radius:6px;flex-shrink:0">` : '<div style="width:48px;height:48px;background:#f0f0f1;border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:20px">🔌</div>'}
+        <div style="flex:1;min-width:0">
+          <strong style="font-size:13px;display:block">${esc9(p.name)}</strong>
+          <div style="color:#666;font-size:11px">by ${esc9(p.author||'').replace(/<[^>]+>/g,'')}</div>
+          ${p.rating ? `<div style="color:#f0b429;font-size:11px">${'★'.repeat(Math.round((p.rating||0)/20))}${'☆'.repeat(5-Math.round((p.rating||0)/20))} ${installs} 설치</div>` : ''}
+        </div>
       </div>
-    </td>
-    <td>v${esc9(p.version || "?")}</td>
-    <td><span class="cp-status ${isActive ? "cp-status-publish" : "cp-status-draft"}">${isActive ? "Active" : "Inactive"}</span></td>
-    ${p.github_repo ? `<td><a href="https://github.com/${esc9(p.github_repo)}" target="_blank" style="font-size:12px">${esc9(p.github_repo)}</a></td>` : "<td>--</td>"}
-  </tr>`;
-  }).join("");
-  const content = `
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
-  <h1>Plugins</h1>
+      <p style="color:#555;font-size:12px;margin:0;line-height:1.5">${esc9((p.description||'').replace(/<[^>]+>/g,'').slice(0,120))}</p>
+      ${installed
+        ? `<span style="color:#00a32a;font-size:12px;font-weight:600">✓ 설치됨</span>`
+        : `<form method="post" style="margin:0"><input type="hidden" name="action" value="install_wporg"><input type="hidden" name="plugin" value="${esc9(p.slug)}"><button class="cp-btn" style="font-size:12px;padding:5px 12px;width:100%">설치 및 활성화</button></form>`}
+    </div>`;
+  }).join('');
+
+  const content2 = `
+<div style="margin-bottom:16px;border-bottom:1px solid #dcdcde;display:flex;gap:0;align-items:center;justify-content:space-between">
+  <div style="display:flex">
+    <a href="?tab=installed" style="padding:8px 16px;text-decoration:none;font-weight:600;border-bottom:${tab==='installed'?'2px solid #2271b1;color:#2271b1':'2px solid transparent;color:#646970'}">설치된 플러그인 (${plugins.length})</a>
+    <a href="?tab=popular" style="padding:8px 16px;text-decoration:none;font-weight:600;border-bottom:${tab==='popular'?'2px solid #2271b1;color:#2271b1':'2px solid transparent;color:#646970'}">인기 플러그인</a>
+    <a href="?tab=search" style="padding:8px 16px;text-decoration:none;font-weight:600;border-bottom:${tab==='search'?'2px solid #2271b1;color:#2271b1':'2px solid transparent;color:#646970'}">검색</a>
+    <a href="?tab=upload" style="padding:8px 16px;text-decoration:none;font-weight:600;border-bottom:${tab==='upload'?'2px solid #2271b1;color:#2271b1':'2px solid transparent;color:#646970'}">ZIP 업로드</a>
+  </div>
 </div>
 
-<details class="cp-card" style="margin-bottom:20px">
-  <summary style="cursor:pointer;font-weight:600">&#43; Add Plugin from GitHub</summary>
-  <form method="post" style="margin-top:14px;display:flex;gap:10px;align-items:flex-end">
-    <div style="flex:1">
-      <label style="display:block;margin-bottom:4px;font-weight:500">GitHub Repository (owner/repo)</label>
-      <input type="text" name="github_repo" placeholder="e.g. username/my-cloudpress-plugin"
-             style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box">
-    </div>
-    <input type="hidden" name="action" value="install_github">
-    <button type="submit" class="cp-btn">Add Plugin</button>
-  </form>
-</details>
-
-<div class="cp-card">
+${tab === 'installed' ? `
+<div class="cp-table-wrap">
   <table class="cp-table">
-    <thead><tr><th>Plugin</th><th>Version</th><th>Status</th><th>Source</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="4" style="text-align:center;color:#999;padding:20px">No plugins installed.</td></tr>'}</tbody>
+    <thead><tr><th>플러그인</th><th>버전</th><th>상태</th><th>출처</th></tr></thead>
+    <tbody>${installedRows || '<tr><td colspan="4" style="text-align:center;color:#999;padding:30px">설치된 플러그인이 없습니다.</td></tr>'}</tbody>
   </table>
-</div>`;
+</div>` : ''}
+
+${tab === 'popular' || tab === 'search' ? `
+<form method="get" style="margin-bottom:16px;display:flex;gap:8px">
+  <input type="hidden" name="tab" value="search">
+  <input type="text" name="s" value="${esc9(searchQ)}" placeholder="플러그인 검색..." style="flex:1;padding:8px 12px;border:1px solid #ccc;border-radius:4px">
+  <button type="submit" class="cp-btn">검색</button>
+</form>
+${wporgPlugins.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px">${wporgCards}</div>` : '<p style="color:#888;text-align:center;padding:40px">결과 없음</p>'}` : ''}
+
+${tab === 'upload' ? `
+<div class="cp-card" style="max-width:500px">
+  <h3 style="margin:0 0 12px">플러그인 ZIP 파일 업로드</h3>
+  <form method="post" enctype="multipart/form-data">
+    <input type="hidden" name="action" value="upload_plugin">
+    <div style="margin-bottom:12px">
+      <label style="display:block;margin-bottom:6px;font-weight:500">플러그인 ZIP 파일 선택</label>
+      <input type="file" name="pluginzip" accept=".zip" required style="display:block;width:100%">
+      <p style="color:#666;font-size:12px;margin-top:4px">WordPress 호환 플러그인 ZIP 파일을 업로드하세요.</p>
+    </div>
+    <button type="submit" class="cp-btn">업로드 및 설치</button>
+  </form>
+</div>` : ''}`;
+
   return new Response(
-    await renderAdminShell(cp, content, { title: "Plugins", notices: notice ? [notice] : [] }),
-    { headers: { "Content-Type": "text/html; charset=utf-8" } }
+    await renderAdminShell(cp, content2, { title: '플러그인', notices: notice ? [notice] : [] }),
+    { headers: { 'Content-Type': 'text/html; charset=utf-8' } }
   );
 }
 __name(handlePlugins, "handlePlugins");
@@ -6474,6 +6934,7 @@ async function handleOptionsGeneral(request, cp) {
     "siteurl",
     "admin_email",
     "blogcharset",
+    "WPLANG",
     "date_format",
     "time_format",
     "timezone_string",
@@ -6588,6 +7049,22 @@ async function handleOptionsGeneral(request, cp) {
     (tz) => `<option value="${esc13(tz)}" ${opts.timezone_string === tz ? "selected" : ""}>${esc13(tz)}</option>`
   ).join("")}
           </select>
+        </td>
+      </tr>
+      <tr>
+        <th><label for="WPLANG">사이트 언어</label></th>
+        <td>
+          <select id="WPLANG" name="WPLANG" class="cp-form-select">
+            <option value="ko_KR" ${opts.WPLANG === "ko_KR" || !opts.WPLANG ? "selected" : ""}>한국어</option>
+            <option value="en_US" ${opts.WPLANG === "en_US" ? "selected" : ""}>English (United States)</option>
+            <option value="ja" ${opts.WPLANG === "ja" ? "selected" : ""}>日本語</option>
+            <option value="zh_CN" ${opts.WPLANG === "zh_CN" ? "selected" : ""}>中文 (简体)</option>
+            <option value="zh_TW" ${opts.WPLANG === "zh_TW" ? "selected" : ""}>中文 (繁體)</option>
+            <option value="fr_FR" ${opts.WPLANG === "fr_FR" ? "selected" : ""}>Français</option>
+            <option value="de_DE" ${opts.WPLANG === "de_DE" ? "selected" : ""}>Deutsch</option>
+            <option value="es_ES" ${opts.WPLANG === "es_ES" ? "selected" : ""}>Español</option>
+          </select>
+          <p class="cp-description">관리자 화면 및 사이트에 사용할 언어를 선택하세요.</p>
         </td>
       </tr>
       <tr>
@@ -8243,6 +8720,123 @@ async function handleAdmin(request, env, ctx) {
   return dispatchAdmin(request, env, ctx, cp, path, method, url);
 }
 __name(handleAdmin, "handleAdmin");
+
+// ── Theme Editor ─────────────────────────────────────────────────────────
+async function handleThemeEditor(request, cp) {
+  const activeSlug = await getOption(cp, 'template', 'default').catch(() => 'default');
+  const method = request.method.toUpperCase();
+  let notice = null;
+  let fileContent = '';
+  const url2 = new URL(request.url);
+  const file = url2.searchParams.get('file') || 'style.css';
+
+  // KV에서 테마 파일 로드
+  const kvKey = `cp:theme:file:${activeSlug}:${file}`;
+  fileContent = await cp.kv.get(kvKey) || getDefaultThemeFile(file);
+
+  if (method === 'POST') {
+    const fd = await request.formData().catch(() => new FormData());
+    const newContent = fd.get('newcontent') || '';
+    await cp.kv.put(kvKey, newContent);
+    fileContent = newContent;
+    notice = { type: 'success', message: `${file} 파일이 저장되었습니다.` };
+  }
+
+  const files = ['style.css', 'index.html', 'single.html', 'archive.html', 'header.html', 'footer.html', 'sidebar.html'];
+  const fileLinks = files.map(f => `<a href="?file=${encodeURIComponent(f)}" style="display:block;padding:6px 10px;text-decoration:none;color:${f===file?'#2271b1;font-weight:600;background:#f0f4ff':'#1d2327'};border-radius:4px">${f}</a>`).join('');
+
+  const escaped = fileContent.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const content2 = `
+<div style="display:grid;grid-template-columns:180px 1fr;gap:20px">
+  <div class="cp-card" style="padding:12px">
+    <div style="font-size:12px;color:#646970;margin-bottom:8px;font-weight:600">테마 파일</div>
+    <div style="font-size:13px;color:#888;margin-bottom:8px">${activeSlug}</div>
+    ${fileLinks}
+  </div>
+  <div class="cp-card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <strong style="font-size:15px">${file}</strong>
+      <span style="font-size:12px;color:#888">테마: ${activeSlug}</span>
+    </div>
+    <form method="post">
+      <textarea name="newcontent" style="width:100%;height:500px;font-family:monospace;font-size:13px;line-height:1.5;padding:12px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;resize:vertical;background:#1d2327;color:#a7aaad">${escaped}</textarea>
+      <div style="margin-top:12px">
+        <button type="submit" class="cp-btn">파일 저장</button>
+        <a href="?file=${encodeURIComponent(file)}" class="cp-btn cp-btn-secondary" style="margin-left:8px">취소</a>
+      </div>
+    </form>
+  </div>
+</div>`;
+
+  return new Response(
+    await renderAdminShell(cp, content2, { title: '테마 편집기', notices: notice ? [notice] : [] }),
+    { headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+  );
+}
+
+function getDefaultThemeFile(file) {
+  if (file === 'style.css') return '/*\nTheme Name: CloudPress Default\nTheme URI: https://cloudpress.dev\nDescription: 기본 CloudPress 테마\nVersion: 1.0\n*/\n\nbody {\n  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;\n  line-height: 1.7;\n  color: #1d2327;\n  margin: 0;\n  padding: 0;\n}\n';
+  if (file === 'index.html') return '<!DOCTYPE html>\n<html lang="ko">\n<head><meta charset="UTF-8"><title>{{site_name}}</title></head>\n<body>\n<header><h1>{{site_name}}</h1></header>\n<main>{{content}}</main>\n<footer><p>&copy; {{year}} {{site_name}}</p></footer>\n</body>\n</html>';
+  return `/* ${file} */\n`;
+}
+
+// ── Plugin Editor ─────────────────────────────────────────────────────────
+async function handlePluginEditor(request, cp) {
+  const plugins2 = await getPlugins(cp);
+  const method = request.method.toUpperCase();
+  let notice = null;
+  const url2 = new URL(request.url);
+  const selectedPlugin = url2.searchParams.get('plugin') || (plugins2[0]?.slug || '');
+  const file = url2.searchParams.get('file') || 'plugin.js';
+  let fileContent = '';
+
+  const kvKey = `cp:plugin:file:${selectedPlugin}:${file}`;
+  fileContent = await cp.kv.get(kvKey) || `// ${selectedPlugin} - ${file}\n// 이 파일을 편집하세요.\n`;
+
+  if (method === 'POST') {
+    const fd = await request.formData().catch(() => new FormData());
+    const newContent = fd.get('newcontent') || '';
+    await cp.kv.put(kvKey, newContent);
+    fileContent = newContent;
+    notice = { type: 'success', message: `${file} 파일이 저장되었습니다.` };
+  }
+
+  const pluginSelect = plugins2.length
+    ? `<select name="plugin" onchange="location='?plugin='+this.value" style="width:100%;padding:6px;border:1px solid #ccc;border-radius:4px;margin-bottom:12px">
+        ${plugins2.map(p => `<option value="${p.slug}" ${p.slug===selectedPlugin?'selected':''}>${p.name||p.slug}</option>`).join('')}
+      </select>`
+    : '<p style="color:#888;font-size:13px">설치된 플러그인이 없습니다.</p>';
+
+  const escaped = fileContent.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const content2 = plugins2.length ? `
+<div style="display:grid;grid-template-columns:200px 1fr;gap:20px">
+  <div class="cp-card" style="padding:12px">
+    <div style="font-size:12px;color:#646970;margin-bottom:8px;font-weight:600">플러그인 선택</div>
+    ${pluginSelect}
+    <div style="font-size:12px;color:#646970;margin-bottom:8px;font-weight:600">파일</div>
+    <a href="?plugin=${encodeURIComponent(selectedPlugin)}&file=plugin.js" style="display:block;padding:6px 10px;text-decoration:none;color:${'plugin.js'===file?'#2271b1;font-weight:600;background:#f0f4ff':'#1d2327'};border-radius:4px">plugin.js</a>
+    <a href="?plugin=${encodeURIComponent(selectedPlugin)}&file=style.css" style="display:block;padding:6px 10px;text-decoration:none;color:${'style.css'===file?'#2271b1;font-weight:600;background:#f0f4ff':'#1d2327'};border-radius:4px">style.css</a>
+  </div>
+  <div class="cp-card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <strong>${file}</strong>
+      <span style="font-size:12px;color:#888">플러그인: ${selectedPlugin}</span>
+    </div>
+    <form method="post">
+      <textarea name="newcontent" style="width:100%;height:500px;font-family:monospace;font-size:13px;line-height:1.5;padding:12px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;resize:vertical;background:#1d2327;color:#a7aaad">${escaped}</textarea>
+      <div style="margin-top:12px">
+        <button type="submit" class="cp-btn">파일 저장</button>
+      </div>
+    </form>
+  </div>
+</div>` : '<div class="cp-card"><p>설치된 플러그인이 없습니다. <a href="/cp-admin/plugins">플러그인 설치</a></p></div>';
+
+  return new Response(
+    await renderAdminShell(cp, content2, { title: '플러그인 편집기', notices: notice ? [notice] : [] }),
+    { headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+  );
+}
+
 async function dispatchAdmin(request, env, ctx, cp, path, method, url) {
   if (path === "/cp-admin" || path === "/cp-admin/index") {
     return handleDashboard(request, cp);
@@ -8313,8 +8907,20 @@ async function dispatchAdmin(request, env, ctx, cp, path, method, url) {
   if (path === "/cp-admin/update-core" || path === "/cp-admin/upgrade") {
     return handleUpgrade(request, cp);
   }
+  if (path === '/cp-admin/theme-editor') {
+    return handleThemeEditor(request, cp);
+  }
+  if (path === '/cp-admin/plugin-editor') {
+    return handlePluginEditor(request, cp);
+  }
+  if (path === '/cp-admin/theme-install') {
+    return new Response(null, { status: 302, headers: { 'Location': '/cp-admin/themes?tab=featured' } });
+  }
+  if (path === '/cp-admin/plugin-install') {
+    return new Response(null, { status: 302, headers: { 'Location': '/cp-admin/plugins?tab=popular' } });
+  }
   return new Response(
-    await renderAdminShell(cp, "<h2>Page Not Found</h2><p>The requested admin page does not exist.</p>", { title: "404 Not Found" }),
+    await renderAdminShell(cp, "<h2>페이지를 찾을 수 없습니다</h2><p>요청한 관리자 페이지가 존재하지 않습니다.</p>", { title: "404" }),
     { status: 404, headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }
@@ -8830,53 +9436,4 @@ function cssResp(css) {
 }
 __name(cssResp, "cssResp");
 function serveInlineCss(path) {
-  const ADMIN_CSS = `:root{--cp-sidebar-w:240px;--cp-topbar-h:48px;--cp-bg:#f0f0f1;--cp-sidebar-bg:#1d2327;--cp-sidebar-text:#a7aaad;--cp-sidebar-hover:#2c3338;--cp-sidebar-active:#2271b1;--cp-topbar-bg:#1d2327;--cp-topbar-text:#a7aaad;--cp-accent:#2271b1;--cp-accent-hover:#135e96;--cp-white:#fff;--cp-border:#dcdcde;--cp-text:#1d2327;--cp-muted:#646970;--cp-radius:4px;--cp-shadow:0 1px 3px rgba(0,0,0,.12)}*,*::before,*::after{box-sizing:border-box}html,body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;background:var(--cp-bg);color:var(--cp-text)}#cp-topbar{position:fixed;top:0;left:0;right:0;height:var(--cp-topbar-h);background:var(--cp-topbar-bg);display:flex;align-items:center;justify-content:space-between;padding:0 16px;z-index:1000;color:var(--cp-topbar-text)}.cp-topbar-left,.cp-topbar-right{display:flex;align-items:center;gap:12px}#cp-menu-toggle{background:none;border:none;cursor:pointer;padding:6px;color:var(--cp-topbar-text);display:none;flex-direction:column;gap:4px}#cp-menu-toggle span{display:block;width:20px;height:2px;background:currentColor;transition:.2s}.cp-site-link{color:var(--cp-topbar-text);text-decoration:none;font-size:13px;opacity:.8;transition:.15s}.cp-site-link:hover{opacity:1;color:var(--cp-white)}.cp-version{font-size:11px;opacity:.5}.cp-user-menu{position:relative}.cp-user-btn{background:none;border:none;color:var(--cp-topbar-text);cursor:pointer;font-size:13px;padding:6px 10px;border-radius:var(--cp-radius);transition:.15s}.cp-user-btn:hover{background:var(--cp-sidebar-hover);color:var(--cp-white)}.cp-user-dropdown{display:none;position:absolute;right:0;top:calc(100% + 4px);background:var(--cp-white);border:1px solid var(--cp-border);border-radius:var(--cp-radius);min-width:150px;box-shadow:var(--cp-shadow);z-index:100}.cp-user-menu.open .cp-user-dropdown{display:block}.cp-user-dropdown a{display:block;padding:8px 14px;color:var(--cp-text);text-decoration:none;font-size:13px;transition:.1s}.cp-user-dropdown a:hover{background:var(--cp-bg)}.cp-user-dropdown hr{border:none;border-top:1px solid var(--cp-border);margin:4px 0}.cp-logout{color:#d63638!important}#cp-layout{display:flex;min-height:100vh;padding-top:var(--cp-topbar-h)}#cp-sidebar{width:var(--cp-sidebar-w);background:var(--cp-sidebar-bg);flex-shrink:0;overflow-y:auto;position:fixed;top:var(--cp-topbar-h);left:0;bottom:0;z-index:500;transition:transform .2s}.cp-sidebar-header{padding:16px 14px 8px;border-bottom:1px solid rgba(255,255,255,.07)}.cp-logo{display:flex;align-items:center;gap:8px;color:var(--cp-white);text-decoration:none;font-weight:700;font-size:16px}.cp-logo span{letter-spacing:-.3px}.cp-nav-list{list-style:none;margin:8px 0;padding:0}.cp-nav-item{margin:1px 0}.cp-nav-link{display:flex;align-items:center;gap:10px;padding:9px 14px;color:var(--cp-sidebar-text);text-decoration:none;border-radius:var(--cp-radius);margin:0 6px;transition:.15s;font-size:13px}.cp-nav-link:hover,.cp-nav-item.active>.cp-nav-link{color:var(--cp-white);background:var(--cp-sidebar-hover)}.cp-nav-item.active>.cp-nav-link{background:var(--cp-sidebar-active)}.cp-nav-icon{font-size:16px;flex-shrink:0;width:20px;text-align:center}.cp-nav-label{flex:1}.cp-nav-arrow{font-size:9px;opacity:.5;transition:transform .2s}.cp-nav-item.has-children.active .cp-nav-arrow,.cp-nav-item.has-children:hover .cp-nav-arrow{transform:rotate(180deg)}.cp-subnav{list-style:none;margin:0;padding:0 0 4px 44px;display:none}.cp-nav-item.has-children.active .cp-subnav,.cp-nav-item.has-children:hover .cp-subnav{display:block}.cp-subnav li a{display:block;padding:6px 10px;color:var(--cp-sidebar-text);text-decoration:none;font-size:12.5px;border-radius:var(--cp-radius);transition:.1s}.cp-subnav li a:hover,.cp-subnav li.active a{color:var(--cp-white);background:rgba(255,255,255,.07)}#cp-main{flex:1;margin-left:var(--cp-sidebar-w);padding:16px 24px 24px;min-height:calc(100vh - var(--cp-topbar-h))}.cp-page-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:10px;flex-wrap:wrap}.cp-page-title{font-size:22px;font-weight:400;margin:0;color:var(--cp-text);line-height:1.3}.cp-notice{border-left:4px solid var(--cp-accent);background:var(--cp-white);padding:10px 14px;border-radius:0 var(--cp-radius) var(--cp-radius) 0;margin-bottom:16px;box-shadow:var(--cp-shadow)}.cp-notice-success{border-color:#00a32a}.cp-notice-error{border-color:#d63638}.cp-notice-warning{border-color:#dba617}.cp-notice p{margin:0;font-size:13.5px}.cp-card{background:var(--cp-white);border:1px solid var(--cp-border);border-radius:var(--cp-radius);padding:20px;margin-bottom:20px;box-shadow:var(--cp-shadow)}.cp-card h2,.cp-card h3{margin:0 0 14px;font-size:15px;color:var(--cp-text)}.cp-table-wrap{background:var(--cp-white);border:1px solid var(--cp-border);border-radius:var(--cp-radius);overflow:hidden;margin-bottom:20px;box-shadow:var(--cp-shadow)}.cp-table{width:100%;border-collapse:collapse;font-size:13px}.cp-table th{background:var(--cp-bg);padding:10px 14px;text-align:left;font-weight:600;border-bottom:1px solid var(--cp-border);color:var(--cp-muted);font-size:12px;text-transform:uppercase;letter-spacing:.4px}.cp-table td{padding:10px 14px;border-bottom:1px solid var(--cp-border);vertical-align:middle}.cp-table tr:last-child td{border-bottom:none}.cp-table tr:hover td{background:#f9f9f9}.cp-table a{color:var(--cp-accent);text-decoration:none}.cp-table a:hover{text-decoration:underline}.cp-btn,.cp-btn-secondary{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:var(--cp-radius);font-size:13px;font-weight:500;cursor:pointer;text-decoration:none;border:1px solid transparent;transition:.15s;line-height:1.4}.cp-btn{background:var(--cp-accent);color:var(--cp-white);border-color:var(--cp-accent)}.cp-btn:hover{background:var(--cp-accent-hover);border-color:var(--cp-accent-hover)}.cp-btn-secondary{background:var(--cp-white);color:var(--cp-text);border-color:var(--cp-border)}.cp-btn-secondary:hover{background:var(--cp-bg);border-color:#8c8f94}.cp-btn-danger{background:#d63638;color:var(--cp-white);border-color:#d63638}.cp-btn-danger:hover{background:#b32d2e}.cp-form-table{width:100%;border-collapse:collapse}.cp-form-table tr{border-bottom:1px solid var(--cp-border)}.cp-form-table tr:last-child{border-bottom:none}.cp-form-table th{padding:14px 20px 14px 0;text-align:right;font-weight:600;width:200px;vertical-align:top;padding-top:18px;font-size:13px}.cp-form-table td{padding:14px 0}.cp-form-input,.cp-form-select,.cp-form-textarea{border:1px solid var(--cp-border);border-radius:var(--cp-radius);padding:7px 10px;font-size:14px;color:var(--cp-text);transition:.15s;width:100%;max-width:400px}.cp-form-input:focus,.cp-form-select:focus,.cp-form-textarea:focus{border-color:var(--cp-accent);outline:2px solid rgba(34,113,177,.2)}.cp-form-textarea{resize:vertical;min-height:80px}.cp-description{color:var(--cp-muted);font-size:12.5px;margin:.4rem 0 0}.cp-dash-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px;margin-bottom:20px}.cp-dash-stat{background:var(--cp-white);border:1px solid var(--cp-border);border-radius:var(--cp-radius);padding:20px;display:flex;align-items:center;gap:16px;box-shadow:var(--cp-shadow)}.cp-dash-stat-icon{font-size:32px;flex-shrink:0}.cp-dash-stat-num{font-size:28px;font-weight:700;color:var(--cp-text);line-height:1}.cp-dash-stat-label{font-size:12px;color:var(--cp-muted);margin-top:4px}.cp-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.4px}.cp-badge-publish{background:#edfaef;color:#00a32a}.cp-badge-draft{background:#f0f0f1;color:var(--cp-muted)}.cp-badge-pending{background:#fff8e5;color:#996800}.cp-badge-private{background:#f0f4f8;color:var(--cp-accent)}.cp-badge-trash{background:#fcf0f1;color:#d63638}#cp-footer{text-align:center;padding:16px;color:var(--cp-muted);font-size:12px;border-top:1px solid var(--cp-border);margin-left:var(--cp-sidebar-w)}#cp-footer a{color:var(--cp-accent);text-decoration:none}@media(max-width:782px){#cp-menu-toggle{display:flex}#cp-sidebar{transform:translateX(-100%)}body.cp-sidebar-open #cp-sidebar{transform:none}#cp-main,#cp-footer{margin-left:0}.cp-form-table th{display:none}.cp-form-table td{display:block;padding:10px 0}.cp-form-input,.cp-form-select,.cp-form-textarea{max-width:100%}.cp-dash-grid{grid-template-columns:1fr}}`;
-  const INSTALLER_CSS = `*,*::before,*::after{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f0f1;margin:0;padding:2rem 1rem;color:#1d2327}.install-wrap{max-width:700px;margin:0 auto}.install-header{text-align:center;margin-bottom:2rem}.install-logo{font-size:2rem;font-weight:800;color:#1d2327;text-decoration:none}.install-logo span{color:#F6821F}.install-card{background:#fff;border-radius:8px;padding:2rem 2.5rem;box-shadow:0 2px 10px rgba(0,0,0,.08);margin-bottom:1.5rem}h2{font-size:1.4rem;margin:0 0 .5rem;color:#1d2327}.lead{color:#646970;margin:0 0 1.5rem}.form-table{width:100%;border-collapse:collapse;margin-bottom:1.5rem}.form-table tr{border-bottom:1px solid #dcdcde}.form-table tr:last-child{border-bottom:none}.form-table th{padding:14px 20px 14px 0;text-align:right;width:180px;font-size:13px;font-weight:600;vertical-align:top;padding-top:18px}.form-table td{padding:12px 0}.regular-text{width:100%;max-width:380px;padding:7px 10px;border:1px solid #8c8f94;border-radius:4px;font-size:14px;transition:.15s}.regular-text:focus{border-color:#2271b1;outline:2px solid rgba(34,113,177,.2)}.description{color:#646970;font-size:12.5px;margin:.4rem 0 0}code{background:#f0f0f1;padding:2px 6px;border-radius:3px;font-size:12px}.btn{display:inline-flex;align-items:center;padding:8px 18px;border-radius:4px;font-size:14px;font-weight:500;cursor:pointer;text-decoration:none;border:1px solid transparent;margin-right:8px;transition:.15s}.btn-primary{background:#2271b1;color:#fff;border-color:#2271b1}.btn-primary:hover{background:#135e96}.btn-secondary{background:#fff;color:#1d2327;border-color:#dcdcde}.btn-secondary:hover{background:#f0f0f1}.submit{margin-top:1rem}.notice-error{background:#fcf0f1;border-left:4px solid #d63638;padding:.8rem 1rem;border-radius:0 4px 4px 0;margin-bottom:1.2rem}.notice-error ul{margin:0;padding:0 0 0 1rem;color:#d63638;font-size:13.5px}.success-card{border-left:4px solid #00a32a}.success-icon{font-size:3rem;color:#00a32a;text-align:center;margin-bottom:1rem}`;
-  const LOGIN_CSS = `*,*::before,*::after{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f0f1;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px}.login-wrap{width:100%;max-width:360px}.login-logo{text-align:center;margin-bottom:24px}.login-logo svg{width:64px;height:64px}.login-logo h1{margin:8px 0 0;font-size:22px;font-weight:600;color:#1d2327}.login-box{background:#fff;border-radius:8px;padding:28px 32px;box-shadow:0 2px 12px rgba(0,0,0,.08)}.login-box label{display:block;font-size:13px;font-weight:600;color:#1d2327;margin-bottom:6px}.login-box input[type=text],.login-box input[type=password]{width:100%;padding:10px 14px;font-size:15px;border:1px solid #8c8f94;border-radius:4px;margin-bottom:16px;outline:none;transition:border-color .2s}.login-box input:focus{border-color:#2271b1;box-shadow:0 0 0 1px #2271b1}.login-remember{display:flex;align-items:center;gap:8px;font-size:13px;color:#3c434a;margin-bottom:18px}.login-btn{width:100%;padding:10px;font-size:15px;font-weight:600;background:#2271b1;color:#fff;border:none;border-radius:4px;cursor:pointer;transition:background .2s}.login-btn:hover{background:#135e96}.login-error{background:#fff0f0;border-left:4px solid #d63638;padding:10px 14px;color:#d63638;font-size:13px;border-radius:4px;margin-bottom:16px}.login-footer{text-align:center;margin-top:16px;font-size:12px;color:#646970}.login-footer a{color:#2271b1;text-decoration:none}`;
-  const ACTIVATE_CSS = `*,*::before,*::after{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f1f1f1;margin:0;padding:2rem 1rem;color:#333}#signup-content{max-width:600px;margin:2rem auto}.cp-activate-container{background:#fff;border-radius:6px;padding:2rem 2.5rem;box-shadow:0 2px 8px rgba(0,0,0,.1)}h2{font-size:1.4rem;margin:0 0 1.2rem;color:#1d2327}label{font-weight:600;display:block;margin-bottom:.4rem}input[type="text"]{width:100%;padding:.6rem .8rem;font-size:1rem;border:1px solid #8c8f94;border-radius:4px}.cp-btn{background:#2271b1;color:#fff;border:none;padding:.6rem 1.4rem;font-size:1rem;border-radius:4px;cursor:pointer}.cp-btn:hover{background:#135e96}#signup-welcome{background:#f0f6fc;border-left:4px solid #2271b1;padding:1rem 1.4rem;border-radius:0 4px 4px 0;margin:1rem 0}#signup-welcome p{margin:.4rem 0}.h3{font-weight:700}a{color:#2271b1}.lead-in{line-height:1.7}`;
-  const SIGNUP_CSS = `*,*::before,*::after{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f1f1f1;margin:0;padding:2rem 1rem;color:#333}.signup-wrapper{max-width:560px;margin:0 auto}.signup-box{background:#fff;border-radius:8px;padding:2.5rem;box-shadow:0 2px 10px rgba(0,0,0,.08)}h1{font-size:1.6rem;color:#1d2327;margin:0 0 .4rem}.site-name{text-align:center;margin-bottom:1.5rem}.site-name a{color:#1d2327;text-decoration:none;font-size:1.3rem;font-weight:700}h2{font-size:1.2rem;margin:0 0 1.5rem;color:#1d2327}label{display:block;font-weight:600;margin-bottom:.3rem;font-size:.9rem}input[type="text"],input[type="email"]{width:100%;padding:.55rem .75rem;font-size:1rem;border:1px solid #8c8f94;border-radius:4px;margin-bottom:1rem}input:focus{outline:2px solid #2271b1;border-color:#2271b1}.cp-btn{background:#2271b1;color:#fff;border:none;padding:.65rem 1.5rem;font-size:1rem;border-radius:4px;cursor:pointer;width:100%;margin-top:.5rem}.cp-btn:hover{background:#135e96}.error-list{background:#fcf0f1;border-left:4px solid #d63638;border-radius:0 4px 4px 0;padding:.8rem 1rem;margin-bottom:1.2rem;list-style:none;padding-left:1rem}.error-list li{color:#d63638;margin:.2rem 0;font-size:.9rem}.hint{font-size:.8rem;color:#666;margin-top:-.7rem;margin-bottom:1rem}.success{background:#edfaef;border-left:4px solid #00a32a;border-radius:0 4px 4px 0;padding:1rem 1.2rem}.success h2{color:#00a32a}`;
-  const ERROR_CSS = `*,*::before,*::after{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f1f1f1;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}.error-box{background:#fff;border-left:4px solid #e74c3c;border-radius:4px;padding:2rem 2.5rem;max-width:560px;box-shadow:0 2px 8px rgba(0,0,0,.1)}h1{color:#e74c3c;font-size:1.3rem;margin:0 0 1rem}p{color:#444;line-height:1.6}code{background:#f8f8f8;padding:2px 6px;border-radius:3px;font-family:monospace;color:#c0392b}a{color:#0073aa}`;
-  const COMMENTS_CSS = `*,*::before,*::after{box-sizing:border-box}body{font-family:-apple-system,sans-serif;background:#f1f1f1;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}.box{background:#fff;padding:2rem 2.5rem;border-radius:6px;border-left:4px solid #d63638;max-width:480px;box-shadow:0 2px 8px rgba(0,0,0,.1)}h1{color:#d63638;font-size:1.2rem;margin:0 0 1rem}a{color:#2271b1}`;
-  const TEMPLATE_FALLBACK_CSS = `body{font-family:system-ui,sans-serif;max-width:800px;margin:2rem auto;padding:0 1rem}`;
-  const map = {
-    "/cp-admin/css/admin.css": ADMIN_CSS,
-    "/cp-admin/css/installer.css": INSTALLER_CSS,
-    "/cp-includes/css/login.css": LOGIN_CSS,
-    "/cp-includes/css/activate.css": ACTIVATE_CSS,
-    "/cp-includes/css/signup.css": SIGNUP_CSS,
-    "/cp-includes/css/error.css": ERROR_CSS,
-    "/cp-includes/css/comments.css": COMMENTS_CSS,
-    "/cp-includes/css/template-fallback.css": TEMPLATE_FALLBACK_CSS,
-  };
-  const css = map[path];
-  if (!css) return new Response("Not found", { status: 404 });
-  return cssResp(css);
-}
-__name(serveInlineCss, "serveInlineCss");
-function forbidden() {
-  return new Response("Forbidden", {
-    status: 403,
-    headers: { "Content-Type": "text/plain" }
-  });
-}
-__name(forbidden, "forbidden");
-
-// worker.js
-init_cp_cron();
-var worker_default = {
-  /**
-   * Handle HTTP requests.
-   */
-  async fetch(request, env, ctx) {
-    return route(request, env, ctx);
-  },
-  /**
-   * Handle Cloudflare Cron Triggers.
-   */
-  async scheduled(event, env, ctx) {
-    return handleScheduled(event, env, ctx);
-  }
-};
-export {
-  worker_default as default
-};
+  const ADMIN_CSS = `:root{--cp-sidebar-w:240px;--cp-topbar-h:48px;--cp-bg:#f0f0f1;--cp-sidebar-bg:#1d2327;--cp-sidebar-text:#a7aaad;--cp-sidebar-hover:#2c3338;--cp-sidebar-active:#2271b1;--cp-topbar-bg:#1d2327;--cp-topbar-text:#a7aaad;--cp-accent:#2271b1;--cp-accent-hover:#135e96;--cp-white:#fff;--cp-border:#dcdcde;--cp-text:#1d2327;--cp-muted:#646970;--cp-radius:4px;--cp-shadow:0 1px 3px rgba(0,0,0,.12)}*,*::before,*::after{box-sizing:border-box}html,body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;background:var(--cp-bg);color:var(--cp-text)}#cp-topbar{position:fixed;top:0;left:0;right:0;height:var(--cp-topbar-h);background:var(--cp-topbar-bg);display:flex;align-items:center;justify-content:space-between;padding:0 16px;z-index:1000;color:var(--cp-topbar-text)}.cp-topbar-left,.cp-topbar-right{display:flex;align-items:center;gap:12px}#cp-menu-toggle{background:none;border:none;cursor:pointer;padding:6px;color:var(--cp-topbar-text);display:none;flex-direction:column;gap:4px}#cp-menu-toggle span{display:block;width:20px;height:2px;background:currentColor;transition:.2s}.cp-site-link{color:var(--cp-topbar-text);text-decoration:none;font-size:13px;opacity:.8;transition:.15s}.cp-site-link:hover{opacity:1;color:var(--cp-white)}.cp-version{font-size:11px;opacity:.5}.cp-user-menu{position:relative}.cp-user-btn{background:none;border:none;color:var(--cp-topbar-text);cursor:pointer;font-size:13px;padding:6px 10px;border-radius:var(--cp-radius);transition:.15s}.cp-user-btn:hover{background:var(--cp-sidebar-hover);color:var(--cp-white)}.cp-user-dropdown{display:none;position:absolute;right:0;top:calc(100% + 4px);background:var(--cp-white);border:1px solid var(--cp-border);border-radius:var(--cp-radius);min-width:150px;box-shadow:var(--cp-shadow);z-index:100}.cp-user-menu.open .cp-user-dropdown{display:block}.cp-user-dropdown a{display:block;padding:8px 14px;color:var(--cp-text);text-decoration:none;font-size:13px;transition:.1s}.cp-user-dropdown a:hover{background:var(--cp-bg)}.cp-user-dropdown hr{border:none;border-top:1px solid var(--cp-border);margin:4px 0}.cp-logout{color:#d63638!important}#cp-layout{display:flex;min-height:100vh;padding-top:var(--cp-topbar-h)}#cp-sidebar{width:var(--cp-sidebar-w);background:var(--cp-sidebar-bg);flex-shrink:0;overflow-y:auto;position:fixed;top:var(--cp-topbar-h);left:0;bottom:0;z-index:500;transition:transform .2s}.cp-sidebar-header{padding:16px 14px 8px;border-bottom:1px solid rgba(255,255,255,.07)}.cp-logo{display:flex;align-items:center;gap:8px;color:var(--cp-white);text-decoration:none;font-weight:700;font-size:16px}.cp-logo span{letter-spacing:-.3px}.cp-nav-list{list-style:none;margin:8px 0;padding:0}.cp-nav-item{margin:1px 0}.cp-nav-link{display:flex;align-items:center;gap:10px;padding:9px 14px;color:var(--cp-sidebar-text);text-decoration:none;border-radius:var(--cp-radius);margin:0 6px;transition:.15s;font-size:13px}.cp-nav-link:hover,.cp-nav-item.active>.cp-nav-link{color:var(--cp-white);background:var(--cp-sidebar-hover)}.cp-nav-item.active>.cp-nav-link{background:var(--cp-sidebar-active)}.cp-nav-icon{font-size:16px;flex-shrink:0;width:20px;text-align:center}.cp-nav-label{flex:1}.cp-nav-arrow{font-size:9px;opacity:.5;transition:transform .2s}.cp-nav-item.has-children.active .cp-nav-arrow,.cp-nav-item.has-children:hover .cp-nav-arrow{transform:rotate(180deg)}.cp-subnav{list-style:none;margin:0;padding:0 0 4px 44px;display:none}.cp-nav-item.has-children.active .cp-subnav,.cp-nav-item.has-children:hover .cp-subnav{display:block}.cp-subnav li a{display:block;padding:6px 10px;color:var(--cp-sidebar-text);text-decoration:none;font-size:12.5px;border-radius:var(--cp-radius);transition:.1s}.cp-subnav li a:hover,.cp-subnav li.active a{color:var(--cp-white);background:rgba(255,255,255,.07)}#cp-main{flex:1;margin-left:var(--cp-sidebar-w);padding:16px 24px 24px;min-height:calc(100vh - var(--cp-topbar-h))}.cp-page-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:10px;flex-wrap:wrap}.cp-page-title{font-size:22px;font-weight:400;margin:0;color:var(--cp-text);line-height:1.3}.cp-notice{border-left:4px solid var(--cp-accent);background:var(--cp-white);padding:10px 14px;border-radius:0 var(--cp-radius) var(--cp-radius) 0;margin-bottom:16px;box-shadow:var(--cp-shadow)}.cp-notice-success{border-color:#00a32a}.cp-notice-error{b
