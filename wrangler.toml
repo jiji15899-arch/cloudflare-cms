@@ -1,4 +1,4 @@
-# CloudPress CMS — Cloudflare Workers 배포 설정 v5.3
+# CloudPress CMS — Cloudflare Workers 배포 설정 v5.4
 # Originless Edge CMS: Edge Cache + KV 이중 캐시 + SWR/ISR + Prewarm + Purge + Failover
 #
 # ── 최초 배포 순서 ─────────────────────────────────────────────────
@@ -16,28 +16,25 @@
 #  포스트 Purge: POST /__edge/purge?type=post&path=/2024/01/slug
 #  Prewarm:     POST /__edge/prewarm          -H "X-Purge-Key: <AUTH_KEY>"
 #  상태 확인:   GET  /__edge/health
+#
+# ── v5.4 에러 수정 내용 ──────────────────────────────────────────
+#  [10021] Unexpected end of input 원인:
+#    이전 버전의 wrangler.toml에 [[rules]] type="ESModule"이 있어서
+#    worker.js를 ESM으로 강제 인식했으나 실제로는 addEventListener
+#    기반 Service Worker 포맷 → export default 없어 EOF에서 에러 발생
+#
+#  수정 사항:
+#    1. worker.js 끝: addEventListener 블록 제거
+#                     → export default worker_default (ESM 표준)
+#    2. wrangler.toml: [build] + [[rules]] 섹션 완전 제거
+#       wrangler가 export default 감지 시 자동 ESM 처리
+#    3. TOML 섹션 순서 정리 (env.staging이 [[rules]] 사이에 끼어 파싱 오류)
 # ─────────────────────────────────────────────────────────────────
 
 name               = "cloudflare-cms"
 main               = "worker.js"
 compatibility_date = "2024-09-23"
-node_compat = false
-# ══════════════════════════════════════════════════════════════════
-# ★ [10021] Unexpected token 'export' 에러 수정 설명 (v5.3)
-#
-# worker.js 는 esbuild 가 생성한 __esm/__export 패턴의
-# IIFE/Service-Worker 스타일 번들입니다.
-# 이 형식에서는 파일 최상단에 'export' 키워드가 있으면 안 됩니다.
-#
-# 수정 내용:
-#   - worker.js 마지막의 'export default worker_default;' 제거
-#   - addEventListener("fetch", ...) + addEventListener("scheduled", ...)
-#     Service Worker 패턴으로 교체
-#   - 바인딩(CP_KV, CP_DB 등)은 globalThis 로 접근 (SW 형식 표준)
-#   - [build] 섹션 완전 제거 (Wrangler legacy 모드 트리거 방지)
-#
-# 이 wrangler.toml 에는 [build] 섹션이 없습니다.
-# ══════════════════════════════════════════════════════════════════
+node_compat        = false
 
 # ── D1 Database ───────────────────────────────────────────────────
 [[d1_databases]]
@@ -63,19 +60,18 @@ mode = "smart"
 [triggers]
 crons = ["*/5 * * * *"]
 
-# ── Production ───────────────────────────────────────────────────
+# ── Production 환경 ───────────────────────────────────────────────
 [env.production]
 name = "cloudflare-cms-production"
 
 [env.production.vars]
-CP_SITE_NAME = "My CloudPress Site"
+CP_SITE_NAME    = "My CloudPress Site"
+CP_SITE_TAGLINE = "Just another CloudPress site"
 
-# ESM 모듈 포맷 명시 — 이 줄이 없으면 [10021] 에러 발생
-[build]
-command = ""
-
-[[rules]]
-type = "ESModule"
-globs = ["**/*.js"]
+# ── Staging 환경 ──────────────────────────────────────────────────
 [env.staging]
 name = "cloudflare-cms-staging"
+
+[env.staging.vars]
+CP_SITE_NAME    = "My CloudPress Site (Staging)"
+CP_SITE_TAGLINE = "Staging environment"
