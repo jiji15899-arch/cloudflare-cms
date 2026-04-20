@@ -9961,17 +9961,12 @@ async function edgeScheduled(event, env, ctx) {
 __name(edgeScheduled, "edgeScheduled");
 
 // =============================================================
-// Worker 진입점 — Service Worker 형식 (addEventListener)
-// 이 번들은 __esm/__export 패턴(IIFE/CJS)을 사용합니다.
-// Wrangler는 export 키워드 없이 addEventListener 방식으로
-// Service Worker 형식을 처리합니다.
+// Worker 진입점 — ESM 모듈 형식 (export default)
+// Wrangler v3+ 표준 방식. 바인딩(CP_KV, CP_DB 등)은 fetch/scheduled
+// 핸들러의 env 파라미터로 직접 전달됩니다.
 // =============================================================
-// Service Worker format: bindings (CP_KV, CP_DB, etc.) are on globalThis
-addEventListener("fetch", function(event) {
-  var ctx = { waitUntil: event.waitUntil.bind(event), passThroughOnException: function(){} };
-  event.respondWith(edgeFetch(event.request, globalThis, ctx));
-});
-addEventListener("scheduled", function(event) {
-  var ctx = { waitUntil: event.waitUntil.bind(event), passThroughOnException: function(){} };
-  event.waitUntil(edgeScheduled(event, globalThis, ctx));
-});
+var worker_default = {
+  fetch:     edgeFetch,
+  scheduled: edgeScheduled
+};
+export default worker_default;
