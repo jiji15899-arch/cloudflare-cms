@@ -1,10113 +1,3406 @@
-var __defProp = Object.defineProperty;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
-var __esm = (fn, res) => function __init() {
-  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
-};
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
-};
-
-// cp-config.js
-async function loadConfig(env) {
-  let storedConfig = null;
-  try {
-    const raw = await env.CP_KV.get("cp:config", { type: "json" });
-    if (raw && raw.installed) {
-      storedConfig = raw;
-    }
-  } catch (_) {
-  }
-  if (storedConfig) {
-    return mergeWithDefaults(storedConfig, env);
-  }
-  return mergeWithDefaults({}, env);
-}
-async function saveConfig(env, config) {
-  await env.CP_KV.put("cp:config", JSON.stringify({ ...config, installed: true }));
-}
-function mergeWithDefaults(stored, env) {
-  return {
-    // -- Site Identity ----------------------------------------------------------
-    SITE_URL: stored.SITE_URL || env.CP_SITE_URL || "",
-    SITE_NAME: stored.SITE_NAME || env.CP_SITE_NAME || "CloudPress Site",
-    SITE_TAGLINE: stored.SITE_TAGLINE || env.CP_SITE_TAGLINE || "Just another CloudPress site",
-    ADMIN_EMAIL: stored.ADMIN_EMAIL || env.CP_ADMIN_EMAIL || "",
-    // -- Database prefix (D1 table prefix) -------------------------------------
-    DB_PREFIX: stored.DB_PREFIX || env.CP_DB_PREFIX || "cp_",
-    // -- Authentication Keys & Salts --------------------------------------------
-    // Generate unique values via: https://cloudpress.dev/api/secret-key/
-    // Or set as Cloudflare Worker secrets.
-    AUTH_KEY: env.CP_AUTH_KEY || stored.AUTH_KEY || "change-me-auth-key",
-    SECURE_AUTH_KEY: env.CP_SECURE_AUTH_KEY || stored.SECURE_AUTH_KEY || "change-me-secure-auth-key",
-    LOGGED_IN_KEY: env.CP_LOGGED_IN_KEY || stored.LOGGED_IN_KEY || "change-me-logged-in-key",
-    NONCE_KEY: env.CP_NONCE_KEY || stored.NONCE_KEY || "change-me-nonce-key",
-    AUTH_SALT: env.CP_AUTH_SALT || stored.AUTH_SALT || "change-me-auth-salt",
-    SECURE_AUTH_SALT: env.CP_SECURE_AUTH_SALT || stored.SECURE_AUTH_SALT || "change-me-secure-auth-salt",
-    LOGGED_IN_SALT: env.CP_LOGGED_IN_SALT || stored.LOGGED_IN_SALT || "change-me-logged-in-salt",
-    NONCE_SALT: env.CP_NONCE_SALT || stored.NONCE_SALT || "change-me-nonce-salt",
-    // -- GitHub Integration (for theme/plugin install from GitHub) --------------
-    // Set CP_GITHUB_TOKEN as a Cloudflare Worker secret for private repos.
-    GITHUB_TOKEN: env.CP_GITHUB_TOKEN || stored.GITHUB_TOKEN || "",
-    // Default GitHub source repo for CloudPress core (used by updater)
-    GITHUB_REPO: stored.GITHUB_REPO || env.CP_GITHUB_REPO || "",
-    // -- Debug ------------------------------------------------------------------
-    CP_DEBUG: stored.CP_DEBUG || env.CP_DEBUG === "true" || false,
-    CP_DEBUG_LOG: stored.CP_DEBUG_LOG || false,
-    // -- Multisite --------------------------------------------------------------
-    MULTISITE: stored.MULTISITE || false,
-    SUBDOMAIN_INSTALL: stored.SUBDOMAIN_INSTALL || false,
-    // -- KV TTLs (seconds) ------------------------------------------------------
-    TRANSIENT_TTL: stored.TRANSIENT_TTL || 3600,
-    // 1 hour default
-    SESSION_TTL: stored.SESSION_TTL || 86400,
-    // 24 hours
-    // -- Installer state --------------------------------------------------------
-    installed: stored.installed || false
-  };
-}
-var CP_VERSION, CPINC, CPADMIN;
-var init_cp_config = __esm({
-  "cp-config.js"() {
-    __name(loadConfig, "loadConfig");
-    __name(saveConfig, "saveConfig");
-    __name(mergeWithDefaults, "mergeWithDefaults");
-    CP_VERSION = "1.2.0";
-    CPINC = "cp-includes";
-    CPADMIN = "cp-admin";
-  }
-});
-
-// cp-includes/option.js
-async function getOption(cp, name, defaultValue = false) {
-  const prefix = cp.db_prefix || "cp_";
-  const kvKey = `cp:option:${name}`;
-  try {
-    const cached = await cp.kv.get(kvKey, { type: "json" });
-    if (cached !== null)
-      return cached.value;
-  } catch (_) {
-  }
-  const row = await cp.db.prepare(`SELECT option_value FROM ${prefix}options WHERE option_name=? LIMIT 1`).bind(name).first();
-  if (!row)
-    return defaultValue;
-  let value;
-  try {
-    value = JSON.parse(row.option_value);
-  } catch (_) {
-    value = row.option_value;
-  }
-  try {
-    await cp.kv.put(kvKey, JSON.stringify({ value }), { expirationTtl: OPTION_KV_TTL });
-  } catch (_) {
-  }
-  return value;
-}
-async function updateOption(cp, name, value, autoload = "yes") {
-  const prefix = cp.db_prefix || "cp_";
-  const serialized = JSON.stringify(value);
-  await cp.db.prepare(`
-    INSERT INTO ${prefix}options (option_name, option_value, autoload)
-    VALUES (?, ?, ?)
-    ON CONFLICT(option_name) DO UPDATE SET option_value=excluded.option_value, autoload=excluded.autoload
-  `).bind(name, serialized, autoload).run();
-  try {
-    await cp.kv.delete(`cp:option:${name}`);
-  } catch (_) {
-  }
-  return true;
-}
-var OPTION_KV_TTL;
-var init_option = __esm({
-  "cp-includes/option.js"() {
-    OPTION_KV_TTL = 3600;
-    __name(getOption, "getOption");
-    __name(updateOption, "updateOption");
-  }
-});
-
-// cp-includes/plugin-loader.js
-async function loadActivePlugins(cp) {
-  let activePlugins = [];
-  try {
-    const raw = await getOption(cp, "active_plugins", "[]");
-    activePlugins = JSON.parse(raw);
-  } catch (_) {
-    activePlugins = [];
-  }
-  if (!Array.isArray(activePlugins) || activePlugins.length === 0)
-    return;
-  for (const pluginSlug of activePlugins) {
-    try {
-      await loadPlugin(cp, pluginSlug);
-    } catch (err) {
-      if (cp.config?.CP_DEBUG) {
-        console.error(`[plugin-loader] Failed to load plugin "${pluginSlug}":`, err);
-      }
-    }
-  }
-}
-async function loadPlugin(cp, pluginSlug) {
-  cp.hooks.doAction("cp_load_plugin", pluginSlug, cp);
-}
-var init_plugin_loader = __esm({
-  "cp-includes/plugin-loader.js"() {
-    init_option();
-    __name(loadActivePlugins, "loadActivePlugins");
-    __name(loadPlugin, "loadPlugin");
-  }
-});
-
-// cp-includes/theme-loader.js
-async function loadActiveTheme(cp) {
-  const slug = await getOption(cp, "template", "");
-  if (!slug) {
-    cp.theme = null;
-    return;
-  }
-  const meta = await getThemeMeta(cp, slug);
-  cp.theme = { slug, ...meta };
-  cp.hooks.doAction("cp_after_setup_theme", cp);
-}
-async function getThemeMeta(cp, slug) {
-  const kvKey = KV_THEME_META_PREFIX + slug;
-  try {
-    const cached = await cp.kv.get(kvKey, { type: "json" });
-    if (cached)
-      return cached;
-  } catch (_) {
-  }
-  const meta = await fetchThemeJson(cp, slug) || { name: slug, version: "1.2.0" };
-  try {
-    await cp.kv.put(kvKey, JSON.stringify(meta), { expirationTtl: THEME_KV_TTL });
-  } catch (_) {
-  }
-  return meta;
-}
-async function getThemes(cp) {
-  try {
-    const cached = await cp.kv.get("cp:themes:list", { type: "json" });
-    if (cached)
-      return cached;
-  } catch (_) {
-  }
-  return [];
-}
-async function switchTheme(cp, slug) {
-  await updateOption(cp, "template", slug);
-  await updateOption(cp, "stylesheet", slug);
-  try {
-    await cp.kv.delete(KV_THEME_META_PREFIX + slug);
-  } catch (_) {
-  }
-  cp.theme = { slug, ...await getThemeMeta(cp, slug) };
-  cp.hooks.doAction("cp_switch_theme", slug, cp);
-}
-async function fetchThemeJson(cp, slug) {
-  const githubRepo = cp.config?.GITHUB_REPO || await getOption(cp, "cp_github_repo", "");
-  const githubToken = cp.config?.GITHUB_TOKEN || cp.env?.CP_GITHUB_TOKEN || "";
-  if (!githubRepo)
-    return null;
-  const url = `https://api.github.com/repos/${githubRepo}/contents/themes/${slug}/theme.json`;
-  try {
-    const headers = { "User-Agent": "CloudPress/1.0", "Accept": "application/vnd.github.v3.raw" };
-    if (githubToken)
-      headers["Authorization"] = `Bearer ${githubToken}`;
-    const res = await fetch(url, { headers });
-    if (!res.ok)
-      return null;
-    return await res.json();
-  } catch (_) {
-    return null;
-  }
-}
-var KV_THEME_META_PREFIX, THEME_KV_TTL;
-var init_theme_loader = __esm({
-  "cp-includes/theme-loader.js"() {
-    init_option();
-    KV_THEME_META_PREFIX = "cp:theme:meta:";
-    THEME_KV_TTL = 3600;
-    __name(loadActiveTheme, "loadActiveTheme");
-    __name(getThemeMeta, "getThemeMeta");
-    __name(getThemes, "getThemes");
-    __name(switchTheme, "switchTheme");
-    __name(fetchThemeJson, "fetchThemeJson");
-  }
-});
-
-// cp-includes/formatting.js
-function wptexturize(text) {
-  if (!text)
-    return "";
-  return text.replace(/---/g, "\u2014").replace(/--/g, "\u2013").replace(/(^|[\s(])"(\S)/g, "$1\u201C$2").replace(/(\S)"([\s,.]|$)/g, "$1\u201D$2").replace(/(^|[\s(])'(\S)/g, "$1\u2018$2").replace(/(\S)'([\s,.]|$)/g, "$1\u2019$2").replace(/\.\.\./g, "\u2026");
-}
-function stripTags(str) {
-  return String(str || "").replace(/<[^>]+>/g, "");
-}
-function escHtml(str) {
-  return String(str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
-}
-function truncate(str, length = 100, suffix = "...") {
-  const s = String(str || "");
-  return s.length > length ? s.slice(0, length) + suffix : s;
-}
-function trimWords(str, count = 55, more = "...") {
-  const words = String(str || "").trim().split(/\s+/).filter(Boolean);
-  if (words.length <= count)
-    return str;
-  return words.slice(0, count).join(" ") + more;
-}
-function htmlExcerpt(text, maxLength = 255) {
-  return truncate(stripTags(text), maxLength);
-}
-var init_formatting = __esm({
-  "cp-includes/formatting.js"() {
-    __name(wptexturize, "wptexturize");
-    __name(stripTags, "stripTags");
-    __name(escHtml, "escHtml");
-    __name(truncate, "truncate");
-    __name(trimWords, "trimWords");
-    __name(htmlExcerpt, "htmlExcerpt");
-  }
-});
-
-// cp-includes/hooks.js
-function registerCoreHooks(cp) {
-  const { hooks } = cp;
-  hooks.addFilter("the_content", (content) => wpAutoP(content), 10);
-  hooks.addFilter("the_content", (content) => wptexturize(content), 20);
-  hooks.addFilter("the_title", (title) => title ? String(title).replace(/<[^>]+>/g, "") : "", 10);
-  hooks.addFilter("get_the_excerpt", (excerpt, post) => {
-    if (excerpt)
-      return excerpt;
-    if (!post?.post_content)
-      return "";
-    return trimWords(stripTags(post.post_content), 55) + "\u2026";
-  }, 10);
-  hooks.addFilter("comment_text", (text) => wpAutoP(escHtml(text || "")), 10);
-  hooks.addAction("cp_head", (cp2) => {
-    cp2._headTags = cp2._headTags || [];
-  }, 1);
-}
-function wpAutoP(text) {
-  if (!text)
-    return "";
-  const blocks = /^(address|article|aside|blockquote|canvas|dd|div|dl|dt|fieldset|figcaption|figure|footer|form|h[1-6]|header|hr|li|main|nav|noscript|ol|p|pre|section|table|tfoot|thead|tbody|tr|td|th|ul|video)/i;
-  text = text.replace(/\r\n|\r/g, "\n");
-  const parts = text.split(/\n\n+/);
-  const result = parts.map((part) => {
-    const trimmed = part.trim();
-    if (!trimmed)
-      return "";
-    if (blocks.test(trimmed))
-      return trimmed;
-    const inner = trimmed.replace(/\n/g, "<br />\n");
-    return `<p>${inner}</p>`;
-  });
-  return result.filter(Boolean).join("\n\n");
-}
-var init_hooks = __esm({
-  "cp-includes/hooks.js"() {
-    init_formatting();
-    __name(registerCoreHooks, "registerCoreHooks");
-    __name(wpAutoP, "wpAutoP");
-  }
-});
-
-// cp-includes/jwt.js
-function base64urlEncode(buf) {
-  const b64 = typeof buf === "string" ? btoa(buf) : btoa(String.fromCharCode(...new Uint8Array(buf)));
-  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-function base64urlDecode(str) {
-  const b64 = str.replace(/-/g, "+").replace(/_/g, "/");
-  const raw = atob(b64);
-  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
-}
-async function importHmacKey(secret) {
-  return crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign", "verify"]
-  );
-}
-async function signJwt(payload, secret, expiresIn = 86400) {
-  const header = { alg: "HS256", typ: "JWT" };
-  const now = Math.floor(Date.now() / 1e3);
-  const claims = {
-    iat: now,
-    exp: now + expiresIn,
-    jti: crypto.randomUUID(),
-    ...payload
-  };
-  const headerB64 = base64urlEncode(JSON.stringify(header));
-  const payloadB64 = base64urlEncode(JSON.stringify(claims));
-  const data = `${headerB64}.${payloadB64}`;
-  const key = await importHmacKey(secret);
-  const sigBuf = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data));
-  const sigB64 = base64urlEncode(sigBuf);
-  return `${data}.${sigB64}`;
-}
-async function verifyJwt(token, secret) {
-  if (!token || typeof token !== "string")
-    return null;
-  const parts = token.split(".");
-  if (parts.length !== 3)
-    return null;
-  const [headerB64, payloadB64, sigB64] = parts;
-  try {
-    const key = await importHmacKey(secret);
-    const data = `${headerB64}.${payloadB64}`;
-    const sigBytes = base64urlDecode(sigB64);
-    const valid = await crypto.subtle.verify(
-      "HMAC",
-      key,
-      sigBytes,
-      new TextEncoder().encode(data)
-    );
-    if (!valid)
-      return null;
-  } catch (_) {
-    return null;
-  }
-  let payload;
-  try {
-    payload = JSON.parse(new TextDecoder().decode(base64urlDecode(payloadB64)));
-  } catch (_) {
-    return null;
-  }
-  const now = Math.floor(Date.now() / 1e3);
-  if (payload.exp && payload.exp < now)
-    return null;
-  return payload;
-}
-function buildAuthCookie(token, maxAge = 86400, secure = true) {
-  const flags = [
-    `cp_token=${token}`,
-    `Path=/`,
-    `HttpOnly`,
-    `SameSite=Strict`,
-    `Max-Age=${maxAge}`,
-    secure ? "Secure" : ""
-  ].filter(Boolean).join("; ");
-  return flags;
-}
-function clearAuthCookie() {
-  return "cp_token=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
-}
-var init_jwt = __esm({
-  "cp-includes/jwt.js"() {
-    __name(base64urlEncode, "base64urlEncode");
-    __name(base64urlDecode, "base64urlDecode");
-    __name(importHmacKey, "importHmacKey");
-    __name(signJwt, "signJwt");
-    __name(verifyJwt, "verifyJwt");
-    __name(buildAuthCookie, "buildAuthCookie");
-    __name(clearAuthCookie, "clearAuthCookie");
-  }
-});
-
-// cp-includes/crypto.js
-function b64encode(buf) {
-  return btoa(String.fromCharCode(...new Uint8Array(buf)));
-}
-function b64decode(str) {
-  return Uint8Array.from(atob(str), (c) => c.charCodeAt(0));
-}
-function strToBytes(str) {
-  return new TextEncoder().encode(str);
-}
-async function hashPassword(password) {
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw",
-    strToBytes(password),
-    "PBKDF2",
-    false,
-    ["deriveBits"]
-  );
-  const derived = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt, iterations: HASH_ITERATIONS, hash: HASH_ALGORITHM },
-    keyMaterial,
-    256
-  );
-  return `$cp$${HASH_ITERATIONS}$${b64encode(salt)}$${b64encode(derived)}`;
-}
-async function checkPassword(password, storedHash) {
-  if (!storedHash)
-    return false;
-  if (storedHash.startsWith("$P$") || storedHash.startsWith("$H$")) {
-    return false;
-  }
-  const parts = storedHash.split("$");
-  if (parts.length < 5 || parts[1] !== "cp")
-    return false;
-  const iterations = parseInt(parts[2], 10);
-  const salt = b64decode(parts[3]);
-  const expected = b64decode(parts[4]);
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw",
-    strToBytes(password),
-    "PBKDF2",
-    false,
-    ["deriveBits"]
-  );
-  const derived = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt, iterations, hash: HASH_ALGORITHM },
-    keyMaterial,
-    256
-  );
-  const a = new Uint8Array(derived);
-  const b = expected;
-  if (a.length !== b.length)
-    return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++)
-    diff |= a[i] ^ b[i];
-  return diff === 0;
-}
-async function hmacHash(data, key) {
-  const cryptoKey = await crypto.subtle.importKey(
-    "raw",
-    strToBytes(key),
-    { name: "HMAC", hash: HASH_ALGORITHM },
-    false,
-    ["sign"]
-  );
-  const sig = await crypto.subtle.sign("HMAC", cryptoKey, strToBytes(data));
-  return Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-async function cpHash(data, secret = "") {
-  return hmacHash(data, secret || "default");
-}
-var HASH_ALGORITHM, HASH_ITERATIONS;
-var init_crypto = __esm({
-  "cp-includes/crypto.js"() {
-    __name(b64encode, "b64encode");
-    __name(b64decode, "b64decode");
-    __name(strToBytes, "strToBytes");
-    HASH_ALGORITHM = "SHA-256";
-    HASH_ITERATIONS = 1e5;
-    __name(hashPassword, "hashPassword");
-    __name(checkPassword, "checkPassword");
-    __name(hmacHash, "hmacHash");
-    __name(cpHash, "cpHash");
-  }
-});
-
-// cp-includes/user.js
-async function getUserById(cp, id) {
-  const prefix = cp.db_prefix || "cp_";
-  const row = await cp.db.prepare(`SELECT * FROM ${prefix}users WHERE ID=? LIMIT 1`).bind(id).first();
-  if (!row)
-    return null;
-  return hydrateUser(cp, row);
-}
-async function getUserByLogin(cp, login) {
-  const prefix = cp.db_prefix || "cp_";
-  const row = await cp.db.prepare(`SELECT * FROM ${prefix}users WHERE user_login=? LIMIT 1`).bind(login).first();
-  if (!row)
-    return null;
-  return hydrateUser(cp, row);
-}
-async function getUserByEmail(cp, email) {
-  const prefix = cp.db_prefix || "cp_";
-  const row = await cp.db.prepare(`SELECT * FROM ${prefix}users WHERE user_email=? LIMIT 1`).bind(email).first();
-  if (!row)
-    return null;
-  return hydrateUser(cp, row);
-}
-async function authenticateUser(cp, login, password) {
-  const user = login.includes("@") ? await getUserByEmail(cp, login) : await getUserByLogin(cp, login);
-  if (!user)
-    return null;
-  const ok = await checkPassword(password, user.user_pass);
-  return ok ? user : null;
-}
-async function hydrateUser(cp, row) {
-  if (!row)
-    return null;
-  const prefix = cp.db_prefix || "cp_";
-  let roles = ["subscriber"];
-  try {
-    const capRow = await cp.db.prepare(`SELECT meta_value FROM ${prefix}usermeta WHERE user_id=? AND meta_key=?`).bind(row.ID, `${prefix}capabilities`).first();
-    if (capRow?.meta_value) {
-      const caps = JSON.parse(capRow.meta_value);
-      roles = Object.keys(caps).filter((k) => caps[k]);
-    }
-  } catch (_) {
-  }
-  return {
-    ID: row.ID,
-    user_login: row.user_login,
-    user_pass: row.user_pass,
-    user_email: row.user_email,
-    user_registered: row.user_registered,
-    user_status: row.user_status,
-    display_name: row.display_name || row.user_login,
-    user_url: row.user_url || "",
-    user_nicename: row.user_nicename || row.user_login,
-    roles,
-    // Never expose password hash in serialisation helpers
-    toJSON() {
-      const { user_pass: _, ...safe } = this;
-      return safe;
-    }
-  };
-}
-async function getCurrentUser(cp) {
-  if (!cp.user || !cp.user.ID)
-    return null;
-  return getUserById(cp, cp.user.ID);
-}
-async function getUserBy(cp, field, value) {
-  if (field === "id" || field === "ID")
-    return getUserById(cp, value);
-  if (field === "login" || field === "user_login")
-    return getUserByLogin(cp, value);
-  if (field === "email" || field === "user_email")
-    return getUserByEmail(cp, value);
-  return null;
-}
-var init_user = __esm({
-  "cp-includes/user.js"() {
-    init_crypto();
-    __name(getUserById, "getUserById");
-    __name(getUserByLogin, "getUserByLogin");
-    __name(getUserByEmail, "getUserByEmail");
-    __name(authenticateUser, "authenticateUser");
-    __name(hydrateUser, "hydrateUser");
-    __name(getCurrentUser, "getCurrentUser");
-    __name(getUserBy, "getUserBy");
-  }
-});
-
-// cp-includes/session.js
-async function initSession(cp) {
-  const token = extractToken(cp.request);
-  if (!token)
-    return;
-  try {
-    const payload = await verifyJwt(token, cp.config.AUTH_KEY);
-    if (!payload || !payload.sub)
-      return;
-    const jti = payload.jti || payload.sub;
-    const revoked = await cp.kv.get(`cp:token_revoked:${jti}`).catch(() => null);
-    if (revoked)
-      return;
-    const user = await getUserById(cp, Number(payload.sub));
-    if (user) {
-      cp.currentUser = user;
-    }
-  } catch (_) {
-  }
-}
-function extractToken(request) {
-  const cookie = request.headers.get("Cookie") || "";
-  const match = cookie.match(/cp_token=([^;]+)/);
-  if (match)
-    return match[1];
-  const auth = request.headers.get("Authorization") || "";
-  const bearer = auth.match(/^Bearer\s+(.+)$/i);
-  if (bearer)
-    return bearer[1];
-  return null;
-}
-var init_session = __esm({
-  "cp-includes/session.js"() {
-    init_jwt();
-    init_user();
-    __name(initSession, "initSession");
-    __name(extractToken, "extractToken");
-  }
-});
-
-// cp-settings.js
-async function cpSettings(cp) {
-  cp.version = CP_VERSION;
-  cp.cpinc = CPINC;
-  cp.cpadmin = CPADMIN;
-  registerCoreHooks(cp);
-  await initSession(cp);
-  if (cp.config.installed) {
-    await loadActivePlugins(cp);
-    cp.hooks.doAction("cp_plugins_loaded", cp);
-  }
-  await loadActiveTheme(cp);
-  cp.hooks.doAction("cp_init", cp);
-  cp.hooks.doAction("cp_loaded", cp);
-}
-var init_cp_settings = __esm({
-  "cp-settings.js"() {
-    init_cp_config();
-    init_plugin_loader();
-    init_theme_loader();
-    init_hooks();
-    init_session();
-    __name(cpSettings, "cpSettings");
-  }
-});
-
-// cp-load.js
-async function cpLoad(request, env, ctx, options = {}) {
-  if (!env.CP_DB) {
-    return errorResponse(
-      "CloudPress Error: D1 database binding <code>CP_DB</code> is not configured. Please add a D1 database binding named <strong>CP_DB</strong> in your Cloudflare Workers settings."
-    );
-  }
-  if (!env.CP_KV) {
-    return errorResponse(
-      "CloudPress Error: KV namespace binding <code>CP_KV</code> is not configured. Please add a KV namespace binding named <strong>CP_KV</strong> in your Cloudflare Workers settings."
-    );
-  }
-  let config;
-  try {
-    config = await loadConfig(env);
-  } catch (e) {
-    return errorResponse(
-      `CloudPress Error: Could not load configuration. ${e.message}<br>Make sure <code>cp-config.js</code> is correctly set up or run the installer at <a href="/cp-admin/setup-config">/cp-admin/setup-config</a>.`
-    );
-  }
-  const cp = {
-    // Cloudflare bindings
-    db: env.CP_DB,
-    // D1 database
-    kv: env.CP_KV,
-    // KV namespace
-    // GitHub source (optional, for theme/plugin sync)
-    github: env.GITHUB_TOKEN ? env.GITHUB_TOKEN : null,
-    // Config values
-    config,
-    // Request context
-    request,
-    env,
-    ctx,
-    url: new URL(request.url),
-    // Options
-    options,
-    // Runtime state
-    query: {},
-    currentUser: null,
-    hooks: createHookSystem(),
-    // Helpers
-    db_prefix: config.DB_PREFIX || "cp_"
-  };
-  await cpSettings(cp);
-  return cp;
-}
-function createHookSystem() {
-  const actions = {};
-  const filters = {};
-  return {
-    addAction(hook, callback, priority = 10) {
-      if (!actions[hook])
-        actions[hook] = [];
-      actions[hook].push({ callback, priority });
-      actions[hook].sort((a, b) => a.priority - b.priority);
-    },
-    doAction(hook, ...args) {
-      (actions[hook] || []).forEach(({ callback }) => callback(...args));
-    },
-    addFilter(hook, callback, priority = 10) {
-      if (!filters[hook])
-        filters[hook] = [];
-      filters[hook].push({ callback, priority });
-      filters[hook].sort((a, b) => a.priority - b.priority);
-    },
-    applyFilters(hook, value, ...args) {
-      return (filters[hook] || []).reduce(
-        (val, { callback }) => callback(val, ...args),
-        value
-      );
-    }
-  };
-}
-function errorResponse(message) {
-  const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CloudPress &rsaquo; Error</title>
-  <link rel="stylesheet" href="/cp-includes/css/error.css">
-</head>
-<body>
-  <div class="error-box">
-    <h1>CloudPress &rsaquo; Configuration Error</h1>
-    <p>${message}</p>
-  </div>
-</body>
-</html>`;
-  return {
-    __cpError: true,
-    response: new Response(html, {
-      status: 500,
-      headers: { "Content-Type": "text/html; charset=utf-8" }
-    })
-  };
-}
-var init_cp_load = __esm({
-  "cp-load.js"() {
-    init_cp_config();
-    init_cp_settings();
-    __name(cpLoad, "cpLoad");
-    __name(createHookSystem, "createHookSystem");
-    __name(errorResponse, "errorResponse");
-  }
-});
-
-// cp-cron.js
-var cp_cron_exports = {};
-__export(cp_cron_exports, {
-  cpClearScheduledHook: () => cpClearScheduledHook,
-  cpScheduleEvent: () => cpScheduleEvent,
-  cpUnscheduleEvent: () => cpUnscheduleEvent,
-  handleCronRequest: () => handleCronRequest,
-  handleScheduled: () => handleScheduled,
-  runCronJobs: () => runCronJobs
-});
-async function handleCronRequest(request, env, ctx) {
-  if (request.method.toUpperCase() !== "GET") {
-    return new Response("", { status: 405 });
-  }
-  const cp = await cpLoad(request, env, ctx, { DOING_CRON: true });
-  if (cp.__cpError)
-    return cp.response;
-  ctx.waitUntil(runCronJobs(cp));
-  return new Response("", {
-    status: 200,
-    headers: {
-      "Expires": "Wed, 11 Jan 1984 05:00:00 GMT",
-      "Cache-Control": "no-cache, must-revalidate, max-age=0"
-    }
-  });
-}
-async function handleScheduled(event, env, ctx) {
-  const request = new Request("https://internal/cp-cron", { method: "GET" });
-  const cp = await cpLoad(request, env, ctx, { DOING_CRON: true });
-  if (cp.__cpError) {
-    console.error("[CloudPress Cron] Bootstrap failed:", cp.response.status);
-    return;
-  }
-  await runCronJobs(cp);
-}
-async function runCronJobs(cp) {
-  const { db, kv } = cp;
-  const prefix = cp.config.DB_PREFIX || "cp_";
-  const gmtNow = Math.floor(Date.now() / 1e3);
-  const existingLock = await kv.get(CRON_LOCK_KEY);
-  if (existingLock) {
-    return;
-  }
-  const lockToken = `${gmtNow}.${Math.random()}`;
-  await kv.put(CRON_LOCK_KEY, lockToken, { expirationTtl: CRON_LOCK_TTL });
-  const acquiredLock = await kv.get(CRON_LOCK_KEY);
-  if (acquiredLock !== lockToken)
-    return;
-  try {
-    const { results: dueEvents } = await db.prepare(`
-      SELECT * FROM ${prefix}cron_events
-      WHERE timestamp <= ?
-      ORDER BY timestamp ASC
-    `).bind(gmtNow).all();
-    if (!dueEvents || dueEvents.length === 0) {
-      return;
-    }
-    for (const event of dueEvents) {
-      const currentLock = await kv.get(CRON_LOCK_KEY);
-      if (currentLock !== lockToken) {
-        console.log("[CloudPress Cron] Lock stolen, stopping.");
-        return;
-      }
-      let args = [];
-      try {
-        args = JSON.parse(event.args || "[]");
-      } catch (_) {
-      }
-      if (event.schedule) {
-        const interval = getCronInterval(event.schedule);
-        if (interval) {
-          const nextTimestamp = Math.floor(Date.now() / 1e3) + interval;
-          await db.prepare(`
-            UPDATE ${prefix}cron_events
-            SET timestamp = ?
-            WHERE id = ?
-          `).bind(nextTimestamp, event.id).run();
-        } else {
-          await db.prepare(`DELETE FROM ${prefix}cron_events WHERE id = ?`).bind(event.id).run();
-        }
-      } else {
-        await db.prepare(`DELETE FROM ${prefix}cron_events WHERE id = ?`).bind(event.id).run();
-      }
-      try {
-        cp.hooks.doAction(event.hook, ...args);
-        cp.hooks.doAction("cp_cron_event_ran", event.hook, args);
-      } catch (err) {
-        console.error(`[CloudPress Cron] Hook '${event.hook}' failed:`, err);
-        cp.hooks.doAction("cp_cron_event_error", event.hook, args, err);
-      }
-    }
-  } finally {
-    const finalLock = await kv.get(CRON_LOCK_KEY);
-    if (finalLock === lockToken) {
-      await kv.delete(CRON_LOCK_KEY);
-    }
-  }
-}
-function getCronInterval(schedule) {
-  const schedules = {
-    "minutely": 60,
-    "hourly": 3600,
-    "twicedaily": 43200,
-    "daily": 86400,
-    "weekly": 604800
-  };
-  return schedules[schedule] || null;
-}
-async function cpScheduleEvent(cp, timestamp, schedule, hook, args = []) {
-  const prefix = cp.config.DB_PREFIX || "cp_";
-  await cp.db.prepare(`
-    INSERT INTO ${prefix}cron_events (timestamp, schedule, hook, args)
-    VALUES (?, ?, ?, ?)
-  `).bind(timestamp, schedule || null, hook, JSON.stringify(args)).run();
-}
-async function cpUnscheduleEvent(cp, timestamp, hook, args = []) {
-  const prefix = cp.config.DB_PREFIX || "cp_";
-  await cp.db.prepare(`
-    DELETE FROM ${prefix}cron_events
-    WHERE timestamp = ? AND hook = ? AND args = ?
-  `).bind(timestamp, hook, JSON.stringify(args)).run();
-}
-async function cpClearScheduledHook(cp, hook) {
-  const prefix = cp.config.DB_PREFIX || "cp_";
-  await cp.db.prepare(`DELETE FROM ${prefix}cron_events WHERE hook = ?`).bind(hook).run();
-}
-var CRON_LOCK_KEY, CRON_LOCK_TTL;
-var init_cp_cron = __esm({
-  "cp-cron.js"() {
-    init_cp_load();
-    CRON_LOCK_KEY = "cp:doing_cron";
-    CRON_LOCK_TTL = 60;
-    __name(handleCronRequest, "handleCronRequest");
-    __name(handleScheduled, "handleScheduled");
-    __name(runCronJobs, "runCronJobs");
-    __name(getCronInterval, "getCronInterval");
-    __name(cpScheduleEvent, "cpScheduleEvent");
-    __name(cpUnscheduleEvent, "cpUnscheduleEvent");
-    __name(cpClearScheduledHook, "cpClearScheduledHook");
-  }
-});
-
-// cp-blog-header.js
-init_cp_load();
-
-// cp-includes/post.js
-init_formatting();
-async function getPost(cp, id) {
-  const prefix = cp.db_prefix || "cp_";
-  return cp.db.prepare(`SELECT * FROM ${prefix}posts WHERE ID=? LIMIT 1`).bind(id).first();
-}
-__name(getPost, "getPost");
-async function getPosts(cp, args = {}) {
-  const prefix = cp.db_prefix || "cp_";
-  const postType = args.post_type || "post";
-  const postStatus = args.post_status || "publish";
-  const limit = Math.min(parseInt(args.posts_per_page || args.numberposts || 10), 100);
-  const offset = parseInt(args.offset || 0);
-  const safeOrder = args.order === "ASC" ? "ASC" : "DESC";
-  const validOrderby = {
-    date: "post_date",
-    modified: "post_modified",
-    title: "post_title",
-    ID: "ID",
-    rand: "RANDOM()",
-    comment_count: "comment_count",
-    menu_order: "menu_order"
-  };
-  const orderby = validOrderby[args.orderby] || "post_date";
-  let where = `post_type=? AND post_status!=?`;
-  const params = [postType, "auto-draft"];
-  if (postStatus !== "any") {
-    where += ` AND post_status=?`;
-    params.push(postStatus);
-  }
-  if (args.author) {
-    where += " AND post_author=?";
-    params.push(args.author);
-  }
-  if (args.s) {
-    where += " AND post_title LIKE ?";
-    params.push(`%${args.s}%`);
-  }
-  if (args.post__in?.length) {
-    where += ` AND ID IN (${args.post__in.map(() => "?").join(",")})`;
-    params.push(...args.post__in);
-  }
-  if (args.post__not_in?.length) {
-    where += ` AND ID NOT IN (${args.post__not_in.map(() => "?").join(",")})`;
-    params.push(...args.post__not_in);
-  }
-  const sql = `SELECT * FROM ${prefix}posts WHERE ${where} ORDER BY ${orderby} ${safeOrder} LIMIT ? OFFSET ?`;
-  const rows = await cp.db.prepare(sql).bind(...params, limit, offset).all();
-  return rows.results || [];
-}
-__name(getPosts, "getPosts");
-async function insertPost(cp, data) {
-  const prefix = cp.db_prefix || "cp_";
-  const now = (/* @__PURE__ */ new Date()).toISOString().replace("T", " ").slice(0, 19);
-  const title = data.post_title || "";
-  const content = data.post_content || "";
-  const excerpt = data.post_excerpt || "";
-  const status = data.post_status || "draft";
-  const type = data.post_type || "post";
-  const slug = data.post_name || slugify(title) || `post-${Date.now()}`;
-  const author = data.post_author || 1;
-  const date = data.post_date || now;
-  const parent = data.post_parent || 0;
-  const order = data.menu_order || 0;
-  const result = await cp.db.prepare(`
-    INSERT INTO ${prefix}posts
-      (post_author, post_date, post_date_gmt, post_content, post_title, post_excerpt,
-       post_status, post_type, post_name, post_parent, menu_order,
-       comment_status, ping_status, post_modified, post_modified_gmt)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,'open','open',?,?)
-  `).bind(author, date, date, content, title, excerpt, status, type, slug, parent, order, now, now).run();
-  return result.meta?.last_row_id;
-}
-__name(insertPost, "insertPost");
-async function pingsOpen(cp, postId) {
-  const post = await getPost(cp, postId);
-  return post && post.ping_status === "open";
-}
-__name(pingsOpen, "pingsOpen");
-
-// cp-includes/query.js
-init_option();
-async function cpQuery(request, cp) {
-  const url = new URL(request.url);
-  const path = url.pathname.replace(/\/+$/, "") || "/";
-  const parts = path.split("/").filter(Boolean);
-  const prefix = cp.db_prefix || "cp_";
-  const paged = parseInt(url.searchParams.get("paged") || "1");
-  const postsPerPage = parseInt(await getOption(cp, "posts_per_page", 10));
-  cp.query = {
-    is_home: false,
-    is_single: false,
-    is_page: false,
-    is_archive: false,
-    is_category: false,
-    is_tag: false,
-    is_author: false,
-    is_search: false,
-    is_404: false,
-    is_feed: false,
-    paged,
-    posts_per_page: postsPerPage,
-    found_posts: 0,
-    max_num_pages: 1,
-    posts: [],
-    queried_object: null,
-    request_path: path
-  };
-  const q = cp.query;
-  if (path === "/" || parts.length === 1 && parts[0] === "page") {
-    q.is_home = true;
-    const showOnFront = await getOption(cp, "show_on_front", "posts");
-    if (showOnFront === "page") {
-      const pageOnFront = await getOption(cp, "page_on_front", 0);
-      if (pageOnFront) {
-        const p = await getPost(cp, pageOnFront);
-        if (p) {
-          q.is_page = true;
-          q.is_home = false;
-          q.queried_object = p;
-          q.posts = [p];
-          return;
-        }
-      }
-    }
-    await loadArchivePosts(cp, q, { post_type: "post", post_status: "publish" }, postsPerPage, paged, prefix);
-    return;
-  }
-  if (url.searchParams.has("s") || parts[0] === "search") {
-    const s = url.searchParams.get("s") || parts[1] || "";
-    q.is_search = true;
-    q.search_query = s;
-    await loadArchivePosts(cp, q, { post_type: "post", post_status: "publish", s }, postsPerPage, paged, prefix);
-    return;
-  }
-  if (parts[0] === "category" && parts[1]) {
-    q.is_archive = true;
-    q.is_category = true;
-    const slug = parts[1];
-    const term = await cp.db.prepare(`SELECT * FROM ${prefix}terms t JOIN ${prefix}term_taxonomy tt ON t.term_id=tt.term_id WHERE tt.taxonomy='category' AND t.slug=? LIMIT 1`).bind(slug).first().catch(() => null);
-    if (!term) {
-      q.is_404 = true;
-      return;
-    }
-    q.queried_object = term;
-    const ids = await cp.db.prepare(`SELECT object_id FROM ${prefix}term_relationships WHERE term_taxonomy_id=?`).bind(term.term_taxonomy_id).all().catch(() => ({ results: [] }));
-    const postIds = (ids.results || []).map((r) => r.object_id);
-    if (postIds.length) {
-      await loadArchivePosts(cp, q, { post_type: "post", post_status: "publish", post__in: postIds }, postsPerPage, paged, prefix);
-    }
-    return;
-  }
-  if (parts[0] === "tag" && parts[1]) {
-    q.is_archive = true;
-    q.is_tag = true;
-    const slug = parts[1];
-    const term = await cp.db.prepare(`SELECT * FROM ${prefix}terms t JOIN ${prefix}term_taxonomy tt ON t.term_id=tt.term_id WHERE tt.taxonomy='post_tag' AND t.slug=? LIMIT 1`).bind(slug).first().catch(() => null);
-    if (!term) {
-      q.is_404 = true;
-      return;
-    }
-    q.queried_object = term;
-    const ids = await cp.db.prepare(`SELECT object_id FROM ${prefix}term_relationships WHERE term_taxonomy_id=?`).bind(term.term_taxonomy_id).all().catch(() => ({ results: [] }));
-    const postIds = (ids.results || []).map((r) => r.object_id);
-    if (postIds.length) {
-      await loadArchivePosts(cp, q, { post_type: "post", post_status: "publish", post__in: postIds }, postsPerPage, paged, prefix);
-    }
-    return;
-  }
-  if (parts[0] === "author" && parts[1]) {
-    q.is_archive = true;
-    q.is_author = true;
-    const author = await cp.db.prepare(`SELECT * FROM ${prefix}users WHERE user_login=? OR user_nicename=? LIMIT 1`).bind(parts[1], parts[1]).first().catch(() => null);
-    if (!author) {
-      q.is_404 = true;
-      return;
-    }
-    q.queried_object = author;
-    await loadArchivePosts(cp, q, { post_type: "post", post_status: "publish", author: author.ID }, postsPerPage, paged, prefix);
-    return;
-  }
-  if (/^\d{4}$/.test(parts[0]) && parts.length <= 2) {
-    q.is_archive = true;
-    const year = parts[0];
-    const month = parts[1];
-    let wherePart = `post_type='post' AND post_status='publish' AND strftime('%Y', post_date)=?`;
-    const params = [year];
-    if (month) {
-      wherePart += ` AND strftime('%m', post_date)=?`;
-      params.push(month.padStart(2, "0"));
-    }
-    const offset = (paged - 1) * postsPerPage;
-    const [countRow, rows] = await Promise.all([
-      cp.db.prepare(`SELECT COUNT(*) as n FROM ${prefix}posts WHERE ${wherePart}`).bind(...params).first(),
-      cp.db.prepare(`SELECT * FROM ${prefix}posts WHERE ${wherePart} ORDER BY post_date DESC LIMIT ? OFFSET ?`).bind(...params, postsPerPage, offset).all()
-    ]);
-    q.found_posts = countRow?.n ?? 0;
-    q.max_num_pages = Math.ceil(q.found_posts / postsPerPage) || 1;
-    q.posts = rows.results || [];
-    return;
-  }
-  if (parts.length === 3 && /^\d{4}$/.test(parts[0]) && /^\d{2}$/.test(parts[1])) {
-    const slug = parts[2];
-    const post = await cp.db.prepare(`SELECT * FROM ${prefix}posts WHERE post_name=? AND post_type='post' AND post_status='publish' LIMIT 1`).bind(slug).first().catch(() => null);
-    if (!post) {
-      q.is_404 = true;
-      return;
-    }
-    q.is_single = true;
-    q.queried_object = post;
-    q.posts = [post];
-    return;
-  }
-  if (url.searchParams.has("p")) {
-    const id = parseInt(url.searchParams.get("p"));
-    const post = await getPost(cp, id).catch(() => null);
-    if (!post || post.post_status !== "publish") {
-      q.is_404 = true;
-      return;
-    }
-    q.is_single = true;
-    q.queried_object = post;
-    q.posts = [post];
-    return;
-  }
-  if (url.searchParams.has("page_id")) {
-    const id = parseInt(url.searchParams.get("page_id"));
-    const page = await getPost(cp, id).catch(() => null);
-    if (!page || page.post_status !== "publish") {
-      q.is_404 = true;
-      return;
-    }
-    q.is_page = true;
-    q.queried_object = page;
-    q.posts = [page];
-    return;
-  }
-  if (parts.length >= 1) {
-    const slug = parts[parts.length - 1];
-    const page = await cp.db.prepare(`SELECT * FROM ${prefix}posts WHERE post_name=? AND post_type='page' AND post_status='publish' LIMIT 1`).bind(slug).first().catch(() => null);
-    if (page) {
-      q.is_page = true;
-      q.queried_object = page;
-      q.posts = [page];
-      return;
-    }
-    const post = await cp.db.prepare(`SELECT * FROM ${prefix}posts WHERE post_name=? AND post_status='publish' LIMIT 1`).bind(slug).first().catch(() => null);
-    if (post) {
-      q.is_single = true;
-      q.queried_object = post;
-      q.posts = [post];
-      return;
-    }
-  }
-  q.is_404 = true;
-}
-__name(cpQuery, "cpQuery");
-async function loadArchivePosts(cp, q, args, postsPerPage, paged, prefix) {
-  const offset = (paged - 1) * postsPerPage;
-  const postType = args.post_type || "post";
-  const status = args.post_status || "publish";
-  let where = `post_type=? AND post_status=?`;
-  const params = [postType, status];
-  if (args.author) {
-    where += " AND post_author=?";
-    params.push(args.author);
-  }
-  if (args.s) {
-    where += " AND post_title LIKE ?";
-    params.push(`%${args.s}%`);
-  }
-  if (args.post__in?.length) {
-    where += ` AND ID IN (${args.post__in.map(() => "?").join(",")})`;
-    params.push(...args.post__in);
-  }
-  const [countRow, rows] = await Promise.all([
-    cp.db.prepare(`SELECT COUNT(*) as n FROM ${prefix}posts WHERE ${where}`).bind(...params).first(),
-    cp.db.prepare(`SELECT * FROM ${prefix}posts WHERE ${where} ORDER BY post_date DESC LIMIT ? OFFSET ?`).bind(...params, postsPerPage, offset).all()
-  ]);
-  q.found_posts = countRow?.n ?? 0;
-  q.max_num_pages = Math.ceil(q.found_posts / postsPerPage) || 1;
-  q.posts = rows.results || [];
-}
-__name(loadArchivePosts, "loadArchivePosts");
-
-// cp-includes/template-loader.js
-init_option();
-init_formatting();
-var KV_PREFIX = "cp:template:";
-var TEMPLATE_KV_TTL = 3600;
-async function loadTemplate(requestOrCp, cpOrTemplateName, context = {}) {
-  let request, cp, templateName;
-  if (requestOrCp instanceof Request) {
-    request = requestOrCp;
-    cp = cpOrTemplateName;
-    templateName = resolveTemplateName(request, cp);
-  } else if (requestOrCp && typeof requestOrCp === "object" && requestOrCp.db) {
-    cp = requestOrCp;
-    templateName = cpOrTemplateName || "index";
-    request = cp.request;
-  } else {
-    cp = cpOrTemplateName;
-    templateName = "index";
-    request = cp?.request;
-  }
-  if (request && new URL(request.url).pathname === "/api/render") {
-    return renderApiResponse(request, cp);
-  }
-  const hierarchy = buildHierarchy(templateName, { ...context, cp });
-  for (const tmpl of hierarchy) {
-    const content = await fetchTemplate(cp, tmpl);
-    if (content !== null) {
-      const html = await renderTemplateContent(content, { cp, request, ...context });
-      if (html.trim().toLowerCase().startsWith("<!doctype")) {
-        return new Response(html, {
-          status: 200,
-          headers: { "Content-Type": "text/html; charset=utf-8" }
-        });
-      }
-      return new Response(
-        wrapInFullPage(html, cp, templateName),
-        { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } }
-      );
-    }
-  }
-  return new Response(
-    defaultTemplate(templateName, { ...context, cp }),
-    { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } }
-  );
-}
-__name(loadTemplate, "loadTemplate");
-async function renderApiResponse(request, cp) {
-  const url = new URL(request.url);
-  const reqPath = url.searchParams.get("path") || "/";
-  let post = null;
-  try {
-    if (cp?.db) {
-      const prefix = cp.db_prefix || "cp_";
-      const slug = reqPath.replace(/^\/+/, "").split("/").pop() || "";
-      if (slug) {
-        post = await cp.db.prepare(
-          `SELECT ID, post_title, post_content, post_status, post_type
-             FROM ${prefix}posts
-            WHERE post_name=? AND post_status='publish'
-            LIMIT 1`
-        ).bind(slug).first();
-      }
-    }
-  } catch (_) {
-  }
-  const templateName = resolveTemplateFromPath(reqPath);
-  const result = await loadTemplate(cp, templateName, { post, path: reqPath });
-  if (result instanceof Response)
-    return result;
-  return new Response(String(result), {
-    headers: { "Content-Type": "text/html; charset=utf-8" }
-  });
-}
-__name(renderApiResponse, "renderApiResponse");
-function resolveTemplateName(request, cp) {
-  if (!request)
-    return "index";
-  const url = new URL(request.url);
-  const path = url.pathname;
-  return resolveTemplateFromPath(path, cp);
-}
-__name(resolveTemplateName, "resolveTemplateName");
-function resolveTemplateFromPath(path, cp) {
-  if (path === "/" || path === "")
-    return "index";
-  if (path.startsWith("/cp-admin"))
-    return "index";
-  if (/^\/\d{4}\/\d{2}\//.test(path))
-    return "single";
-  if (path.startsWith("/category/") || path.startsWith("/tag/") || path.startsWith("/author/")) {
-    return "archive";
-  }
-  if (path.startsWith("/search") || path.includes("?s="))
-    return "search";
-  if (path.endsWith("/feed") || path.endsWith("/feed/rss"))
-    return "feed";
-  if (/^\/[a-z0-9\-_]+\/?$/.test(path)) {
-    return cp?.query?.is_page ? "page" : "page";
-  }
-  return "index";
-}
-__name(resolveTemplateFromPath, "resolveTemplateFromPath");
-function buildHierarchy(templateName, context) {
-  const base = (templateName || "index").replace(/\.html$/, "");
-  const list = [];
-  list.push(`${base}.html`);
-  if (base === "single")
-    list.push("singular.html");
-  if (base === "page")
-    list.push("singular.html");
-  if (base.startsWith("archive"))
-    list.push("archive.html");
-  if (context.taxonomy)
-    list.push(`taxonomy-${context.taxonomy}.html`);
-  if (context.term)
-    list.push("taxonomy.html");
-  if (base !== "index")
-    list.push("index.html");
-  return [...new Set(list)];
-}
-__name(buildHierarchy, "buildHierarchy");
-async function fetchTemplate(cp, filename) {
-  const kvKey = KV_PREFIX + filename;
-  try {
-    const cached = await cp?.kv?.get(kvKey);
-    if (cached !== null && cached !== void 0)
-      return cached;
-  } catch (_) {
-  }
-  const githubRepo = cp?.config?.GITHUB_REPO || await getOption(cp, "cp_github_repo", "");
-  const githubToken = cp?.config?.GITHUB_TOKEN || cp?.env?.CP_GITHUB_TOKEN || "";
-  const activeTheme = await getOption(cp, "template", "");
-  if (!githubRepo)
-    return null;
-  const themePath = activeTheme ? `themes/${activeTheme}/${filename}` : `templates/${filename}`;
-  const apiUrl = `https://api.github.com/repos/${githubRepo}/contents/${themePath}`;
-  try {
-    const headers = {
-      "User-Agent": "CloudPress/2.0",
-      "Accept": "application/vnd.github.v3.raw"
-    };
-    if (githubToken)
-      headers["Authorization"] = `Bearer ${githubToken}`;
-    const res = await fetch(apiUrl, { headers });
-    if (!res.ok)
-      return null;
-    const content = await res.text();
-    if (cp?.kv) {
-      cp.kv.put(kvKey, content, { expirationTtl: TEMPLATE_KV_TTL }).catch(() => {
-      });
-    }
-    return content;
-  } catch (_) {
-    return null;
-  }
-}
-__name(fetchTemplate, "fetchTemplate");
-async function renderTemplateContent(template, context) {
-  return interpolate(template, context);
-}
-__name(renderTemplateContent, "renderTemplateContent");
-function interpolate(template, context) {
-  return template.replace(/\{\{(\s*[\w.]+\s*)\}\}/g, (_, key) => {
-    const parts = key.trim().split(".");
-    let val = context;
-    for (const p of parts) {
-      if (val == null)
-        return "";
-      val = val[p];
-    }
-    return val != null ? String(val) : "";
-  });
-}
-__name(interpolate, "interpolate");
-function wrapInFullPage(content, cp, templateName) {
-  const siteName = cp?.config?.SITE_NAME || "CloudPress";
-  const siteUrl = cp?.config?.SITE_URL || "";
-  const adminSlug = cp?.config?.ADMIN_SLUG || "cp-admin";
-  return `<!DOCTYPE html>
-<html lang="ko">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="generator" content="CloudPress">
-  <title>${escHtml(siteName)}</title>
-  <style>
-    *,*::before,*::after{box-sizing:border-box}
-    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR','Malgun Gothic','Segoe UI',sans-serif;line-height:1.7;color:#1d2327;background:#fff;display:flex;flex-direction:column;min-height:100vh}
-    a{color:#2271b1;text-decoration:none}
-    a:hover{text-decoration:underline}
-    img{max-width:100%;height:auto}
-    .cp-container{max-width:860px;margin:0 auto;padding:0 1.5rem}
-    .cp-site-wrap{flex:1}
-    .cp-header{background:#1d2327;color:#fff;padding:1.1rem 0;box-shadow:0 2px 4px rgba(0,0,0,.15)}
-    .cp-header-inner{display:flex;align-items:center;justify-content:space-between;max-width:860px;margin:0 auto;padding:0 1.5rem}
-    .cp-header a.cp-site-name{color:#fff;text-decoration:none;font-size:1.35rem;font-weight:700;letter-spacing:-.3px}
-    .cp-header nav a{color:rgba(255,255,255,.75);text-decoration:none;margin-left:1.5rem;font-size:.9rem;transition:.15s}
-    .cp-header nav a:hover{color:#fff}
-    .cp-home-hero{padding:1.5rem 0 1rem;border-bottom:1px solid #f0f0f1;margin-bottom:1.75rem}
-    .cp-site-title{font-size:2.2rem;font-weight:800;margin:0 0 .5rem;color:#1d2327}
-    .cp-site-desc{color:#646970;font-size:1.05rem;margin:0}
-    .cp-posts-list{display:flex;flex-direction:column;gap:2rem;margin-bottom:3rem}
-    .cp-post-card{border-bottom:1px solid #f0f0f1;padding-bottom:2rem}
-    .cp-post-card:last-child{border-bottom:none}
-    .cp-post-card-title{margin:0 0 .4rem;font-size:1.4rem;font-weight:700;line-height:1.3}
-    .cp-post-card-title a{color:#1d2327;text-decoration:none}
-    .cp-post-card-title a:hover{color:#2271b1}
-    .cp-post-card-date{color:#646970;font-size:.85rem;display:block;margin-bottom:.75rem}
-    .cp-post-card-excerpt p{margin:.5rem 0;color:#3c434a;line-height:1.7}
-    .cp-post-card-footer{margin-top:.75rem}
-    .cp-read-more{font-size:.9rem;font-weight:600;color:#2271b1}
-    .cp-single-post{padding:2rem 0}
-    .cp-single-title{font-size:2rem;font-weight:800;margin:0 0 .75rem;line-height:1.25;color:#1d2327}
-    .cp-single-meta{color:#646970;font-size:.875rem;margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #f0f0f1}
-    .cp-single-content{font-size:1.05rem;line-height:1.85;color:#3c434a}
-    .cp-single-content h1,.cp-single-content h2,.cp-single-content h3{color:#1d2327;margin:2rem 0 .75rem}
-    .cp-single-content p{margin:0 0 1.2rem}
-    .cp-single-content blockquote{border-left:4px solid #2271b1;padding:.75rem 1rem;margin:1.5rem 0;background:#f8f9fa;color:#3c434a}
-    .cp-single-footer{margin-top:2.5rem;padding-top:1.5rem;border-top:1px solid #f0f0f1}
-    .cp-back-link{font-size:.9rem;color:#646970}
-    .cp-empty-state{text-align:center;padding:2rem 0;color:#646970}
-    .cp-empty-icon{font-size:3rem;margin-bottom:1rem}
-    .cp-empty-state h2{font-size:1.4rem;color:#1d2327;margin:0 0 .5rem}
-    .cp-empty-state p{margin:0 0 1.5rem}
-    .cp-btn-primary{display:inline-block;background:#2271b1;color:#fff;padding:.6rem 1.4rem;border-radius:4px;font-weight:600;text-decoration:none;transition:.15s}
-    .cp-btn-primary:hover{background:#135e96;text-decoration:none;color:#fff}
-    .cp-404{text-align:center;padding:5rem 0}
-    .cp-404 h1{font-size:5rem;font-weight:900;color:#dcdcde;margin:0}
-    .cp-footer{background:#f6f7f7;border-top:1px solid #dcdcde;padding:1.5rem 0;text-align:center;color:#646970;font-size:.85rem}
-    .cp-footer a{color:#646970}
-    @media(max-width:600px){
-      .cp-site-title{font-size:1.6rem}
-      .cp-single-title{font-size:1.5rem}
-      .cp-post-card-title{font-size:1.2rem}
-    }
-  </style>
-</head>
-<body>
-  <header class="cp-header">
-    <div class="cp-header-inner">
-      <a href="/" class="cp-site-name">${escHtml(siteName)}</a>
-      <nav>
-        <a href="/">홈</a>
-        
-      </nav>
-    </div>
-  </header>
-  <div class="cp-site-wrap">
-    <div class="cp-container">
-      ${content}
-    </div>
-  </div>
-  <footer class="cp-footer">
-    <div class="cp-container">
-      &copy; ${(/* @__PURE__ */ new Date()).getFullYear()} ${escHtml(siteName)}
-    </div>
-  </footer>
-</body>
-</html>`;
-}
-__name(wrapInFullPage, "wrapInFullPage");
-function defaultTemplate(templateName, context) {
-  const cp = context.cp;
-  const post = context.post;
-  const q = cp?.query || {};
-  const siteName = cp?.config?.SITE_NAME || 'CloudPress Site';
-  const siteDesc = cp?.config?.SITE_TAGLINE || '';
-
-  function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-  function formatDate(d) { try { return new Date(d).toLocaleDateString('ko-KR',{year:'numeric',month:'long',day:'numeric'}); } catch(_){return d||'';} }
-  function excerpt(c,n=200) { const t=(c||'').replace(/<[^>]+>/g,'').replace(/\s+/g,' ').trim(); return t.length>n?t.slice(0,n)+'…':t; }
-
-  let body = '';
-
-  // 404
-  if (q.is_404) {
-    body = `<div class="cp-404-wrap"><h1>404</h1><p>페이지를 찾을 수 없습니다.</p><a href="/" class="cp-btn-main">홈으로 돌아가기</a></div>`;
-  }
-  // 단일 글
-  else if (q.is_single || q.is_page) {
-    const p = q.queried_object || post || q.posts?.[0];
-    if (p) {
-      body = `<article class="cp-single">
-        <h1 class="cp-single-title">${esc(p.post_title)}</h1>
-        ${q.is_single ? `<div class="cp-meta">${formatDate(p.post_date)}</div>` : ''}
-        <div class="cp-content">${p.post_content||''}</div>
-        ${q.is_single ? `<div class="cp-back"><a href="/">← 목록으로</a></div>` : ''}
-      </article>`;
-    }
-  }
-  // 검색
-  else if (q.is_search) {
-    const posts = q.posts || [];
-    body = `<h2 class="cp-archive-title">"${esc(q.search_query)}" 검색 결과 (${q.found_posts}개)</h2>`;
-    body += posts.length ? posts.map(p=>`<article class="cp-card-post"><h3><a href="/${new Date(p.post_date).getFullYear()}/${String(new Date(p.post_date).getMonth()+1).padStart(2,'0')}/${esc(p.post_name)}">${esc(p.post_title)}</a></h3><p class="cp-meta">${formatDate(p.post_date)}</p><p>${excerpt(p.post_content)}</p></article>`).join('') : '<p>검색 결과가 없습니다.</p>';
-  }
-  // 카테고리/태그/아카이브
-  else if (q.is_archive || q.is_category || q.is_tag) {
-    const label = q.is_category ? '카테고리' : q.is_tag ? '태그' : '아카이브';
-    const name2 = q.queried_object?.name || '';
-    body = `<h2 class="cp-archive-title">${label}: ${esc(name2)}</h2>`;
-    const posts = q.posts || [];
-    body += posts.length ? posts.map(p=>`<article class="cp-card-post"><h3><a href="/${new Date(p.post_date).getFullYear()}/${String(new Date(p.post_date).getMonth()+1).padStart(2,'0')}/${esc(p.post_name)}">${esc(p.post_title)}</a></h3><p class="cp-meta">${formatDate(p.post_date)}</p><p>${excerpt(p.post_content)}</p></article>`).join('') : '<p>글이 없습니다.</p>';
-  }
-  // 홈 (글 목록)
-  else {
-    const posts = q.posts || [];
-    if (q.is_home && posts.length === 0) {
-      body = `<div class="cp-home-hero"><h2 class="cp-site-title">${esc(siteName)}</h2>${siteDesc?`<p class="cp-site-desc">${esc(siteDesc)}</p>`:''}</div><p style="text-align:center;color:#888;padding:60px 0">아직 게시된 글이 없습니다.</p>`;
-    } else {
-      if (q.is_home) body = `<div class="cp-home-hero"><h2 class="cp-site-title">${esc(siteName)}</h2>${siteDesc?`<p class="cp-site-desc">${esc(siteDesc)}</p>`:''}</div>`;
-      body += `<div class="cp-posts-list">${posts.map(p=>{
-        const y=new Date(p.post_date).getFullYear();
-        const m=String(new Date(p.post_date).getMonth()+1).padStart(2,'0');
-        const slug=p.post_name||p.ID;
-        return `<article class="cp-post-card">
-          <h2 class="cp-post-card-title"><a href="/${y}/${m}/${esc(slug)}">${esc(p.post_title||(p.ID?'(제목 없음)':''))}</a></h2>
-          <span class="cp-post-card-date">${formatDate(p.post_date)}</span>
-          <div class="cp-post-card-excerpt"><p>${excerpt(p.post_content)}</p></div>
-          <div class="cp-post-card-footer"><a href="/${y}/${m}/${esc(slug)}" class="cp-read-more">더 읽기 →</a></div>
-        </article>`;
-      }).join('')}</div>`;
-      // 페이지네이션
-      if (q.max_num_pages > 1) {
-        const paged = q.paged || 1;
-        body += `<div class="cp-pagination">
-          ${paged>1?`<a href="?paged=${paged-1}" class="cp-page-btn">← 이전</a>`:''}
-          <span>${paged} / ${q.max_num_pages}</span>
-          ${paged<q.max_num_pages?`<a href="?paged=${paged+1}" class="cp-page-btn">다음 →</a>`:''}
-        </div>`;
-      }
-    }
-  }
-
-  const html = `<!DOCTYPE html>
-<html lang="ko">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="generator" content="CloudPress">
-  <title>${esc((q.queried_object?.post_title||q.queried_object?.name||'')+(q.queried_object?' – ':'')+siteName)}</title>
-  <style>
-    *,*::before,*::after{box-sizing:border-box}
-    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR','Segoe UI',sans-serif;line-height:1.7;color:#1d2327;background:#fff;display:flex;flex-direction:column;min-height:100vh}
-    a{color:#2271b1;text-decoration:none} a:hover{text-decoration:underline}
-    img{max-width:100%;height:auto}
-    .cp-header{background:#1d2327;color:#fff;padding:1rem 0}
-    .cp-header-inner{max-width:860px;margin:0 auto;padding:0 1.5rem;display:flex;align-items:center;justify-content:space-between}
-    .cp-header a.cp-site-name{color:#fff;font-size:1.3rem;font-weight:700;text-decoration:none}
-    .cp-header nav{display:flex;gap:1.5rem}
-    .cp-header nav a{color:rgba(255,255,255,.75);font-size:.9rem} .cp-header nav a:hover{color:#fff;text-decoration:none}
-    .cp-container{max-width:860px;margin:0 auto;padding:2rem 1.5rem;flex:1}
-    .cp-home-hero{padding:1rem 0 1.5rem;border-bottom:1px solid #f0f0f1;margin-bottom:2rem}
-    .cp-site-title{font-size:2rem;font-weight:800;margin:0 0 .4rem;color:#1d2327}
-    .cp-site-desc{color:#646970;margin:0}
-    .cp-posts-list{display:flex;flex-direction:column;gap:2rem}
-    .cp-post-card{border-bottom:1px solid #f0f0f1;padding-bottom:2rem}
-    .cp-post-card:last-child{border-bottom:none}
-    .cp-post-card-title{margin:0 0 .3rem;font-size:1.4rem;font-weight:700}
-    .cp-post-card-title a{color:#1d2327} .cp-post-card-title a:hover{color:#2271b1;text-decoration:none}
-    .cp-post-card-date{color:#646970;font-size:.85rem;display:block;margin-bottom:.6rem}
-    .cp-post-card-excerpt p{color:#3c434a;margin:.4rem 0}
-    .cp-read-more{font-size:.9rem;font-weight:600;color:#2271b1}
-    .cp-meta{color:#646970;font-size:.85rem;margin-bottom:1.5rem}
-    .cp-single{padding:1rem 0}
-    .cp-single-title{font-size:2rem;font-weight:800;margin:0 0 .5rem;line-height:1.25}
-    .cp-content{font-size:1.05rem;line-height:1.85;color:#3c434a}
-    .cp-content h1,.cp-content h2,.cp-content h3{color:#1d2327;margin:2rem 0 .75rem}
-    .cp-content p{margin:0 0 1.2rem}
-    .cp-content blockquote{border-left:4px solid #2271b1;padding:.75rem 1rem;margin:1.5rem 0;background:#f8f9fa;color:#3c434a}
-    .cp-content img{max-width:100%;border-radius:4px}
-    .cp-content pre{background:#1d2327;color:#a7aaad;padding:1rem;border-radius:6px;overflow-x:auto;font-size:.9rem}
-    .cp-content code{background:#f0f0f1;padding:1px 5px;border-radius:3px;font-size:.9em}
-    .cp-content ul,.cp-content ol{padding-left:1.5rem;margin:0 0 1.2rem}
-    .cp-back{margin-top:2rem;padding-top:1.5rem;border-top:1px solid #f0f0f1}
-    .cp-archive-title{font-size:1.5rem;font-weight:700;margin:0 0 1.5rem}
-    .cp-card-post{border-bottom:1px solid #f0f0f1;padding-bottom:1.5rem;margin-bottom:1.5rem}
-    .cp-card-post h3{margin:0 0 .3rem;font-size:1.2rem}
-    .cp-card-post h3 a{color:#1d2327} .cp-card-post h3 a:hover{color:#2271b1;text-decoration:none}
-    .cp-404-wrap{text-align:center;padding:5rem 0}
-    .cp-404-wrap h1{font-size:5rem;font-weight:900;color:#dcdcde;margin:0}
-    .cp-404-wrap p{color:#646970;font-size:1.1rem}
-    .cp-btn-main{display:inline-block;background:#2271b1;color:#fff;padding:.6rem 1.4rem;border-radius:4px;font-weight:600;text-decoration:none;margin-top:1rem}
-    .cp-pagination{display:flex;gap:1rem;justify-content:center;align-items:center;padding:2rem 0}
-    .cp-page-btn{background:#2271b1;color:#fff;padding:.5rem 1rem;border-radius:4px;text-decoration:none;font-size:.9rem}
-    .cp-footer{background:#f6f7f7;border-top:1px solid #dcdcde;padding:1.2rem;text-align:center;color:#646970;font-size:.85rem}
-    @media(max-width:600px){.cp-site-title{font-size:1.5rem}.cp-single-title{font-size:1.5rem}.cp-post-card-title{font-size:1.1rem}}
-  </style>
-</head>
-<body>
-  <header class="cp-header">
-    <div class="cp-header-inner">
-      <a href="/" class="cp-site-name">${esc(siteName)}</a>
-      <nav>
-        <a href="/">홈</a>
-        <a href="/feed">RSS</a>
-      </nav>
-    </div>
-  </header>
-  <div class="cp-container">${body}</div>
-  <footer class="cp-footer">&copy; ${new Date().getFullYear()} ${esc(siteName)}</footer>
-</body>
-</html>`;
-  return html;
-}
-__name(defaultTemplate, "defaultTemplate");
-
-// cp-blog-header.js
-async function handleRequest(request, env, ctx, options = {}) {
-  let cp;
-  try {
-    cp = await cpLoad(request, env, ctx, options);
-  } catch (e) {
-    console.error("[cp-blog-header] cpLoad error:", e?.message);
-    return errorPage("\uCD08\uAE30\uD654 \uC624\uB958", e?.message || "cpLoad \uC2E4\uD328");
-  }
-  if (cp && cp.__cpError) {
-    return cp.response;
-  }
-  try {
-    await cpQuery(request, cp);
-  } catch (e) {
-    console.error("[cp-blog-header] cpQuery error:", e?.message);
-  }
-  try {
-    const result = await loadTemplate(request, cp);
-    if (result instanceof Response) {
-      return result;
-    }
-    if (typeof result === "string") {
-      return new Response(result, {
-        status: 200,
-        headers: { "Content-Type": "text/html; charset=utf-8" }
-      });
-    }
-    return result;
-  } catch (e) {
-    console.error("[cp-blog-header] loadTemplate error:", e?.message);
-    return errorPage("\uB80C\uB354\uB9C1 \uC624\uB958", e?.message || "\uD15C\uD50C\uB9BF \uB85C\uB4DC \uC2E4\uD328");
-  }
-}
-__name(handleRequest, "handleRequest");
-function errorPage(title, detail) {
-  return new Response(
-    `<!DOCTYPE html>
-<html lang="ko">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CloudPress \u2014 ${escHtml2(title)}</title>
-  <link rel="stylesheet" href="/cp-includes/css/error.css">
-</head>
-<body>
-  <div class="error-box">
-    <h1>CloudPress \u203A ${escHtml2(title)}</h1>
-    <p>${escHtml2(detail)}</p>
-  </div>
-</body>
-</html>`,
-    { status: 500, headers: { "Content-Type": "text/html; charset=utf-8" } }
-  );
-}
-__name(errorPage, "errorPage");
-function escHtml2(s) {
-  return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-__name(escHtml2, "escHtml");
-
-// cp-activate.js
-init_cp_load();
-
-// cp-includes/sanitize.js
-init_formatting();
-function sanitizeTextField(str) {
-  return String(str || "").replace(/<[^>]+>/g, "").replace(/[\r\n\t]+/g, " ").trim();
-}
-__name(sanitizeTextField, "sanitizeTextField");
-function sanitizeEmail(str) {
-  const s = String(str || "").trim().toLowerCase();
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s) ? s : "";
-}
-__name(sanitizeEmail, "sanitizeEmail");
-function sanitizeUrl(str, allowedSchemes = ["http", "https", "mailto"]) {
-  const s = String(str || "").trim();
-  if (!s)
-    return "";
-  try {
-    const u = new URL(s);
-    const scheme = u.protocol.replace(":", "");
-    if (!allowedSchemes.includes(scheme))
-      return "";
-    return u.href;
-  } catch (_) {
-    if (s.startsWith("/"))
-      return s;
-    return "";
-  }
-}
-__name(sanitizeUrl, "sanitizeUrl");
-
-// cp-includes/ms-functions.js
-init_crypto();
-init_option();
-async function cpmuValidateUserSignup(cp, userLogin, userEmail) {
-  const errors = [];
-  if (!userLogin || userLogin.length < 4) {
-    errors.push("Username must be at least 4 characters.");
-  } else if (!/^[a-z0-9_\-\.]+$/.test(userLogin)) {
-    errors.push("Username may only contain lowercase letters, numbers, hyphens, underscores, and periods.");
-  } else {
-    const existing = await userExistsByLogin(cp, userLogin);
-    if (existing)
-      errors.push("That username is already registered.");
-    const signup = await signupExistsByLogin(cp, userLogin);
-    if (signup)
-      errors.push("That username is already pending activation.");
-  }
-  const cleanEmail = sanitizeEmail(userEmail);
-  if (!cleanEmail) {
-    errors.push("Invalid email address.");
-  } else {
-    const existing = await userExistsByEmail(cp, cleanEmail);
-    if (existing)
-      errors.push("That email address is already registered.");
-  }
-  return { user_name: userLogin, user_email: cleanEmail || userEmail, errors };
-}
-__name(cpmuValidateUserSignup, "cpmuValidateUserSignup");
-async function cpmuValidateBlogSignup(cp, blogname, blogTitle, user = null) {
-  const errors = [];
-  const reserved = ["www", "web", "root", "admin", "main", "invite", "blogs", "cp-admin", "cp-login"];
-  if (!blogname || blogname.length < 4) {
-    errors.push("Site name must be at least 4 characters.");
-  } else if (!/^[a-z0-9\-]+$/.test(blogname)) {
-    errors.push("Site name may only contain lowercase letters, numbers, and hyphens.");
-  } else if (reserved.includes(blogname)) {
-    errors.push("That site name is not allowed.");
-  } else {
-    const existing = await blogExistsBySlug(cp, blogname);
-    if (existing)
-      errors.push("That site name is already taken.");
-  }
-  if (!blogTitle || blogTitle.trim().length < 1) {
-    errors.push("Please provide a site title.");
-  }
-  return { blogname, blog_title: blogTitle, errors };
-}
-__name(cpmuValidateBlogSignup, "cpmuValidateBlogSignup");
-async function cpmuRegisterUser(cp, userLogin, userEmail, meta = {}) {
-  const prefix = cp.db_prefix || "cp_";
-  const key = await generateActivationKey(userLogin);
-  const now = (/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace("T", " ");
-  const metaJson = JSON.stringify(meta);
-  await cp.db.prepare(`
-    INSERT INTO ${prefix}signups
-      (domain, path, title, user_login, user_email, registered, activation_key, meta)
-    VALUES ('', '', '', ?, ?, ?, ?, ?)
-  `).bind(userLogin, userEmail, now, key, metaJson).run();
-  return { activation_key: key };
-}
-__name(cpmuRegisterUser, "cpmuRegisterUser");
-async function cpmuRegisterBlog(cp, domain, path, title, userId, meta = {}) {
-  const prefix = cp.db_prefix || "cp_";
-  const key = await generateActivationKey(`${domain}${path}`);
-  const now = (/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace("T", " ");
-  const metaJson = JSON.stringify({ ...meta, user_id: userId });
-  await cp.db.prepare(`
-    INSERT INTO ${prefix}signups
-      (domain, path, title, user_login, user_email, registered, activation_key, meta)
-    VALUES (?, ?, ?, '', '', ?, ?, ?)
-  `).bind(domain, path, title, now, key, metaJson).run();
-  return { activation_key: key };
-}
-__name(cpmuRegisterBlog, "cpmuRegisterBlog");
-async function cpmuActivateSignup(cp, key) {
-  const prefix = cp.db_prefix || "cp_";
-  const signup = await cp.db.prepare(`
-    SELECT * FROM ${prefix}signups WHERE activation_key=? AND active=0 LIMIT 1
-  `).bind(key).first();
-  if (!signup)
-    return { error: "Invalid or already used activation key." };
-  const now = (/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace("T", " ");
-  const meta = JSON.parse(signup.meta || "{}");
-  let password = meta.password || generateRandomPassword();
-  const hashed = await hashPassword(password);
-  let userId = 0;
-  let blogId = 0;
-  if (signup.user_login) {
-    await cp.db.prepare(`
-      INSERT OR IGNORE INTO ${prefix}users
-        (user_login, user_pass, user_email, user_registered, user_status, display_name)
-      VALUES (?, ?, ?, ?, 0, ?)
-    `).bind(signup.user_login, hashed, signup.user_email, now, signup.user_login).run();
-    const row = await cp.db.prepare(
-      `SELECT ID FROM ${prefix}users WHERE user_login=? LIMIT 1`
-    ).bind(signup.user_login).first();
-    userId = row?.ID || 0;
-  }
-  if (signup.domain && signup.path) {
-    await cp.db.prepare(`
-      INSERT OR IGNORE INTO ${prefix}blogs
-        (site_id, domain, path, registered, last_updated, public)
-      VALUES (1, ?, ?, ?, ?, 1)
-    `).bind(signup.domain, signup.path, now, now).run();
-    const row = await cp.db.prepare(
-      `SELECT blog_id FROM ${prefix}blogs WHERE domain=? AND path=? LIMIT 1`
-    ).bind(signup.domain, signup.path).first();
-    blogId = row?.blog_id || 0;
-  }
-  await cp.db.prepare(`
-    UPDATE ${prefix}signups SET active=1, activated=? WHERE activation_key=?
-  `).bind(now, key).run();
-  return { user_id: userId, blog_id: blogId, password };
-}
-__name(cpmuActivateSignup, "cpmuActivateSignup");
-async function userExistsByLogin(cp, login) {
-  const prefix = cp.db_prefix || "cp_";
-  return cp.db.prepare(`SELECT ID FROM ${prefix}users WHERE user_login=? LIMIT 1`).bind(login).first();
-}
-__name(userExistsByLogin, "userExistsByLogin");
-async function userExistsByEmail(cp, email) {
-  const prefix = cp.db_prefix || "cp_";
-  return cp.db.prepare(`SELECT ID FROM ${prefix}users WHERE user_email=? LIMIT 1`).bind(email).first();
-}
-__name(userExistsByEmail, "userExistsByEmail");
-async function signupExistsByLogin(cp, login) {
-  const prefix = cp.db_prefix || "cp_";
-  return cp.db.prepare(`SELECT signup_id FROM ${prefix}signups WHERE user_login=? AND active=0 LIMIT 1`).bind(login).first();
-}
-__name(signupExistsByLogin, "signupExistsByLogin");
-async function blogExistsBySlug(cp, slug) {
-  const prefix = cp.db_prefix || "cp_";
-  return cp.db.prepare(`SELECT blog_id FROM ${prefix}blogs WHERE domain LIKE ? OR path=? LIMIT 1`).bind(`${slug}.%`, `/${slug}/`).first();
-}
-__name(blogExistsBySlug, "blogExistsBySlug");
-async function generateActivationKey(seed) {
-  const data = new TextEncoder().encode(seed + Date.now() + Math.random());
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
-}
-__name(generateActivationKey, "generateActivationKey");
-function generateRandomPassword(length = 12) {
-  const chars = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$";
-  return Array.from({ length }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
-}
-__name(generateRandomPassword, "generateRandomPassword");
-
-// cp-includes/functions.js
-init_option();
-init_formatting();
-
-// cp-includes/link-template.js
-init_option();
-async function getPermalink(cp, post) {
-  const siteUrl = await getOption(cp, "siteurl", cp.config?.SITE_URL || cp.url.origin);
-  const permalinks = await getOption(cp, "permalink_structure", "/%year%/%monthnum%/%postname%/");
-  const postObj = typeof post === "object" ? post : await fetchPost(cp, post);
-  if (!postObj)
-    return siteUrl;
-  if (postObj.post_type === "page") {
-    return `${siteUrl.replace(/\/$/, "")}/${postObj.post_name}/`;
-  }
-  const date = new Date(postObj.post_date || Date.now());
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  const slug = (permalinks || "/%postname%/").replace("%year%", year).replace("%monthnum%", month).replace("%day%", day).replace("%postname%", postObj.post_name || String(postObj.ID)).replace("%post_id%", String(postObj.ID)).replace("%author%", postObj.post_author || "1");
-  return `${siteUrl.replace(/\/$/, "")}${slug}`;
-}
-__name(getPermalink, "getPermalink");
-async function getCommentLink(cp, comment) {
-  const prefix = cp.db_prefix || "cp_";
-  let commentObj = comment;
-  if (typeof comment !== "object") {
-    commentObj = await cp.db.prepare(
-      `SELECT * FROM ${prefix}comments WHERE comment_ID=? LIMIT 1`
-    ).bind(comment).first();
-  }
-  if (!commentObj)
-    return "";
-  const postUrl = await getPermalink(cp, commentObj.comment_post_ID);
-  return `${postUrl}#comment-${commentObj.comment_ID}`;
-}
-__name(getCommentLink, "getCommentLink");
-async function getRegistrationUrl(cp) {
-  const siteUrl = await getOption(cp, "siteurl", cp.config?.SITE_URL || cp.url.origin);
-  return `${siteUrl.replace(/\/$/, "")}/cp-signup`;
-}
-__name(getRegistrationUrl, "getRegistrationUrl");
-async function fetchPost(cp, postId) {
-  const prefix = cp.db_prefix || "cp_";
-  return cp.db.prepare(`SELECT * FROM ${prefix}posts WHERE ID=? LIMIT 1`).bind(postId).first();
-}
-__name(fetchPost, "fetchPost");
-
-// cp-includes/functions.js
-function jsonResponse(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "Content-Type": "application/json; charset=utf-8" }
-  });
-}
-__name(jsonResponse, "jsonResponse");
-function redirect(url, status = 302) {
-  return new Response(null, { status, headers: { Location: url } });
-}
-__name(redirect, "redirect");
-function isMultisite() {
-  return false;
-}
-__name(isMultisite, "isMultisite");
-function cpSafeRedirect(url, status = 302) {
-  return redirect(url, status);
-}
-__name(cpSafeRedirect, "cpSafeRedirect");
-function cpRedirect(url, status = 302) {
-  return redirect(url, status);
-}
-__name(cpRedirect, "cpRedirect");
-
-// cp-activate.js
-init_formatting();
-async function handleActivate(request, env, ctx) {
-  const cp = await cpLoad(request, env, ctx, { CP_INSTALLING: true });
-  if (cp.__cpError)
-    return cp.response;
-  if (!isMultisite(cp)) {
-    return cpRedirect(await getRegistrationUrl(cp));
-  }
-  const url = new URL(request.url);
-  const method = request.method.toUpperCase();
-  let key = "";
-  const getKey = url.searchParams.get("key") || "";
-  if (method === "POST") {
-    const formData = await request.formData().catch(() => new FormData());
-    const postKey = formData.get("key") || "";
-    if (getKey && postKey && getKey !== postKey) {
-      return cpDie(
-        cp,
-        "A key value mismatch has been detected. Please follow the link provided in your activation email.",
-        "An error occurred during the activation",
-        400
-      );
-    }
-    key = postKey ? sanitizeTextField(postKey) : getKey ? sanitizeTextField(getKey) : "";
-  } else {
-    key = getKey ? sanitizeTextField(getKey) : "";
-  }
-  let result = null;
-  let activateCookieKey = null;
-  if (key) {
-    if (url.searchParams.has("key")) {
-      const cleanUrl = new URL(url.toString());
-      cleanUrl.searchParams.delete("key");
-      const cookieId = crypto.randomUUID();
-      await env.CP_KV.put(`cp:activate_cookie:${cookieId}`, key, { expirationTtl: 1800 });
-      const response2 = cpRedirect(cleanUrl.toString());
-      response2.headers.append("Set-Cookie", `cp_activate=${cookieId}; Path=/; HttpOnly; SameSite=Lax`);
-      return response2;
-    } else {
-      result = await cpmuActivateSignup(cp, key);
-    }
-  }
-  if (result === null) {
-    const cookieHeader = request.headers.get("Cookie") || "";
-    const cookieMatch = cookieHeader.match(/cp_activate=([^;]+)/);
-    if (cookieMatch) {
-      const cookieId = cookieMatch[1];
-      const storedKey = await env.CP_KV.get(`cp:activate_cookie:${cookieId}`);
-      if (storedKey) {
-        key = storedKey;
-        result = await cpmuActivateSignup(cp, storedKey);
-        await env.CP_KV.delete(`cp:activate_cookie:${cookieId}`);
-        activateCookieKey = cookieId;
-      }
-    }
-  }
-  let statusCode = 200;
-  if (result === null || result?.error === "invalid_key") {
-    statusCode = 404;
-  } else if (result?.error && !["already_active", "blog_taken"].includes(result.error)) {
-    statusCode = 400;
-  }
-  const html = await renderActivatePage(cp, key, result, url);
-  const response = new Response(html, {
-    status: statusCode,
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "no-store, no-cache, must-revalidate",
-      "Pragma": "no-cache"
-    }
-  });
-  if (activateCookieKey) {
-    response.headers.append(
-      "Set-Cookie",
-      `cp_activate=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax`
-    );
-  }
-  return response;
-}
-__name(handleActivate, "handleActivate");
-async function renderActivatePage(cp, key, result, url) {
-  const siteName = cp.config.SITE_NAME || "CloudPress";
-  let bodyContent = "";
-  if (!key) {
-    const actionUrl = url.pathname;
-    bodyContent = `
-      <h2>Activation Key Required</h2>
-      <form id="activateform" method="post" action="${actionUrl}">
-        <p>
-          <label for="key">Activation Key:</label><br>
-          <input type="text" name="key" id="key" value="" size="50" autofocus>
-        </p>
-        <p class="submit">
-          <button type="submit" id="submit" class="cp-btn">Activate</button>
-        </p>
-      </form>`;
-  } else if (result?.error && ["already_active", "blog_taken"].includes(result.error)) {
-    const signup = result.data || {};
-    bodyContent = `
-      <h2>Your account is now active!</h2>
-      <p class="lead-in">
-        Your account has been activated. You may now
-        <a href="/cp-login">log in</a> using your chosen username
-        &#8220;${escHtml(signup.user_login || "")}&#8221;.
-        Please check your email inbox at ${escHtml(signup.user_email || "")} for your login instructions.
-      </p>`;
-  } else if (result === null || result?.error) {
-    bodyContent = `
-      <h2>An error occurred during the activation</h2>
-      ${result?.message ? `<p>${escHtml(result.message)}</p>` : ""}`;
-  } else {
-    const loginUrl = result.blog_id ? `/cp-login` : `/cp-login`;
-    bodyContent = `
-      <h2>Your account is now active!</h2>
-      <div id="signup-welcome">
-        <p><span class="h3">Username:</span> ${escHtml(result.user_login || "")}</p>
-        <p><span class="h3">Password:</span> ${escHtml(result.password || "")}</p>
-      </div>
-      <p class="view">
-        Your account is now activated.
-        <a href="${loginUrl}">Log in</a> or go back to the
-        <a href="/">homepage</a>.
-      </p>`;
-  }
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escHtml(siteName)} &rsaquo; Activate</title>
-  <link rel="stylesheet" href="/cp-includes/css/activate.css">
-</head>
-<body>
-<div id="signup-content">
-  <div class="cp-activate-container">
-    ${bodyContent}
-  </div>
-</div>
-</body>
-</html>`;
-}
-__name(renderActivatePage, "renderActivatePage");
-function cpDie(cp, message, title = "Error", status = 500) {
-  const html = `<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><title>${escHtml(title)}</title></head>
-<body><h1>${escHtml(title)}</h1><p>${escHtml(message)}</p></body></html>`;
-  return new Response(html, {
-    status,
-    headers: { "Content-Type": "text/html; charset=utf-8" }
-  });
-}
-__name(cpDie, "cpDie");
-
-// cp-signup.js
-init_cp_load();
-init_formatting();
-
-// cp-includes/mail.js
-init_option();
-async function cpMail(cp, to, subject, message, headers = {}, attachments = []) {
-  const siteName = await getOption(cp, "blogname", cp.config?.SITE_NAME || "CloudPress");
-  const siteUrl = await getOption(cp, "siteurl", cp.config?.SITE_URL || cp.url?.origin || "");
-  const domain = siteUrl ? new URL(siteUrl).hostname : "example.com";
-  const fromAddress = cp.env?.CP_MAIL_FROM || `noreply@${domain}`;
-  const fromName = cp.env?.CP_MAIL_FROM_NAME || siteName;
-  const toList = Array.isArray(to) ? to : [to];
-  const contentType = headers["Content-Type"] || "text/html; charset=UTF-8";
-  const isHtml = contentType.includes("text/html");
-  const mailData = cp.hooks?.applyFilters?.("cp_mail", { to: toList, subject, message, headers }) || {
-    to: toList,
-    subject,
-    message,
-    headers
-  };
-  try {
-    return await sendViaMailChannels(cp, {
-      from: { email: fromAddress, name: fromName },
-      to: mailData.to.map((addr) => ({ email: addr.trim() })),
-      subject: mailData.subject,
-      content: isHtml ? [{ type: "text/html", value: mailData.message }] : [{ type: "text/plain", value: mailData.message }],
-      headers: mailData.headers
-    });
-  } catch (err) {
-    if (cp.config?.CP_DEBUG) {
-      console.error("[cpMail] send failed:", err);
-    }
-    return false;
-  }
-}
-__name(cpMail, "cpMail");
-async function sendActivationEmail(cp, email, activationKey) {
-  const siteName = await getOption(cp, "blogname", cp.config?.SITE_NAME || "CloudPress");
-  const siteUrl = await getOption(cp, "siteurl", cp.config?.SITE_URL || cp.url?.origin || "");
-  const activateUrl = `${siteUrl.replace(/\/$/, "")}/cp-activate?key=${encodeURIComponent(activationKey)}&email=${encodeURIComponent(email)}`;
-  return cpMail(
-    cp,
-    email,
-    `Activate your account at ${siteName}`,
-    `<p>Thank you for registering at <strong>${siteName}</strong>.</p><p>Please click the link below to activate your account:</p><p><a href="${activateUrl}">${activateUrl}</a></p><p>If you did not register, you can ignore this email.</p>`
-  );
-}
-__name(sendActivationEmail, "sendActivationEmail");
-async function sendViaMailChannels(cp, payload) {
-  const body = {
-    personalizations: [
-      {
-        to: payload.to,
-        ...payload.cc?.length ? { cc: payload.cc } : {},
-        ...payload.bcc?.length ? { bcc: payload.bcc } : {}
-      }
-    ],
-    from: payload.from,
-    subject: payload.subject,
-    content: payload.content
-  };
-  const res = await fetch("https://api.mailchannels.net/tx/v1/send", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
-  return res.status === 202 || res.status === 200;
-}
-__name(sendViaMailChannels, "sendViaMailChannels");
-
-// cp-signup.js
-async function handleSignup(request, env, ctx) {
-  const cp = await cpLoad(request, env, ctx);
-  if (cp.__cpError)
-    return cp.response;
-  if (!isMultisite(cp)) {
-    return cpRedirect("/");
-  }
-  const url = new URL(request.url);
-  const method = request.method.toUpperCase();
-  let stage = "user";
-  let errors = {};
-  let formData = {};
-  if (method === "POST") {
-    const fd = await request.formData().catch(() => new FormData());
-    for (const [k, v] of fd.entries()) {
-      formData[k] = typeof v === "string" ? v : "";
-    }
-    stage = formData.stage || "validate_user";
-  } else {
-    stage = url.searchParams.get("stage") || "user";
-  }
-  const registrationMode = cp.hooks.applyFilters("cp_registration_open", cp.config.REGISTRATION || "none");
-  let html = "";
-  switch (stage) {
-    case "validate_user": {
-      const userLogin = sanitizeTextField(formData.user_name || "");
-      const userEmail = sanitizeEmail(formData.user_email || "");
-      const validation = await cpmuValidateUserSignup(cp, userLogin, userEmail);
-      errors = validation.errors;
-      if (Object.keys(errors).length === 0) {
-        const key = await cpmuRegisterUser(cp, userLogin, userEmail);
-        await sendActivationEmail(cp, userEmail, key);
-        html = renderSignupComplete(cp, userEmail);
-      } else {
-        html = renderUserForm(cp, errors, { user_name: userLogin, user_email: userEmail });
-      }
-      break;
-    }
-    case "validate_blog": {
-      const userLogin = sanitizeTextField(formData.user_name || "");
-      const userEmail = sanitizeEmail(formData.user_email || "");
-      const blogDomain = sanitizeTextField(formData.blogname || "");
-      const blogTitle = sanitizeTextField(formData.blog_title || "");
-      const blogPublic = formData.blog_public !== "0";
-      const validation = await cpmuValidateBlogSignup(cp, blogDomain, blogTitle, { user_name: userLogin, user_email: userEmail });
-      errors = validation.errors;
-      if (Object.keys(errors).length === 0) {
-        const key = await cpmuRegisterBlog(cp, userLogin, userEmail, blogDomain, blogTitle, blogPublic);
-        await sendActivationEmail(cp, userEmail, key);
-        html = renderSignupComplete(cp, userEmail);
-      } else {
-        html = renderBlogForm(cp, errors, formData);
-      }
-      break;
-    }
-    case "blog":
-      html = renderBlogForm(cp, {}, {});
-      break;
-    case "user":
-    default:
-      html = renderUserForm(cp, {}, {});
-      break;
-  }
-  return new Response(html, {
-    status: 200,
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "no-store"
-    }
-  });
-}
-__name(handleSignup, "handleSignup");
-function renderLayout(cp, title, content) {
-  const siteName = cp.config.SITE_NAME || "CloudPress";
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escHtml(siteName)} &rsaquo; ${escHtml(title)}</title>
-  <link rel="stylesheet" href="/cp-includes/css/signup.css">
-</head>
-<body>
-<div class="signup-wrapper">
-  <div class="site-name"><a href="/">${escHtml(siteName)}</a></div>
-  <div class="signup-box">
-    ${content}
-  </div>
-</div>
-</body>
-</html>`;
-}
-__name(renderLayout, "renderLayout");
-function renderUserForm(cp, errors, values) {
-  const errorHtml = Object.values(errors).length ? `<ul class="error-list">${Object.values(errors).map((e) => `<li>${escHtml(e)}</li>`).join("")}</ul>` : "";
-  const content = `
-    <h2>Create an Account</h2>
-    ${errorHtml}
-    <form method="post" action="/cp-signup">
-      <input type="hidden" name="stage" value="validate_user">
-      <label for="user_name">Username</label>
-      <input type="text" name="user_name" id="user_name" value="${escHtml(values.user_name || "")}" autocomplete="username" autofocus>
-      <p class="hint">Lowercase letters, numbers, and underscores only.</p>
-      <label for="user_email">Email Address</label>
-      <input type="email" name="user_email" id="user_email" value="${escHtml(values.user_email || "")}" autocomplete="email">
-      <button type="submit" class="cp-btn">Create Account</button>
-    </form>`;
-  return renderLayout(cp, "Sign Up", content);
-}
-__name(renderUserForm, "renderUserForm");
-function renderBlogForm(cp, errors, values) {
-  const errorHtml = Object.values(errors).length ? `<ul class="error-list">${Object.values(errors).map((e) => `<li>${escHtml(e)}</li>`).join("")}</ul>` : "";
-  const content = `
-    <h2>Create Your Site</h2>
-    ${errorHtml}
-    <form method="post" action="/cp-signup">
-      <input type="hidden" name="stage" value="validate_blog">
-      <input type="hidden" name="user_name" value="${escHtml(values.user_name || "")}">
-      <input type="hidden" name="user_email" value="${escHtml(values.user_email || "")}">
-      <label for="blogname">Site Address</label>
-      <input type="text" name="blogname" id="blogname" value="${escHtml(values.blogname || "")}" autofocus>
-      <p class="hint">Only lowercase letters and numbers. Cannot be changed.</p>
-      <label for="blog_title">Site Title</label>
-      <input type="text" name="blog_title" id="blog_title" value="${escHtml(values.blog_title || "")}">
-      <button type="submit" class="cp-btn">Create Site</button>
-    </form>`;
-  return renderLayout(cp, "Create Site", content);
-}
-__name(renderBlogForm, "renderBlogForm");
-function renderSignupComplete(cp, email) {
-  const content = `
-    <div class="success">
-      <h2>Check Your Email</h2>
-      <p>We have sent an activation link to <strong>${escHtml(email)}</strong>.</p>
-      <p>Please click the link in the email to activate your account. If you do not receive it, check your spam folder.</p>
-    </div>`;
-  return renderLayout(cp, "Registration Complete", content);
-}
-__name(renderSignupComplete, "renderSignupComplete");
-
-// cp-comments-post.js
-init_cp_load();
-
-// cp-includes/comment.js
-init_option();
-init_formatting();
-async function insertComment(cp, data) {
-  const prefix = cp.db_prefix || "cp_";
-  const now = (/* @__PURE__ */ new Date()).toISOString().replace("T", " ").slice(0, 19);
-  const approved = data.comment_approved ?? "0";
-  const parent = data.comment_parent || 0;
-  const result = await cp.db.prepare(`
-    INSERT INTO ${prefix}comments
-      (comment_post_ID, comment_author, comment_author_email, comment_author_url,
-       comment_author_IP, comment_date, comment_date_gmt, comment_content,
-       comment_approved, comment_agent, comment_type, comment_parent, user_id)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-  `).bind(
-    data.comment_post_ID || 0,
-    data.comment_author || "",
-    data.comment_author_email || "",
-    data.comment_author_url || "",
-    data.comment_author_IP || "",
-    data.comment_date || now,
-    data.comment_date_gmt || now,
-    data.comment_content || "",
-    approved,
-    data.comment_agent || "",
-    data.comment_type || "comment",
-    parent,
-    data.user_id || 0
-  ).run();
-  if (approved === "1" && data.comment_post_ID) {
-    await updateCommentCount(cp, data.comment_post_ID);
-  }
-  return result.meta?.last_row_id || 0;
-}
-__name(insertComment, "insertComment");
-async function updateCommentCount(cp, postId) {
-  const prefix = cp.db_prefix || "cp_";
-  const row = await cp.db.prepare(`SELECT COUNT(*) as n FROM ${prefix}comments WHERE comment_post_ID=? AND comment_approved='1'`).bind(postId).first();
-  await cp.db.prepare(`UPDATE ${prefix}posts SET comment_count=? WHERE ID=?`).bind(row?.n ?? 0, postId).run();
-}
-__name(updateCommentCount, "updateCommentCount");
-async function handleCommentSubmission(request, cp) {
-  const data = await request.formData().catch(() => new FormData());
-  const commentPostId = parseInt(data.get("comment_post_ID") || "0");
-  const author = String(data.get("author") || "").trim();
-  const email = String(data.get("email") || "").trim();
-  const url = String(data.get("url") || "").trim();
-  const comment = String(data.get("comment") || "").trim();
-  if (!comment)
-    return { error: "Comment is empty." };
-  const id = await insertComment(cp, {
-    comment_post_ID: commentPostId,
-    comment_author: author,
-    comment_author_email: email,
-    comment_author_url: url,
-    comment_content: comment,
-    comment_approved: 1
-  });
-  return { id };
-}
-__name(handleCommentSubmission, "handleCommentSubmission");
-async function newComment(cp, data) {
-  return insertComment(cp, data);
-}
-__name(newComment, "newComment");
-
-// cp-comments-post.js
-init_user();
-init_crypto();
-init_formatting();
-async function handleCommentsPost(request, env, ctx) {
-  if (request.method.toUpperCase() !== "POST") {
-    return new Response("Method not allowed. Use POST to submit comments.", {
-      status: 405,
-      headers: {
-        "Allow": "POST",
-        "Content-Type": "text/plain"
-      }
-    });
-  }
-  const cp = await cpLoad(request, env, ctx);
-  if (cp.__cpError)
-    return cp.response;
-  let postData = {};
-  try {
-    const formData = await request.formData();
-    for (const [key, value] of formData.entries()) {
-      postData[key] = value;
-    }
-  } catch (_) {
-    return cpDie2(cp, "Invalid form data.", "Comment Submission Failure", 400);
-  }
-  const responseHeaders = new Headers({
-    "Cache-Control": "no-store, no-cache, must-revalidate",
-    "Pragma": "no-cache"
-  });
-  const commentResult = await handleCommentSubmission(cp, postData);
-  if (commentResult.error) {
-    const { status = 400, message } = commentResult;
-    return cpDie2(cp, `<p>${escHtml(message)}</p>`, "Comment Submission Failure", status, true);
-  }
-  const comment = commentResult.comment;
-  const user = await getCurrentUser(cp);
-  const cookiesConsent = !!postData["cp-comment-cookies-consent"];
-  cp.hooks.doAction("set_comment_cookies", comment, user, cookiesConsent);
-  let location = postData.redirect_to ? `${postData.redirect_to}#comment-${comment.comment_ID}` : await getCommentLink(cp, comment);
-  if (!cookiesConsent && comment.comment_approved === "0" && comment.comment_author_email) {
-    const moderationHash = await cpHash(comment.comment_date_gmt, cp.config.AUTH_KEY);
-    const locUrl = new URL(location, cp.config.SITE_URL || "https://example.com");
-    locUrl.searchParams.set("unapproved", comment.comment_ID);
-    locUrl.searchParams.set("moderation-hash", moderationHash);
-    location = locUrl.toString();
-  }
-  location = cp.hooks.applyFilters("comment_post_redirect", location, comment);
-  return cpSafeRedirect(location, responseHeaders);
-}
-__name(handleCommentsPost, "handleCommentsPost");
-function cpDie2(cp, message, title = "Error", status = 500, backLink = false) {
-  const back = backLink ? '<p><a href="javascript:history.back()">&larr; Go back</a></p>' : "";
-  const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escHtml(title)}</title>
-  <link rel="stylesheet" href="/cp-includes/css/comments.css">
-</head>
-<body>
-  <div class="box">
-    <h1>${escHtml(title)}</h1>
-    ${message}
-    ${back}
-  </div>
-</body>
-</html>`;
-  return new Response(html, {
-    status,
-    headers: { "Content-Type": "text/html; charset=utf-8" }
-  });
-}
-__name(cpDie2, "cpDie");
-
-// cp-router.js
-init_cp_cron();
-
-// cp-trackback.js
-init_cp_load();
-init_formatting();
-async function handleTrackback(request, env, ctx, routeParams = {}) {
-  const cp = await cpLoad(request, env, ctx);
-  if (cp.__cpError)
-    return cp.response;
-  cp.currentUser = null;
-  const url = new URL(request.url);
-  const method = request.method.toUpperCase();
-  let postId = parseInt(routeParams.post_id || url.searchParams.get("tb_id") || "0", 10);
-  if (!postId) {
-    const parts = url.pathname.split("/").filter(Boolean);
-    for (let i = parts.length - 1; i >= 0; i--) {
-      const n = parseInt(parts[i], 10);
-      if (n > 0) {
-        postId = n;
-        break;
-      }
-    }
-  }
-  let postData = {};
-  if (method === "POST") {
-    try {
-      const formData = await request.formData();
-      for (const [k, v] of formData.entries()) {
-        postData[k] = typeof v === "string" ? v : "";
-      }
-    } catch (_) {
-    }
-  }
-  const trackbackUrl = postData.url ? sanitizeUrl(postData.url) : "";
-  let charset = postData.charset ? sanitizeTextField(postData.charset) : "";
-  let title = postData.title || "";
-  let excerpt = postData.excerpt || "";
-  let blogName = postData.blog_name || "";
-  if (charset) {
-    charset = charset.replace(/[, ]/g, "").toUpperCase().trim();
-    const allowedCharsets = ["UTF-8", "ASCII", "ISO-8859-1", "EUC-JP", "SJIS"];
-    if (!allowedCharsets.includes(charset))
-      charset = "";
-  }
-  if (charset.includes("UTF-7")) {
-    return new Response("", { status: 400 });
-  }
-  title = sanitizeTextField(title);
-  excerpt = sanitizeTextField(excerpt);
-  blogName = sanitizeTextField(blogName);
-  if (!postId) {
-    return trackbackResponse(true, "I really need an ID for this to work.");
-  }
-  if (!trackbackUrl && !title && !blogName) {
-    const permalink = `/?p=${postId}`;
-    return Response.redirect(cp.hooks.applyFilters("cp_redirect_no_trackback", permalink, postId), 302);
-  }
-  if (trackbackUrl && title) {
-    cp.hooks.doAction("pre_trackback_post", postId, trackbackUrl, charset, title, excerpt, blogName);
-    const isPingsOpen = await pingsOpen(cp, postId);
-    if (!isPingsOpen) {
-      return trackbackResponse(true, "Sorry, trackbacks are closed for this item.");
-    }
-    title = htmlExcerpt(title, 250);
-    excerpt = htmlExcerpt(excerpt, 252);
-    const prefix = cp.config.DB_PREFIX || "cp_";
-    const existing = await cp.db.prepare(`
-      SELECT comment_ID FROM ${prefix}comments
-      WHERE comment_post_ID = ? AND comment_author_url = ?
-      LIMIT 1
-    `).bind(postId, trackbackUrl).first();
-    if (existing) {
-      return trackbackResponse(true, "There is already a ping from that URL for this post.");
-    }
-    const commentData = {
-      comment_post_ID: postId,
-      comment_author: blogName,
-      comment_author_email: "",
-      comment_author_url: trackbackUrl,
-      comment_content: `<strong>${title}</strong>
-
-${excerpt}`,
-      comment_type: "trackback"
-    };
-    const result = await newComment(cp, commentData);
-    if (result.error) {
-      return trackbackResponse(true, result.message);
-    }
-    const trackbackId = result.comment_ID;
-    cp.hooks.doAction("trackback_post", trackbackId);
-    return trackbackResponse(false);
-  }
-  return trackbackResponse(true, "Missing trackback URL or title.");
-}
-__name(handleTrackback, "handleTrackback");
-function trackbackResponse(error, errorMessage = "") {
-  let xml = '<?xml version="1.0" encoding="utf-8"?>\n<response>\n';
-  if (error) {
-    xml += `<error>1</error>
-<message>${escXml(errorMessage)}</message>
-`;
-  } else {
-    xml += "<error>0</error>\n";
-  }
-  xml += "</response>";
-  return new Response(xml, {
-    status: error ? 400 : 200,
-    headers: { "Content-Type": "text/xml; charset=utf-8" }
-  });
-}
-__name(trackbackResponse, "trackbackResponse");
-function escXml(str) {
-  return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
-}
-__name(escXml, "escXml");
-
-// cp-links-opml.js
-init_cp_load();
-
-// cp-includes/category.js
-init_formatting();
-async function getTerms(cp, args = {}) {
-  const prefix = cp.db_prefix || "cp_";
-  const taxonomy = args.taxonomy || "category";
-  const hideEmpty = args.hide_empty !== false;
-  const limit = Math.min(parseInt(args.number || 0) || 200, 500);
-  const orderby = args.orderby === "count" ? "tt.count" : args.orderby === "name" ? "t.name" : "t.name";
-  const order = args.order === "DESC" ? "DESC" : "ASC";
-  const parent = args.parent !== void 0 ? args.parent : null;
-  const where = ["tt.taxonomy=?"];
-  const params = [taxonomy];
-  if (hideEmpty) {
-    where.push("tt.count > 0");
-  }
-  if (parent !== null) {
-    where.push("tt.parent=?");
-    params.push(parent);
-  }
-  if (args.search) {
-    where.push("t.name LIKE ?");
-    params.push(`%${args.search}%`);
-  }
-  const rows = await cp.db.prepare(`
-    SELECT t.*, tt.taxonomy, tt.description, tt.parent, tt.count, tt.term_taxonomy_id
-    FROM ${prefix}terms t
-    JOIN ${prefix}term_taxonomy tt ON t.term_id = tt.term_id
-    WHERE ${where.join(" AND ")}
-    ORDER BY ${orderby} ${order}
-    LIMIT ?
-  `).bind(...params, limit).all();
-  return rows.results || [];
-}
-__name(getTerms, "getTerms");
-
-// cp-includes/bookmark.js
-async function getBookmarks(cp, args = {}) {
-  const prefix = cp.db_prefix || "cp_";
-  const {
-    orderby = "name",
-    order = "ASC",
-    limit = -1,
-    category = 0,
-    category_name = "",
-    hide_invisible = "1",
-    include = "",
-    exclude = "",
-    search = ""
-  } = args;
-  const safeOrder = order.toUpperCase() === "DESC" ? "DESC" : "ASC";
-  const colMap = { name: "link_name", rating: "link_rating", updated: "link_updated", id: "link_id" };
-  const safeOrderby = colMap[orderby] || "link_name";
-  let sql = `SELECT l.* FROM ${prefix}links l`;
-  const params = [];
-  if (category || category_name) {
-    sql += `
-      JOIN ${prefix}term_relationships tr ON tr.object_id = l.link_id
-      JOIN ${prefix}term_taxonomy tt ON tt.term_taxonomy_id = tr.term_taxonomy_id AND tt.taxonomy='link_category'
-      JOIN ${prefix}terms t ON t.term_id = tt.term_id`;
-  }
-  const where = [];
-  if (hide_invisible === "1") {
-    where.push(`l.link_visible='Y'`);
-  }
-  if (include) {
-    const ids = include.split(",").map((s) => parseInt(s.trim())).filter(Boolean);
-    if (ids.length)
-      where.push(`l.link_id IN (${ids.join(",")})`);
-  }
-  if (exclude) {
-    const ids = exclude.split(",").map((s) => parseInt(s.trim())).filter(Boolean);
-    if (ids.length)
-      where.push(`l.link_id NOT IN (${ids.join(",")})`);
-  }
-  if (category) {
-    where.push(`t.term_id=?`);
-    params.push(category);
-  }
-  if (category_name) {
-    where.push(`t.slug=?`);
-    params.push(category_name);
-  }
-  if (search) {
-    where.push(`(l.link_name LIKE ? OR l.link_url LIKE ? OR l.link_description LIKE ?)`);
-    const q = `%${search}%`;
-    params.push(q, q, q);
-  }
-  if (where.length)
-    sql += " WHERE " + where.join(" AND ");
-  sql += ` ORDER BY ${safeOrderby} ${safeOrder}`;
-  if (limit > 0) {
-    sql += " LIMIT ?";
-    params.push(limit);
-  }
-  const stmt = params.length ? cp.db.prepare(sql).bind(...params) : cp.db.prepare(sql);
-  const { results } = await stmt.all();
-  return results || [];
-}
-__name(getBookmarks, "getBookmarks");
-
-// cp-links-opml.js
-init_option();
-async function handleLinksOpml(request, env, ctx) {
-  const cp = await cpLoad(request, env, ctx);
-  if (cp.__cpError)
-    return cp.response;
-  const url = new URL(request.url);
-  let linkCat = url.searchParams.get("link_cat") || "";
-  if (linkCat && !["all", "0"].includes(linkCat)) {
-    linkCat = parseInt(linkCat, 10);
-    if (isNaN(linkCat) || linkCat <= 0)
-      linkCat = "";
-  }
-  const blogCharset = await getOption(cp, "blogcharset") || "UTF-8";
-  const blogName = await getOption(cp, "blogname") || (cp.config.SITE_NAME || "CloudPress");
-  let cats;
-  if (!linkCat) {
-    cats = await getTerms(cp, { taxonomy: "link_category", hierarchical: false });
-  } else {
-    cats = await getTerms(cp, { taxonomy: "link_category", hierarchical: false, include: [linkCat] });
-  }
-  cp.hooks.doAction("opml_head");
-  const now = (/* @__PURE__ */ new Date()).toUTCString();
-  let xml = `<?xml version="1.0"?>
-`;
-  xml += `<opml version="1.0">
-`;
-  xml += `	<head>
-`;
-  xml += `		<title>Links for ${escXml2(blogName)}</title>
-`;
-  xml += `		<dateCreated>${escXml2(now)}</dateCreated>
-`;
-  xml += `	</head>
-`;
-  xml += `	<body>
-`;
-  for (const cat of cats || []) {
-    const catName = cp.hooks.applyFilters("link_category", cat.name || "");
-    xml += `<outline type="category" title="${escXml2(catName)}">
-`;
-    const bookmarks = await getBookmarks(cp, { category: cat.term_id });
-    for (const bookmark of bookmarks || []) {
-      const title = cp.hooks.applyFilters("link_title", bookmark.link_name || "");
-      const updated = bookmark.link_updated && bookmark.link_updated !== "0000-00-00 00:00:00" ? bookmark.link_updated : "";
-      xml += `	<outline text="${escXml2(title)}" type="link" `;
-      xml += `xmlUrl="${escXml2(bookmark.link_rss || "")}" `;
-      xml += `htmlUrl="${escXml2(bookmark.link_url || "")}" `;
-      if (updated)
-        xml += `updated="${escXml2(updated)}" `;
-      xml += `/>
-`;
-    }
-    xml += `</outline>
-`;
-  }
-  xml += `	</body>
-</opml>`;
-  return new Response(xml, {
-    status: 200,
-    headers: {
-      "Content-Type": `text/xml; charset=${blogCharset}`,
-      "Cache-Control": "no-cache"
-    }
-  });
-}
-__name(handleLinksOpml, "handleLinksOpml");
-function escXml2(str) {
-  return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
-}
-__name(escXml2, "escXml");
-
-// cp-mail.js
-init_cp_load();
-init_option();
-init_user();
-
-// cp-includes/transient.js
-var KEY_PREFIX = "cp:transient:";
-async function setTransient(cp, key, value, expiration = 3600) {
-  const kvKey = KEY_PREFIX + key;
-  const stored = JSON.stringify(value);
-  const opts = expiration > 0 ? { expirationTtl: expiration } : {};
-  try {
-    await cp.kv.put(kvKey, stored, opts);
-    return true;
-  } catch (_) {
-    return false;
-  }
-}
-__name(setTransient, "setTransient");
-async function getTransient(cp, key) {
-  const kvKey = KEY_PREFIX + key;
-  try {
-    const raw = await cp.kv.get(kvKey);
-    if (raw === null)
-      return false;
-    try {
-      return JSON.parse(raw);
-    } catch (_) {
-      return raw;
-    }
-  } catch (_) {
-    return false;
-  }
-}
-__name(getTransient, "getTransient");
-
-// cp-mail.js
-init_formatting();
-var MAIL_INTERVAL = 5 * 60;
-async function handleMail(request, env, ctx) {
-  const cp = await cpLoad(request, env, ctx);
-  if (cp.__cpError)
-    return cp.response;
-  const enablePostByEmail = cp.hooks.applyFilters("enable_post_by_email_configuration", true);
-  if (!enablePostByEmail) {
-    return cpDie3(cp, "This action has been disabled by the administrator.", 403);
-  }
-  const mailserverUrl = await getOption(cp, "mailserver_url");
-  if (!mailserverUrl || mailserverUrl === "mail.example.com") {
-    return cpDie3(cp, "This action has been disabled by the administrator.", 403);
-  }
-  cp.hooks.doAction("cp_mail");
-  const lastChecked = await getTransient(cp, "mailserver_last_checked");
-  if (lastChecked) {
-    const elapsed = Math.floor(Date.now() / 1e3) - parseInt(lastChecked, 10);
-    const remaining = MAIL_INTERVAL - elapsed;
-    return cpDie3(
-      cp,
-      `Email checks are rate limited to once every ${formatDuration(MAIL_INTERVAL)}. Next check available in ${formatDuration(Math.max(0, remaining))}.`,
-      429
-    );
-  }
-  await setTransient(cp, "mailserver_last_checked", String(Math.floor(Date.now() / 1e3)), MAIL_INTERVAL);
-  const output = [];
-  try {
-    const result = await processMailbox(cp, output);
-    if (!result.success) {
-      return cpDie3(cp, result.message, 500);
-    }
-  } catch (err) {
-    return cpDie3(cp, `Mail processing error: ${escHtml(err.message)}`, 500);
-  }
-  return new Response(
-    `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>CloudPress Mail</title></head><body><h1>Mail Processing Results</h1>${output.join("\n")}</body></html>`,
-    {
-      status: 200,
-      headers: { "Content-Type": "text/html; charset=utf-8" }
-    }
-  );
-}
-__name(handleMail, "handleMail");
-async function processMailbox(cp, output) {
-  const pendingEmails = await cp.kv.list({ prefix: "cp:pending_email:" });
-  if (!pendingEmails.keys || pendingEmails.keys.length === 0) {
-    output.push("<p>There does not seem to be any new mail.</p>");
-    return { success: true };
-  }
-  const defaultCategory = await getOption(cp, "default_email_category") || 1;
-  const gmtOffset = parseFloat(await getOption(cp, "gmt_offset") || "0");
-  const phonDelim = "::";
-  for (const { name: kvKey } of pendingEmails.keys) {
-    let emailData;
-    try {
-      emailData = await cp.kv.get(kvKey, { type: "json" });
-      if (!emailData)
-        continue;
-    } catch (_) {
-      continue;
-    }
-    const { from, subject: rawSubject, body, date } = emailData;
-    let postAuthor = 1;
-    const authorEmail = sanitizeEmail(from || "");
-    if (authorEmail) {
-      const userdata = await getUserBy(cp, "email", authorEmail);
-      if (userdata) {
-        postAuthor = userdata.ID;
-      }
-    }
-    let subject = (rawSubject || "").split(phonDelim)[0].trim();
-    let content = (body || "").split(phonDelim)[1] || body || "";
-    content = content.trim();
-    content = cp.hooks.applyFilters("cp_mail_original_content", content);
-    const postContent = cp.hooks.applyFilters("phone_content", content);
-    const postTitle = subject || "Untitled";
-    const postStatus = postAuthor === 1 ? "pending" : "publish";
-    const postDate = date ? new Date(date).toISOString().replace("T", " ").slice(0, 19) : null;
-    const postData = {
-      post_content: postContent,
-      post_title: postTitle,
-      post_date: postDate,
-      post_author: postAuthor,
-      post_category: [defaultCategory],
-      post_status: postStatus
-    };
-    const postID = await insertPost(cp, postData);
-    if (!postID) {
-      output.push(`<p>Failed to insert post for email: ${escHtml(rawSubject)}</p>`);
-      continue;
-    }
-    cp.hooks.doAction("publish_phone", postID);
-    output.push(`<p><strong>Author:</strong> ${escHtml(String(postAuthor))}</p>`);
-    output.push(`<p><strong>Posted title:</strong> ${escHtml(postTitle)}</p>`);
-    await cp.kv.delete(kvKey);
-  }
-  return { success: true };
-}
-__name(processMailbox, "processMailbox");
-function formatDuration(seconds) {
-  if (seconds < 60)
-    return `${seconds} seconds`;
-  if (seconds < 3600)
-    return `${Math.floor(seconds / 60)} minutes`;
-  return `${Math.floor(seconds / 3600)} hours`;
-}
-__name(formatDuration, "formatDuration");
-function cpDie3(cp, message, status = 500) {
-  const html = `<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>CloudPress Mail</title></head>
-<body><p>${escHtml(message)}</p></body></html>`;
-  return new Response(html, {
-    status,
-    headers: { "Content-Type": "text/html; charset=utf-8" }
-  });
-}
-__name(cpDie3, "cpDie");
-
-// cp-admin/index.js
-init_cp_load();
-
-// cp-admin/auth-check.js
-init_jwt();
-init_user();
-init_session();
-async function requireAdmin(cp) {
-  const user = await getAdminUser(cp);
-  if (!user) {
-    const loginUrl = `/cp-login?redirect_to=${encodeURIComponent(cp.url.pathname + cp.url.search)}`;
-    return Response.redirect(new URL(loginUrl, cp.url.origin).toString(), 302);
-  }
-  if (!userHasRole(user, ["administrator"])) {
-    return new Response(
-      '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Access Denied</title></head><body><h1>Access Denied</h1><p>You do not have permission to access the admin area.</p><a href="/">Return to site</a></body></html>',
-      { status: 403, headers: { "Content-Type": "text/html; charset=utf-8" } }
-    );
-  }
-  cp.currentUser = user;
-  return null;
-}
-__name(requireAdmin, "requireAdmin");
-async function getAdminUser(cp) {
-  const token = extractToken(cp.request);
-  if (!token)
-    return null;
-  try {
-    const payload = await verifyJwt(token, cp.config.AUTH_KEY);
-    if (!payload || !payload.sub)
-      return null;
-    const revoked = await cp.kv.get(`cp:token_revoked:${payload.jti || payload.sub}`);
-    if (revoked)
-      return null;
-    const user = await getUserById(cp, payload.sub);
-    return user || null;
-  } catch (_) {
-    return null;
-  }
-}
-__name(getAdminUser, "getAdminUser");
-function userHasRole(user, roles) {
-  if (!user)
-    return false;
-  const userRoles = user.roles || [];
-  return roles.some((r) => userRoles.includes(r));
-}
-__name(userHasRole, "userHasRole");
-
-// cp-admin/admin-shell.js
-init_option();
-init_formatting();
-async function renderAdminShell(cp, content, opts = {}) {
-  const { title = "Dashboard", bodyClass = "", notices = [] } = opts;
-  const siteName = await getOption(cp, "blogname").catch(() => cp.config.SITE_NAME || "CloudPress");
-  const siteUrl = cp.config.SITE_URL || cp.url.origin;
-  const user = cp.currentUser;
-  const userLogin = user?.user_login || "Admin";
-  const currentPath = cp.url.pathname;
-  const adminVersion = cp.version || "1.2.0";
-  const navItems = buildNavItems(cp, currentPath);
-  const navHtml = renderNav(navItems, currentPath);
-  const noticeHtml = notices.map(
-    (n) => `<div class="cp-notice cp-notice-${n.type || "info"}" role="alert"><p>${escHtml(n.message)}</p></div>`
-  ).join("");
-  return `<!DOCTYPE html>
-<html lang="ko" class="cp-admin">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escHtml(title)} &lsaquo; CloudPress Admin</title>
-  <meta name="robots" content="noindex,nofollow">
-  <link rel="icon" href="/cp-admin/images/favicon.ico" type="image/x-icon">
-  <link rel="stylesheet" href="/cp-admin/css/admin.css">
-</head>
-<body class="cp-admin-body ${escHtml(bodyClass)}">
-
-<!-- -- Top Bar ------------------------------------------------------------- -->
-<div id="cp-topbar">
-  <div class="cp-topbar-left">
-    <button id="cp-menu-toggle" aria-label="Toggle menu" onclick="document.body.classList.toggle('cp-sidebar-open')">
-      <span></span><span></span><span></span>
-    </button>
-    <a href="${escHtml(siteUrl)}" class="cp-site-link" target="_blank" title="Visit site">
-      &#127758; ${escHtml(siteName)}
-    </a>
-  </div>
-  <div class="cp-topbar-right">
-    <span class="cp-version">CloudPress ${escHtml(adminVersion)}</span>
-    <div class="cp-user-menu">
-      <button class="cp-user-btn" onclick="this.parentElement.classList.toggle('open')">
-        ${escHtml(userLogin)} &#9660;
-      </button>
-      <div class="cp-user-dropdown">
-        <a href="/cp-admin/profile">Profile</a>
-        <a href="${escHtml(siteUrl)}" target="_blank">View Site</a>
-        <hr>
-        <a href="/cp-logout" class="cp-logout">Log Out</a>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- -- Layout -------------------------------------------------------------- -->
-<div id="cp-layout">
-
-  <!-- Sidebar -->
-  <nav id="cp-sidebar" aria-label="Admin navigation">
-    <div class="cp-sidebar-header">
-      <a href="/cp-admin" class="cp-logo">
-        <svg width="28" height="28" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <rect width="32" height="32" rx="8" fill="#F6821F"/>
-          <path d="M8 16C8 11.582 11.582 8 16 8C20.418 8 24 11.582 24 16C24 20.418 20.418 24 16 24C11.582 24 8 20.418 8 16Z" fill="white" fill-opacity="0.2"/>
-          <path d="M13 12L19 16L13 20V12Z" fill="white"/>
-        </svg>
-        <span>CloudPress</span>
-      </a>
-    </div>
-    ${navHtml}
-  </nav>
-
-  <!-- Main Content -->
-  <main id="cp-main">
-    <div class="cp-page-header">
-      <h1 class="cp-page-title">${escHtml(title)}</h1>
-    </div>
-    ${noticeHtml}
-    <div class="cp-content-wrap">
-      ${content}
-    </div>
-  </main>
-
-</div>
-
-<!-- -- Admin Footer ---------------------------------------------------------- -->
-<footer id="cp-footer">
-  <span>CloudPress ${escHtml(adminVersion)} &mdash; Powered by <a href="https://cloudflare.com" target="_blank">Cloudflare</a></span>
-</footer>
-
-<script>${getAdminJS()}<\/script>
-</body>
-</html>`;
-}
-__name(renderAdminShell, "renderAdminShell");
-function buildNavItems(cp, currentPath) {
-  return [
-    {
-      id: "dashboard",
-      label: "Dashboard",
-      icon: "&#9635;",
-      href: "/cp-admin",
-      exact: true
-    },
-    {
-      id: "posts",
-      label: "Posts",
-      icon: "&#128221;",
-      href: "/cp-admin/edit",
-      children: [
-        { label: "All Posts", href: "/cp-admin/edit" },
-        { label: "Add New", href: "/cp-admin/post-new" },
-        { label: "Categories", href: "/cp-admin/edit-tags?taxonomy=category" },
-        { label: "Tags", href: "/cp-admin/edit-tags?taxonomy=post_tag" }
-      ]
-    },
-    {
-      id: "media",
-      label: "Media",
-      icon: "&#128247;",
-      href: "/cp-admin/upload",
-      children: [
-        { label: "Library", href: "/cp-admin/upload" },
-        { label: "Add New", href: "/cp-admin/media-new" }
-      ]
-    },
-    {
-      id: "pages",
-      label: "Pages",
-      icon: "&#128196;",
-      href: "/cp-admin/edit?post_type=page",
-      children: [
-        { label: "All Pages", href: "/cp-admin/edit?post_type=page" },
-        { label: "Add New", href: "/cp-admin/page-new" }
-      ]
-    },
-    {
-      id: "comments",
-      label: "Comments",
-      icon: "&#128172;",
-      href: "/cp-admin/edit-comments"
-    },
-    {
-      id: "appearance",
-      label: "Appearance",
-      icon: "&#127912;",
-      href: "/cp-admin/themes",
-      children: [
-        { label: "Themes", href: "/cp-admin/themes" },
-        { label: "Theme Editor", href: "/cp-admin/theme-editor" }
-      ]
-    },
-    {
-      id: "plugins",
-      label: "Plugins",
-      icon: "&#129529;",
-      href: "/cp-admin/plugins",
-      children: [
-        { label: "Installed Plugins", href: "/cp-admin/plugins" },
-        { label: "Add New", href: "/cp-admin/plugin-install" },
-        { label: "Plugin Editor", href: "/cp-admin/plugin-editor" }
-      ]
-    },
-    {
-      id: "users",
-      label: "Users",
-      icon: "&#128101;",
-      href: "/cp-admin/users",
-      children: [
-        { label: "All Users", href: "/cp-admin/users" },
-        { label: "Add New", href: "/cp-admin/user-new" },
-        { label: "Profile", href: "/cp-admin/profile" }
-      ]
-    },
-    {
-      id: "tools",
-      label: "Tools",
-      icon: "&#128295;",
-      href: "/cp-admin/tools",
-      children: [
-        { label: "Available Tools", href: "/cp-admin/tools" },
-        { label: "Import", href: "/cp-admin/import" },
-        { label: "Export", href: "/cp-admin/export" },
-        { label: "GitHub Sync", href: "/cp-admin/github-sync" }
-      ]
-    },
-    {
-      id: "settings",
-      label: "Settings",
-      icon: "&#9881;",
-      href: "/cp-admin/options-general",
-      children: [
-        { label: "General", href: "/cp-admin/options-general" },
-        { label: "Writing", href: "/cp-admin/options-writing" },
-        { label: "Reading", href: "/cp-admin/options-reading" },
-        { label: "Discussion", href: "/cp-admin/options-discussion" },
-        { label: "Media", href: "/cp-admin/options-media" },
-        { label: "Permalinks", href: "/cp-admin/options-permalink" },
-        { label: "GitHub", href: "/cp-admin/options-general#github" }
-      ]
-    }
-  ];
-}
-__name(buildNavItems, "buildNavItems");
-function renderNav(items, currentPath) {
-  return `<ul class="cp-nav-list">
-    ${items.map((item) => {
-    const isActive = item.exact ? currentPath === item.href : currentPath.startsWith(item.href.split("?")[0]);
-    const hasChildren = item.children && item.children.length;
-    return `<li class="cp-nav-item ${isActive ? "active" : ""} ${hasChildren ? "has-children" : ""}">
-        <a href="${escHtml(item.href)}" class="cp-nav-link">
-          <span class="cp-nav-icon">${item.icon}</span>
-          <span class="cp-nav-label">${escHtml(item.label)}</span>
-          ${hasChildren ? '<span class="cp-nav-arrow">&#9660;</span>' : ""}
-        </a>
-        ${hasChildren ? `
-        <ul class="cp-subnav">
-          ${item.children.map((child) => `
-            <li class="${currentPath === child.href.split("?")[0] ? "active" : ""}">
-              <a href="${escHtml(child.href)}">${escHtml(child.label)}</a>
-            </li>
-          `).join("")}
-        </ul>` : ""}
-      </li>`;
-  }).join("")}
-  </ul>`;
-}
-__name(renderNav, "renderNav");
-function getAdminJS() {
-  return `
-// Close dropdowns on outside click
-document.addEventListener('click', function(e) {
-  if (!e.target.closest('.cp-user-menu')) {
-    document.querySelectorAll('.cp-user-menu.open').forEach(m => m.classList.remove('open'));
-  }
-});
-
-// Nav submenu toggle (click-based for accessibility)
-document.querySelectorAll('.cp-nav-item.has-children > .cp-nav-link').forEach(link => {
-  link.addEventListener('click', function(e) {
-    if (window.innerWidth < 1200) {
-      e.preventDefault();
-      this.parentElement.classList.toggle('active');
-    }
-  });
-});
-
-// AJAX form submit helper (used by sub-pages)
-window.cpAjax = async function(action, data) {
-  const fd = new FormData();
-  fd.append('action', action);
-  Object.entries(data || {}).forEach(([k,v]) => fd.append(k, v));
-  const r = await fetch('/cp-admin/admin-ajax', { method: 'POST', body: fd });
-  return r.json();
-};
-
-// Confirm delete
-document.querySelectorAll('[data-confirm]').forEach(el => {
-  el.addEventListener('click', function(e) {
-    if (!confirm(this.dataset.confirm || 'Are you sure?')) e.preventDefault();
-  });
-});
-`;
-}
-__name(getAdminJS, "getAdminJS");
-
-// cp-admin/installer.js
-init_cp_config();
-init_crypto();
-var SCHEMA_VERSION = 1;
-async function handleInstaller(request, env, ctx) {
-  if (!env.CP_DB)
-    return bindingError("CP_DB", "D1 database");
-  if (!env.CP_KV)
-    return bindingError("CP_KV", "KV namespace");
-  const url = new URL(request.url);
-  const path = url.pathname.replace(/\/+$/, "");
-  const method = request.method.toUpperCase();
-  let isInstalled = false;
-  try {
-    const cfg = await env.CP_KV.get("cp:config", { type: "json" });
-    isInstalled = !!(cfg && cfg.installed);
-  } catch (_) {
-  }
-  if (path === "/cp-admin/setup-config") {
-    return handleSetupConfig(request, env, method, isInstalled);
-  }
-  if (path === "/cp-admin/install") {
-    return handleInstall(request, env, method, isInstalled, url);
-  }
-  return new Response("Not found", { status: 404 });
-}
-__name(handleInstaller, "handleInstaller");
-async function handleSetupConfig(request, env, method, isInstalled) {
-  if (isInstalled) {
-    return htmlResponse(renderAlreadyInstalled(), 200);
-  }
-  let errors = {};
-  let values = {};
-  if (method === "POST") {
-    const fd = await request.formData().catch(() => new FormData());
-    values = {
-      site_url: (fd.get("site_url") || "").trim(),
-      site_name: (fd.get("site_name") || "").trim(),
-      admin_email: (fd.get("admin_email") || "").trim(),
-      db_prefix: (fd.get("db_prefix") || "cp_").trim(),
-      github_repo: (fd.get("github_repo") || "").trim()
-    };
-    if (!values.site_name)
-      errors.site_name = "Site name is required.";
-    if (!values.admin_email || !values.admin_email.includes("@"))
-      errors.admin_email = "Valid email required.";
-    if (!/^[a-zA-Z][a-zA-Z0-9_]*_$/.test(values.db_prefix)) {
-      errors.db_prefix = "Prefix must start with a letter, contain only letters/numbers/underscores, and end with _.";
-    }
-    if (Object.keys(errors).length === 0) {
-      await env.CP_KV.put("cp:install_step1", JSON.stringify(values), { expirationTtl: 3600 });
-      return redirect("/cp-admin/install");
-    }
-  }
-  return htmlResponse(renderSetupForm(errors, values), 200);
-}
-__name(handleSetupConfig, "handleSetupConfig");
-async function handleInstall(request, env, method, isInstalled, url) {
-  if (isInstalled && !url.searchParams.has("force")) {
-    return htmlResponse(renderAlreadyInstalled(), 200);
-  }
-  let step1 = {};
-  try {
-    step1 = await env.CP_KV.get("cp:install_step1", { type: "json" }) || {};
-  } catch (_) {
-  }
-  let errors = {};
-  let values = {};
-  if (method === "POST") {
-    const fd = await request.formData().catch(() => new FormData());
-    values = {
-      admin_user: (fd.get("admin_user") || "").trim(),
-      admin_password: (fd.get("admin_password") || "").trim(),
-      admin_password2: (fd.get("admin_password2") || "").trim()
-    };
-    if (!values.admin_user || !/^[a-zA-Z0-9_.-]+$/.test(values.admin_user)) {
-      errors.admin_user = "Username must contain only letters, numbers, underscores, hyphens, or dots.";
-    }
-    if (!values.admin_password || values.admin_password.length < 8) {
-      errors.admin_password = "Password must be at least 8 characters.";
-    }
-    if (values.admin_password !== values.admin_password2) {
-      errors.admin_password2 = "Passwords do not match.";
-    }
-    if (Object.keys(errors).length === 0) {
-      const result = await runInstall(env, step1, values);
-      if (result.success) {
-        await env.CP_KV.delete("cp:install_step1");
-        return htmlResponse(renderInstallSuccess(result), 200);
-      } else {
-        errors.install = result.message;
-      }
-    }
-  }
-  return htmlResponse(renderInstallForm(errors, values, step1), 200);
-}
-__name(handleInstall, "handleInstall");
-async function runInstall(env, step1, adminInfo) {
-  const prefix = step1.db_prefix || "cp_";
-  const siteUrl = step1.site_url || "";
-  const siteName = step1.site_name || "CloudPress Site";
-  try {
-    await createSchema(env.CP_DB, prefix);
-    const passwordHash = await hashPassword(adminInfo.admin_password);
-    const now = (/* @__PURE__ */ new Date()).toISOString().replace("T", " ").slice(0, 19);
-    await env.CP_DB.prepare(`
-      INSERT INTO ${prefix}users
-        (user_login, user_pass, user_email, user_registered, display_name, user_status)
-      VALUES (?, ?, ?, ?, ?, 0)
-    `).bind(
-      adminInfo.admin_user,
-      passwordHash,
-      step1.admin_email || "",
-      now,
-      adminInfo.admin_user
-    ).run();
-    const userRow = await env.CP_DB.prepare(
-      `SELECT ID FROM ${prefix}users WHERE user_login = ? LIMIT 1`
-    ).bind(adminInfo.admin_user).first();
-    const userId = userRow?.ID || 1;
-    await env.CP_DB.prepare(`
-      INSERT INTO ${prefix}usermeta (user_id, meta_key, meta_value)
-      VALUES (?, ?, ?)
-    `).bind(userId, `${prefix}capabilities`, JSON.stringify({ administrator: true })).run();
-    const defaultOptions = [
-      ["siteurl", siteUrl || "http://localhost"],
-      ["blogname", siteName],
-      ["blogdescription", "Just another CloudPress site"],
-      ["admin_email", step1.admin_email || ""],
-      ["blogcharset", "UTF-8"],
-      ["date_format", "F j, Y"],
-      ["time_format", "g:i a"],
-      ["posts_per_page", "10"],
-      ["default_comment_status", "open"],
-      ["default_ping_status", "open"],
-      ["permalink_structure", "/%year%/%monthnum%/%postname%/"],
-      ["cp_schema_version", String(SCHEMA_VERSION)],
-      ["cp_user_roles", JSON.stringify({
-        administrator: { name: "Administrator", capabilities: { administrator: true } },
-        editor: { name: "Editor", capabilities: { edit_posts: true, publish_posts: true } },
-        author: { name: "Author", capabilities: { edit_posts: true, upload_files: true } },
-        contributor: { name: "Contributor", capabilities: { edit_posts: true } },
-        subscriber: { name: "Subscriber", capabilities: { read: true } }
-      })],
-      ["active_plugins", "[]"],
-      ["template", "default"],
-      ["stylesheet", "default"],
-      ["cp_github_repo", step1.github_repo || ""]
-    ];
-    for (const [key, value] of defaultOptions) {
-      await env.CP_DB.prepare(`
-        INSERT OR IGNORE INTO ${prefix}options (option_name, option_value, autoload)
-        VALUES (?, ?, 'yes')
-      `).bind(key, value).run();
-    }
-    await env.CP_DB.prepare(`
-      INSERT INTO ${prefix}terms (name, slug, term_group)
-      VALUES ('Uncategorized', 'uncategorized', 0)
-    `).run();
-    const termRow = await env.CP_DB.prepare(
-      `SELECT term_id FROM ${prefix}terms WHERE slug = 'uncategorized' LIMIT 1`
-    ).first();
-    const termId = termRow?.term_id || 1;
-    await env.CP_DB.prepare(`
-      INSERT INTO ${prefix}term_taxonomy (term_id, taxonomy, description, parent, count)
-      VALUES (?, 'category', '', 0, 1)
-    `).bind(termId).run();
-    await env.CP_DB.prepare(`
-      INSERT INTO ${prefix}posts
-        (post_author, post_date, post_content, post_title, post_status, post_type,
-         post_name, comment_status, ping_status, post_modified)
-      VALUES (?, ?, ?, 'Hello world!', 'publish', 'post',
-              'hello-world', 'open', 'open', ?)
-    `).bind(
-      userId,
-      now,
-      "<p>Welcome to CloudPress. This is your first post. Edit or delete it, then start writing!</p>",
-      now
-    ).run();
-    await saveConfig(env, {
-      SITE_URL: siteUrl,
-      SITE_NAME: siteName,
-      ADMIN_EMAIL: step1.admin_email || "",
-      DB_PREFIX: prefix,
-      GITHUB_REPO: step1.github_repo || "",
-      installed: true
-    });
-    return { success: true, admin_user: adminInfo.admin_user };
-  } catch (err) {
-    console.error("[CloudPress Install]", err);
-    return { success: false, message: `Install failed: ${err.message}` };
-  }
-}
-__name(runInstall, "runInstall");
-async function createSchema(db, prefix) {
-  const tables = [
-    `CREATE TABLE IF NOT EXISTS ${prefix}posts (
-      ID INTEGER PRIMARY KEY AUTOINCREMENT,
-      post_author INTEGER NOT NULL DEFAULT 0,
-      post_date TEXT NOT NULL DEFAULT '',
-      post_date_gmt TEXT NOT NULL DEFAULT '',
-      post_content TEXT NOT NULL DEFAULT '',
-      post_title TEXT NOT NULL DEFAULT '',
-      post_excerpt TEXT NOT NULL DEFAULT '',
-      post_status TEXT NOT NULL DEFAULT 'publish',
-      comment_status TEXT NOT NULL DEFAULT 'open',
-      ping_status TEXT NOT NULL DEFAULT 'open',
-      post_password TEXT NOT NULL DEFAULT '',
-      post_name TEXT NOT NULL DEFAULT '',
-      to_ping TEXT NOT NULL DEFAULT '',
-      pinged TEXT NOT NULL DEFAULT '',
-      post_modified TEXT NOT NULL DEFAULT '',
-      post_modified_gmt TEXT NOT NULL DEFAULT '',
-      post_content_filtered TEXT NOT NULL DEFAULT '',
-      post_parent INTEGER NOT NULL DEFAULT 0,
-      guid TEXT NOT NULL DEFAULT '',
-      menu_order INTEGER NOT NULL DEFAULT 0,
-      post_type TEXT NOT NULL DEFAULT 'post',
-      post_mime_type TEXT NOT NULL DEFAULT '',
-      comment_count INTEGER NOT NULL DEFAULT 0
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${prefix}postmeta (
-      meta_id INTEGER PRIMARY KEY AUTOINCREMENT,
-      post_id INTEGER NOT NULL DEFAULT 0,
-      meta_key TEXT DEFAULT NULL,
-      meta_value TEXT
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${prefix}users (
-      ID INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_login TEXT NOT NULL DEFAULT '',
-      user_pass TEXT NOT NULL DEFAULT '',
-      user_nicename TEXT NOT NULL DEFAULT '',
-      user_email TEXT NOT NULL DEFAULT '',
-      user_url TEXT NOT NULL DEFAULT '',
-      user_registered TEXT NOT NULL DEFAULT '',
-      user_activation_key TEXT NOT NULL DEFAULT '',
-      user_status INTEGER NOT NULL DEFAULT 0,
-      display_name TEXT NOT NULL DEFAULT ''
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${prefix}usermeta (
-      umeta_id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL DEFAULT 0,
-      meta_key TEXT DEFAULT NULL,
-      meta_value TEXT
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${prefix}options (
-      option_id INTEGER PRIMARY KEY AUTOINCREMENT,
-      option_name TEXT NOT NULL DEFAULT '',
-      option_value TEXT NOT NULL DEFAULT '',
-      autoload TEXT NOT NULL DEFAULT 'yes',
-      UNIQUE(option_name)
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${prefix}terms (
-      term_id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL DEFAULT '',
-      slug TEXT NOT NULL DEFAULT '',
-      term_group INTEGER NOT NULL DEFAULT 0
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${prefix}term_taxonomy (
-      term_taxonomy_id INTEGER PRIMARY KEY AUTOINCREMENT,
-      term_id INTEGER NOT NULL DEFAULT 0,
-      taxonomy TEXT NOT NULL DEFAULT '',
-      description TEXT NOT NULL DEFAULT '',
-      parent INTEGER NOT NULL DEFAULT 0,
-      count INTEGER NOT NULL DEFAULT 0
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${prefix}term_relationships (
-      object_id INTEGER NOT NULL DEFAULT 0,
-      term_taxonomy_id INTEGER NOT NULL DEFAULT 0,
-      term_order INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (object_id, term_taxonomy_id)
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${prefix}comments (
-      comment_ID INTEGER PRIMARY KEY AUTOINCREMENT,
-      comment_post_ID INTEGER NOT NULL DEFAULT 0,
-      comment_author TEXT NOT NULL DEFAULT '',
-      comment_author_email TEXT NOT NULL DEFAULT '',
-      comment_author_url TEXT NOT NULL DEFAULT '',
-      comment_author_IP TEXT NOT NULL DEFAULT '',
-      comment_date TEXT NOT NULL DEFAULT '',
-      comment_date_gmt TEXT NOT NULL DEFAULT '',
-      comment_content TEXT NOT NULL DEFAULT '',
-      comment_karma INTEGER NOT NULL DEFAULT 0,
-      comment_approved TEXT NOT NULL DEFAULT '1',
-      comment_agent TEXT NOT NULL DEFAULT '',
-      comment_type TEXT NOT NULL DEFAULT 'comment',
-      comment_parent INTEGER NOT NULL DEFAULT 0,
-      user_id INTEGER NOT NULL DEFAULT 0
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${prefix}commentmeta (
-      meta_id INTEGER PRIMARY KEY AUTOINCREMENT,
-      comment_id INTEGER NOT NULL DEFAULT 0,
-      meta_key TEXT DEFAULT NULL,
-      meta_value TEXT
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${prefix}links (
-      link_id INTEGER PRIMARY KEY AUTOINCREMENT,
-      link_url TEXT NOT NULL DEFAULT '',
-      link_name TEXT NOT NULL DEFAULT '',
-      link_image TEXT NOT NULL DEFAULT '',
-      link_target TEXT NOT NULL DEFAULT '',
-      link_description TEXT NOT NULL DEFAULT '',
-      link_visible TEXT NOT NULL DEFAULT 'Y',
-      link_owner INTEGER NOT NULL DEFAULT 1,
-      link_rating INTEGER NOT NULL DEFAULT 0,
-      link_updated TEXT NOT NULL DEFAULT '',
-      link_rel TEXT NOT NULL DEFAULT '',
-      link_notes TEXT NOT NULL DEFAULT '',
-      link_rss TEXT NOT NULL DEFAULT ''
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${prefix}cron_events (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      timestamp INTEGER NOT NULL,
-      schedule TEXT,
-      hook TEXT NOT NULL,
-      args TEXT NOT NULL DEFAULT '[]'
-    )`
-  ];
-  for (const sql of tables) {
-    await db.prepare(sql).run();
-  }
-  const indexes = [
-    `CREATE INDEX IF NOT EXISTS ${prefix}posts_post_name ON ${prefix}posts(post_name)`,
-    `CREATE INDEX IF NOT EXISTS ${prefix}posts_post_type_status ON ${prefix}posts(post_type, post_status)`,
-    `CREATE INDEX IF NOT EXISTS ${prefix}postmeta_post_id ON ${prefix}postmeta(post_id)`,
-    `CREATE INDEX IF NOT EXISTS ${prefix}postmeta_meta_key ON ${prefix}postmeta(meta_key)`,
-    `CREATE INDEX IF NOT EXISTS ${prefix}users_user_login ON ${prefix}users(user_login)`,
-    `CREATE INDEX IF NOT EXISTS ${prefix}users_user_email ON ${prefix}users(user_email)`,
-    `CREATE INDEX IF NOT EXISTS ${prefix}usermeta_user_id ON ${prefix}usermeta(user_id)`,
-    `CREATE INDEX IF NOT EXISTS ${prefix}comments_post_id ON ${prefix}comments(comment_post_ID)`,
-    `CREATE INDEX IF NOT EXISTS ${prefix}term_relationships_tid ON ${prefix}term_relationships(term_taxonomy_id)`,
-    `CREATE INDEX IF NOT EXISTS ${prefix}cron_events_ts ON ${prefix}cron_events(timestamp)`
-  ];
-  for (const idx of indexes) {
-    await db.prepare(idx).run().catch(() => {
-    });
-  }
-}
-__name(createSchema, "createSchema");
-function renderSetupForm(errors, values) {
-  return layout("CloudPress Setup -- Step 1: Configuration", `
-    <div class="install-card">
-      <h2>Welcome to CloudPress</h2>
-      <p class="lead">Let's configure your site before installing. This information is stored securely in Cloudflare KV.</p>
-      ${renderErrors(errors)}
-      <form method="post">
-        <table class="form-table">
-          <tr>
-            <th><label for="site_url">Site URL</label></th>
-            <td>
-              <input type="url" id="site_url" name="site_url" class="regular-text"
-                     value="${esc(values.site_url || "")}" placeholder="https://example.com">
-              <p class="description">The full URL where CloudPress will live. Must match your Cloudflare Worker route.</p>
-            </td>
-          </tr>
-          <tr>
-            <th><label for="site_name">Site Title</label></th>
-            <td>
-              <input type="text" id="site_name" name="site_name" class="regular-text"
-                     value="${esc(values.site_name || "")}" required>
-            </td>
-          </tr>
-          <tr>
-            <th><label for="admin_email">Admin Email</label></th>
-            <td>
-              <input type="email" id="admin_email" name="admin_email" class="regular-text"
-                     value="${esc(values.admin_email || "")}" required>
-            </td>
-          </tr>
-          <tr>
-            <th><label for="db_prefix">Table Prefix</label></th>
-            <td>
-              <input type="text" id="db_prefix" name="db_prefix" class="regular-text"
-                     value="${esc(values.db_prefix || "cp_")}" pattern="[a-zA-Z][a-zA-Z0-9_]*_">
-              <p class="description">D1 table prefix. Must end with underscore. Default: <code>cp_</code></p>
-            </td>
-          </tr>
-          <tr>
-            <th><label for="github_repo">GitHub CMS Repo</label></th>
-            <td>
-              <input type="text" id="github_repo" name="github_repo" class="regular-text"
-                     value="${esc(values.github_repo || "")}" placeholder="owner/repo">
-              <p class="description">Optional: GitHub repository for themes/plugins (e.g. <code>myorg/cloudpress-themes</code>). Set GitHub Token as a Cloudflare Worker secret (<code>CP_GITHUB_TOKEN</code>).</p>
-            </td>
-          </tr>
-        </table>
-        <p class="submit">
-          <button type="submit" class="btn btn-primary">Continue to Installation &rarr;</button>
-        </p>
-      </form>
-    </div>
-  `);
-}
-__name(renderSetupForm, "renderSetupForm");
-function renderInstallForm(errors, values, step1) {
-  return layout("CloudPress Setup -- Step 2: Create Admin User", `
-    <div class="install-card">
-      <h2>Create Your Administrator Account</h2>
-      <p class="lead">Almost there! Set up your admin login credentials.</p>
-      ${step1.site_name ? `<p>Site: <strong>${esc(step1.site_name)}</strong></p>` : ""}
-      ${renderErrors(errors)}
-      <form method="post">
-        <table class="form-table">
-          <tr>
-            <th><label for="admin_user">Admin Username</label></th>
-            <td>
-              <input type="text" id="admin_user" name="admin_user" class="regular-text"
-                     value="${esc(values.admin_user || "admin")}" required autocomplete="username">
-              <p class="description">Lowercase letters, numbers, hyphens, underscores, and dots only.</p>
-            </td>
-          </tr>
-          <tr>
-            <th><label for="admin_password">Password</label></th>
-            <td>
-              <input type="password" id="admin_password" name="admin_password" class="regular-text"
-                     value="" required minlength="8" autocomplete="new-password">
-              <p class="description">Minimum 8 characters. Use a strong password.</p>
-            </td>
-          </tr>
-          <tr>
-            <th><label for="admin_password2">Confirm Password</label></th>
-            <td>
-              <input type="password" id="admin_password2" name="admin_password2" class="regular-text"
-                     value="" required minlength="8" autocomplete="new-password">
-            </td>
-          </tr>
-        </table>
-        <p class="submit">
-          <button type="submit" class="btn btn-primary">Install CloudPress</button>
-        </p>
-      </form>
-    </div>
-  `);
-}
-__name(renderInstallForm, "renderInstallForm");
-function renderInstallSuccess(result) {
-  return layout("CloudPress Installed!", `
-    <div class="install-card success-card">
-      <div class="success-icon">&#10003;</div>
-      <h2>CloudPress has been installed successfully!</h2>
-      <p>Your site is ready. Here are your login details -- <strong>save them now</strong>.</p>
-      <table class="form-table">
-        <tr>
-          <th>Username</th>
-          <td><code>${esc(result.admin_user)}</code></td>
-        </tr>
-        <tr>
-          <th>Password</th>
-          <td><em>The password you chose during installation.</em></td>
-        </tr>
-      </table>
-      <p class="submit">
-        <a href="/cp-login" class="btn btn-primary">Log In to CloudPress Admin</a>
-        <a href="/" class="btn btn-secondary">Visit Site</a>
-      </p>
-    </div>
-  `);
-}
-__name(renderInstallSuccess, "renderInstallSuccess");
-function renderAlreadyInstalled() {
-  return layout("Already Installed", `
-    <div class="install-card">
-      <h2>CloudPress is already installed.</h2>
-      <p>If you need to reinstall, add <code>?force=1</code> to the URL (this will reset your database).</p>
-      <p>
-        <a href="/cp-login" class="btn btn-primary">Log In</a>
-        <a href="/" class="btn btn-secondary">Visit Site</a>
-      </p>
-    </div>
-  `);
-}
-__name(renderAlreadyInstalled, "renderAlreadyInstalled");
-function renderErrors(errors) {
-  const msgs = Object.values(errors);
-  if (!msgs.length)
-    return "";
-  return `<div class="notice-error"><ul>${msgs.map((m) => `<li>${esc(m)}</li>`).join("")}</ul></div>`;
-}
-__name(renderErrors, "renderErrors");
-function layout(title, content) {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>${esc(title)}</title>
-  <link rel="stylesheet" href="/cp-admin/css/installer.css">
-</head>
-<body>
-<div class="install-wrap">
-  <div class="install-header">
-    <a href="/" class="install-logo">Cloud<span>Press</span></a>
-  </div>
-  ${content}
-</div>
-</body>
-</html>`;
-}
-__name(layout, "layout");
-function htmlResponse(html, status = 200) {
-  return new Response(html, { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
-}
-__name(htmlResponse, "htmlResponse");
-function esc(str) {
-  return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-__name(esc, "esc");
-function bindingError(binding, name) {
-  return new Response(
-    `<!DOCTYPE html><html><body><h1>CloudPress Install Error</h1><p>Cloudflare binding <strong>${binding}</strong> (${name}) is not configured. Please add it in the Cloudflare Workers dashboard before installing.</p></body></html>`,
-    { status: 500, headers: { "Content-Type": "text/html; charset=utf-8" } }
-  );
-}
-__name(bindingError, "bindingError");
-
-// cp-admin/pages/dashboard.js
-init_option();
-async function handleDashboard(request, cp) {
-  const prefix = cp.config.DB_PREFIX || "cp_";
-  const [postCount, pageCount, commentCount, userCount] = await Promise.all([
-    cp.db.prepare(`SELECT COUNT(*) as n FROM ${prefix}posts WHERE post_type='post' AND post_status='publish'`).first(),
-    cp.db.prepare(`SELECT COUNT(*) as n FROM ${prefix}posts WHERE post_type='page' AND post_status='publish'`).first(),
-    cp.db.prepare(`SELECT COUNT(*) as n FROM ${prefix}comments WHERE comment_approved='1'`).first(),
-    cp.db.prepare(`SELECT COUNT(*) as n FROM ${prefix}users`).first()
-  ]);
-  const recentPosts = await cp.db.prepare(
-    `SELECT ID, post_title, post_status, post_date FROM ${prefix}posts
-     WHERE post_type='post' ORDER BY post_date DESC LIMIT 5`
-  ).all();
-  const recentComments = await cp.db.prepare(
-    `SELECT c.comment_ID, c.comment_author, c.comment_content, c.comment_approved, c.comment_date,
-            p.post_title
-     FROM ${prefix}comments c
-     LEFT JOIN ${prefix}posts p ON c.comment_post_ID = p.ID
-     ORDER BY c.comment_date DESC LIMIT 5`
-  ).all();
-  const siteName = await getOption(cp, "blogname").catch(() => "CloudPress");
-  const siteUrl = await getOption(cp, "siteurl").catch(() => "/");
-  const user = cp.currentUser;
-  const content = `
-<div class="cp-dash-grid">
-  <div class="cp-dash-stat">
-    <div class="cp-dash-stat-icon">&#128221;</div>
-    <div>
-      <div class="cp-dash-stat-num">${postCount?.n ?? 0}</div>
-      <div class="cp-dash-stat-label">Published Posts</div>
-    </div>
-  </div>
-  <div class="cp-dash-stat">
-    <div class="cp-dash-stat-icon">&#128196;</div>
-    <div>
-      <div class="cp-dash-stat-num">${pageCount?.n ?? 0}</div>
-      <div class="cp-dash-stat-label">Pages</div>
-    </div>
-  </div>
-  <div class="cp-dash-stat">
-    <div class="cp-dash-stat-icon">&#128172;</div>
-    <div>
-      <div class="cp-dash-stat-num">${commentCount?.n ?? 0}</div>
-      <div class="cp-dash-stat-label">Comments</div>
-    </div>
-  </div>
-  <div class="cp-dash-stat">
-    <div class="cp-dash-stat-icon">&#128101;</div>
-    <div>
-      <div class="cp-dash-stat-num">${userCount?.n ?? 0}</div>
-      <div class="cp-dash-stat-label">Users</div>
-    </div>
-  </div>
-</div>
-
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
-
-  <!-- Quick Actions -->
-  <div class="cp-card">
-    <h2>Quick Actions</h2>
-    <div style="display:flex;flex-direction:column;gap:8px">
-      <a href="/cp-admin/post-new" class="cp-btn" style="justify-content:center">&#43; New Post</a>
-      <a href="/cp-admin/page-new" class="cp-btn cp-btn-secondary" style="justify-content:center">&#43; New Page</a>
-      <a href="/cp-admin/upload" class="cp-btn cp-btn-secondary" style="justify-content:center">&#43; Upload Media</a>
-      <a href="/cp-admin/github-sync" class="cp-btn cp-btn-secondary" style="justify-content:center">&#127758; GitHub Sync</a>
-    </div>
-  </div>
-
-  <!-- At a Glance -->
-  <div class="cp-card">
-    <h2>Site Info</h2>
-    <table style="width:100%;font-size:13px;border-collapse:collapse">
-      <tr><td style="padding:5px 0;color:#646970">Site</td><td><a href="${esc2(siteUrl)}" target="_blank">${esc2(siteName)}</a></td></tr>
-      <tr><td style="padding:5px 0;color:#646970">CloudPress Version</td><td>${esc2(cp.version || "1.2.0")}</td></tr>
-      <tr><td style="padding:5px 0;color:#646970">Logged in as</td><td>${esc2(user?.display_name || user?.user_login || "")}</td></tr>
-      <tr><td style="padding:5px 0;color:#646970">Role</td><td><span class="cp-badge cp-badge-publish">${esc2((user?.roles || ["administrator"])[0])}</span></td></tr>
-      <tr><td style="padding:5px 0;color:#646970">Platform</td><td>Cloudflare Workers + D1 + KV</td></tr>
-    </table>
-  </div>
-
-</div>
-
-<!-- Recent Posts -->
-<div class="cp-card">
-  <h2>Recent Posts</h2>
-  ${(recentPosts?.results || []).length ? `
-  <div class="cp-table-wrap">
-    <table class="cp-table">
-      <thead><tr><th>Title</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead>
-      <tbody>
-        ${(recentPosts.results || []).map((p) => `
-          <tr>
-            <td><a href="/cp-admin/post?post=${p.ID}">${esc2(p.post_title || "(no title)")}</a></td>
-            <td><span class="cp-badge cp-badge-${p.post_status}">${esc2(p.post_status)}</span></td>
-            <td>${esc2(formatDate(p.post_date))}</td>
-            <td>
-              <a href="/cp-admin/post?post=${p.ID}" class="cp-btn cp-btn-secondary" style="padding:3px 10px;font-size:12px">Edit</a>
-              <a href="/?p=${p.ID}" target="_blank" class="cp-btn cp-btn-secondary" style="padding:3px 10px;font-size:12px">View</a>
-            </td>
-          </tr>
-        `).join("")}
-      </tbody>
-    </table>
-  </div>
-  ` : '<p style="color:#646970">No posts yet. <a href="/cp-admin/post-new">Write your first post</a>.</p>'}
-</div>
-
-<!-- Recent Comments -->
-<div class="cp-card">
-  <h2>Recent Comments</h2>
-  ${(recentComments?.results || []).length ? `
-  <div class="cp-table-wrap">
-    <table class="cp-table">
-      <thead><tr><th>Author</th><th>Comment</th><th>Post</th><th>Status</th></tr></thead>
-      <tbody>
-        ${(recentComments.results || []).map((c) => `
-          <tr>
-            <td>${esc2(c.comment_author)}</td>
-            <td>${esc2(truncate2(c.comment_content, 60))}</td>
-            <td>${esc2(c.post_title || "")}</td>
-            <td><span class="cp-badge ${c.comment_approved === "1" ? "cp-badge-publish" : "cp-badge-pending"}">${c.comment_approved === "1" ? "Approved" : "Pending"}</span></td>
-          </tr>
-        `).join("")}
-      </tbody>
-    </table>
-  </div>
-  ` : '<p style="color:#646970">No comments yet.</p>'}
-</div>
-`;
-  const html = await renderAdminShell(cp, content, { title: "Dashboard" });
-  return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
-}
-__name(handleDashboard, "handleDashboard");
-function esc2(str) {
-  return String(str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-__name(esc2, "esc");
-function formatDate(dateStr) {
-  if (!dateStr)
-    return "";
-  try {
-    return new Date(dateStr).toLocaleDateString();
-  } catch (_) {
-    return dateStr;
-  }
-}
-__name(formatDate, "formatDate");
-function truncate2(str, n) {
-  if (!str)
-    return "";
-  return str.length > n ? str.slice(0, n) + "..." : str;
-}
-__name(truncate2, "truncate");
-
-// cp-admin/pages/posts.js
-async function handlePosts(request, cp, opts = {}) {
-  const url = cp.url;
-  const prefix = cp.config.DB_PREFIX || "cp_";
-  const postType = opts.post_type || url.searchParams.get("post_type") || "post";
-  const status = url.searchParams.get("post_status") || "all";
-  const page = Math.max(1, parseInt(url.searchParams.get("paged") || "1"));
-  const perPage = 20;
-  const offset = (page - 1) * perPage;
-  const search = url.searchParams.get("s") || "";
-  const method = request.method.toUpperCase();
-  if (method === "POST") {
-    const fd = await request.formData().catch(() => new FormData());
-    const action = fd.get("action") || "";
-    const postIds = fd.getAll("post[]").map(Number).filter(Boolean);
-    if (postIds.length) {
-      if (action === "trash") {
-        for (const id of postIds) {
-          await cp.db.prepare(`UPDATE ${prefix}posts SET post_status='trash' WHERE ID=?`).bind(id).run();
-        }
-      } else if (action === "delete") {
-        for (const id of postIds) {
-          await cp.db.prepare(`DELETE FROM ${prefix}posts WHERE ID=?`).bind(id).run();
-        }
-      } else if (action === "publish") {
-        for (const id of postIds) {
-          await cp.db.prepare(`UPDATE ${prefix}posts SET post_status='publish' WHERE ID=?`).bind(id).run();
-        }
-      }
-    }
-  }
-  let whereClauses = [`post_type=?`];
-  let params = [postType];
-  if (status !== "all") {
-    whereClauses.push(`post_status=?`);
-    params.push(status);
-  } else {
-    whereClauses.push(`post_status != 'auto-draft'`);
-  }
-  if (search) {
-    whereClauses.push(`post_title LIKE ?`);
-    params.push(`%${search}%`);
-  }
-  const whereStr = whereClauses.join(" AND ");
-  const [countRow, posts] = await Promise.all([
-    cp.db.prepare(`SELECT COUNT(*) as n FROM ${prefix}posts WHERE ${whereStr}`).bind(...params).first(),
-    cp.db.prepare(
-      `SELECT p.ID, p.post_title, p.post_status, p.post_date, p.post_author,
-              u.display_name as author_name
-       FROM ${prefix}posts p
-       LEFT JOIN ${prefix}users u ON p.post_author = u.ID
-       WHERE ${whereStr}
-       ORDER BY p.post_date DESC
-       LIMIT ? OFFSET ?`
-    ).bind(...params, perPage, offset).all()
-  ]);
-  const total = countRow?.n ?? 0;
-  const totalPages = Math.ceil(total / perPage);
-  const typeLabel = postType === "post" ? "Posts" : "Pages";
-  const newHref = postType === "post" ? "/cp-admin/post-new" : "/cp-admin/page-new";
-  const statusCounts = await cp.db.prepare(
-    `SELECT post_status, COUNT(*) as n FROM ${prefix}posts WHERE post_type=? GROUP BY post_status`
-  ).bind(postType).all();
-  const countMap = {};
-  (statusCounts.results || []).forEach((r) => {
-    countMap[r.post_status] = r.n;
-  });
-  const content = `
-<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-  <div style="display:flex;gap:12px;font-size:13px">
-    ${["all", "publish", "draft", "pending", "trash"].map((s) => {
-    const n = s === "all" ? total : countMap[s] || 0;
-    return `<a href="/cp-admin/edit?post_type=${postType}&post_status=${s}"
-                 style="color:${status === s ? "#1d2327" : "#2271b1"};font-weight:${status === s ? "600" : "400"};text-decoration:none">
-                ${capitalize(s)} <span style="color:#646970">(${n})</span>
-              </a>`;
-  }).join(" | ")}
-  </div>
-  <a href="${newHref}" class="cp-btn">&#43; Add New ${typeLabel.slice(0, -1)}</a>
-</div>
-
-<!-- Search -->
-<form method="get" style="margin-bottom:14px;display:flex;gap:8px">
-  <input type="hidden" name="post_type" value="${esc3(postType)}">
-  <input type="text" name="s" value="${esc3(search)}" placeholder="Search ${typeLabel.toLowerCase()}..."
-         class="cp-form-input" style="max-width:280px">
-  <button type="submit" class="cp-btn cp-btn-secondary">Search</button>
-</form>
-
-<!-- Bulk Actions -->
-<form method="post" id="posts-form">
-  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-    <select name="action" class="cp-form-select" style="max-width:160px">
-      <option value="">Bulk Actions</option>
-      <option value="publish">Publish</option>
-      <option value="trash">Move to Trash</option>
-      <option value="delete">Delete Permanently</option>
-    </select>
-    <button type="submit" class="cp-btn cp-btn-secondary">Apply</button>
-  </div>
-
-  <div class="cp-table-wrap">
-    <table class="cp-table">
-      <thead>
-        <tr>
-          <th style="width:32px"><input type="checkbox" id="check-all" onchange="document.querySelectorAll('.post-check').forEach(c => c.checked = this.checked)"></th>
-          <th>Title</th>
-          <th>Author</th>
-          <th>Status</th>
-          <th>Date</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${(posts?.results || []).length ? (posts.results || []).map((p) => `
-          <tr>
-            <td><input type="checkbox" name="post[]" value="${p.ID}" class="post-check"></td>
-            <td>
-              <strong><a href="/cp-admin/post?post=${p.ID}">${esc3(p.post_title || "(no title)")}</a></strong>
-              <div class="row-actions" style="font-size:12px;margin-top:4px">
-                <a href="/cp-admin/post?post=${p.ID}" style="color:#2271b1">Edit</a> |
-                <a href="/?p=${p.ID}" target="_blank" style="color:#2271b1">View</a> |
-                <a href="?post_type=${postType}&action=trash&post=${p.ID}"
-                   onclick="return confirm('Move to trash?')"
-                   style="color:#d63638">Trash</a>
-              </div>
-            </td>
-            <td>${esc3(p.author_name || "")}</td>
-            <td><span class="cp-badge cp-badge-${p.post_status}">${esc3(p.post_status)}</span></td>
-            <td style="font-size:12px;color:#646970">${esc3(formatDate2(p.post_date))}</td>
-          </tr>
-        `).join("") : `
-          <tr><td colspan="5" style="text-align:center;padding:40px;color:#646970">
-            No ${typeLabel.toLowerCase()} found. <a href="${newHref}">Create one</a>.
-          </td></tr>
-        `}
-      </tbody>
-    </table>
-  </div>
-</form>
-
-<!-- Pagination -->
-${totalPages > 1 ? `
-<div style="display:flex;gap:6px;align-items:center;margin-top:16px;justify-content:center">
-  ${page > 1 ? `<a href="?post_type=${postType}&paged=${page - 1}" class="cp-btn cp-btn-secondary">&lsaquo; Prev</a>` : ""}
-  <span style="color:#646970;font-size:13px">Page ${page} of ${totalPages}</span>
-  ${page < totalPages ? `<a href="?post_type=${postType}&paged=${page + 1}" class="cp-btn cp-btn-secondary">Next &rsaquo;</a>` : ""}
-</div>
-` : ""}
-`;
-  const html = await renderAdminShell(cp, content, { title: typeLabel });
-  return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
-}
-__name(handlePosts, "handlePosts");
-function esc3(s) {
-  return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-__name(esc3, "esc");
-function formatDate2(d) {
-  if (!d)
-    return "";
-  try {
-    return new Date(d).toLocaleDateString();
-  } catch (_) {
-    return d;
-  }
-}
-__name(formatDate2, "formatDate");
-function capitalize(s) {
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-__name(capitalize, "capitalize");
-
-// cp-admin/pages/post-edit.js
 /**
- * CloudPress Admin - Post / Page Editor
- * Replaces WordPress wp-admin/post.php + wp-admin/post-new.php
+ * CloudPress v20.1 — Originless Edge CMS Worker ()
  *
- * 변경사항:
- *  - 워드프레스식 메타박스 시스템 구현
- *    · 상단: 제목 입력 + 퍼마링크
- *    · 에디터 아래: 사용자 정의 필드(Custom Fields) 메타박스
- *    · 우측 사이드바: Publish / 카테고리 / 태그 / 특성 이미지 / 페이지 속성 메타박스
- *    · 메타박스 접기/펼치기 가능 (WP 동일 UX)
- *    · 메타박스 순서 drag 없이 CSS order로 관리
- *  - postmeta (커스텀 필드) CRUD 지원
- *  - 언어에 따른 레이블 (WPLANG 옵션 반영)
- *
- * @package CloudPress
+ *  :
+ *  - CP.apiFetch is not a function   
+ *  -    KV   (  → KV lookup)
+ *  -  wp-admin  → wp-login.php  (  )
+ *  -   fetch    fetch()  (CP.apiFetch )
+ *  -     (POST → D1 user  → KV   →  Set)
+ *  -     (wordpress_logged_in_SESSION)
+ *  - bcrypt/MD5    plain password fallback 
  */
 
+//   
+const CACHE_TTL_HTML   = 300;
+const CACHE_TTL_ASSET  = 86400;
+const CACHE_TTL_API    = 60;
+const CACHE_TTL_STALE  = 86400;
+const KV_PAGE_PREFIX   = 'page:';
+const KV_SITE_PREFIX   = 'site_domain:';
+const KV_OPT_PREFIX    = 'opt:';
+const SESSION_COOKIE   = 'wordpress_logged_in_SESSION';
+const SESSION_KV_PREFIX= 'wp_session:';
+const RATE_LIMIT_WIN   = 60;
+const RATE_LIMIT_MAX   = 300;
+const RATE_LIMIT_MAX_W = 30;
+const DDOS_BAN_TTL     = 3600;
+const BOT_TARPIT_MS    = 5000;
 
-async function handlePostEdit(request, cp, opts = {}) {
-  const url      = cp.url;
-  const prefix   = cp.config.DB_PREFIX || 'cp_';
-  const method   = request.method.toUpperCase();
-  const postType = opts.post_type || url.searchParams.get('post_type') || 'post';
-  const postId   = parseInt(url.searchParams.get('post') || url.searchParams.get('page') || '0');
-  const lang     = await getOption(cp, 'WPLANG').catch(() => 'ko_KR') || 'ko_KR';
-  const L        = getLabels(lang);
+//  WAF  
+const WAF_SQLI = /('\s*(or|and)\s+'|--)|(union\s+select)|(;\s*(drop|delete|insert|update)\s)/i;
+const WAF_XSS  = /(<\s*script|javascript:|on\w+\s*=|<\s*iframe|<\s*object|<\s*embed|<\s*svg.*on\w+=|data:\s*text\/html)/i;
+const WAF_PATH = /(\.\.(\/|\\)|\/etc\/passwd|\/proc\/self|cmd\.exe|powershell|\/bin\/sh|\/bin\/bash)/i;
+const WAF_RFI  = /(https?:\/\/(?!(?:[\w-]+\.)?(?:cloudflare|cloudpress|wordpress)\.(?:com|net|org|site|dev))[\w.-]+\/.*\.(php|asp|aspx|jsp|cgi))/i;
 
-  let post    = null;
-  let notices = [];
-
-  // 기존 포스트 로드
-  if (postId) {
-    post = await cp.db.prepare(
-      `SELECT * FROM ${prefix}posts WHERE ID=? AND post_type=? LIMIT 1`
-    ).bind(postId, postType).first();
-    if (!post) notices.push({ type: 'error', message: L.postNotFound });
-  }
-
-  // ── POST 저장 처리 ──────────────────────────────────────
-  if (method === 'POST') {
-    const fd       = await request.formData().catch(() => new FormData());
-    const title    = (fd.get('post_title') || '').trim();
-    const content  = fd.get('post_content') || '';
-    const excerpt  = fd.get('post_excerpt') || '';
-    const slug     = (fd.get('post_name') || slugify(title)).trim();
-    const now      = new Date().toISOString().replace('T', ' ').slice(0, 19);
-    const authorId = cp.currentUser?.ID || 1;
-
-    // Scheduled publish support
-    const scheduledDate = fd.get('post_date') || '';
-    let postDate = now;
-    let status = fd.get('post_status') || 'draft';
-    if (scheduledDate) {
-      const sched = new Date(scheduledDate);
-      if (!isNaN(sched.getTime())) {
-        postDate = sched.toISOString().replace('T', ' ').slice(0, 19);
-        // If publish requested but date is in the future, set to 'future'
-        if (status === 'publish' && sched > new Date()) {
-          status = 'future';
-        }
-      }
-    }
-
-    // postmeta 저장 (커스텀 필드)
-    const metaKeys   = fd.getAll('meta_key[]');
-    const metaValues = fd.getAll('meta_value[]');
-    const metaIds    = fd.getAll('meta_id[]');
-
-    let savedPostId = postId;
-
-    if (!postId || !post) {
-      const result = await cp.db.prepare(`
-        INSERT INTO ${prefix}posts
-          (post_author, post_date, post_content, post_title, post_excerpt, post_status,
-           post_type, post_name, comment_status, ping_status, post_modified, post_date_gmt, post_modified_gmt)
-        VALUES (?,?,?,?,?,?,?,?,'open','open',?,?,?)
-      `).bind(authorId, postDate, content, title, excerpt, status, postType, slug, now, now, now).run();
-
-      savedPostId = result.meta?.last_row_id;
-      const redirectType = postType === 'page' ? 'page' : 'post';
-      // 메타 및 카테고리 저장 후 리다이렉트
-      await savePostMeta(cp, prefix, savedPostId, metaIds, metaKeys, metaValues);
-      await savePostCategories(cp, prefix, savedPostId, fd.getAll('post_category[]'));
-      await savePostTags(cp, prefix, savedPostId, fd.get('post_tags') || '');
-      return Response.redirect(
-        `${cp.url.origin}/cp-admin/${redirectType}?post=${savedPostId}&message=1`, 302
-      );
-    } else {
-      await cp.db.prepare(`
-        UPDATE ${prefix}posts SET
-          post_title=?, post_content=?, post_excerpt=?, post_status=?,
-          post_name=?, post_date=?, post_modified=?, post_modified_gmt=?
-        WHERE ID=?
-      `).bind(title, content, excerpt, status, slug, postDate, now, now, postId).run();
-
-      post = await cp.db.prepare(`SELECT * FROM ${prefix}posts WHERE ID=? LIMIT 1`).bind(postId).first();
-      await savePostMeta(cp, prefix, postId, metaIds, metaKeys, metaValues);
-      await savePostCategories(cp, prefix, postId, fd.getAll('post_category[]'));
-      await savePostTags(cp, prefix, postId, fd.get('post_tags') || '');
-      notices.push({ type: 'success', message: L.postUpdated });
-    }
-  }
-
-  const msg = url.searchParams.get('message');
-  if (msg === '1') notices.push({ type: 'success', message: L.postPublished });
-
-  // ── 데이터 로드 ──────────────────────────────────────────
-  let categories = [];
-  let postCategoryIds = new Set();
-  if (postType === 'post') {
-    // ── GET 데이터 병렬 로드 (Promise.all — CPU 절약) ─────────────────────
-  const [catsResult, assignedResult, metaResult, tagResult] = await Promise.all([
-    cp.db.prepare(
-      `SELECT t.term_id, t.name FROM ${prefix}terms t
-       JOIN ${prefix}term_taxonomy tt ON t.term_id = tt.term_id
-       WHERE tt.taxonomy = 'category'`
-    ).all().catch(() => ({ results: [] })),
-
-    postId ? cp.db.prepare(
-      `SELECT tt.term_id FROM ${prefix}term_relationships tr
-       JOIN ${prefix}term_taxonomy tt ON tr.term_taxonomy_id = tt.term_taxonomy_id
-       WHERE tr.object_id = ? AND tt.taxonomy = 'category'`
-    ).bind(postId).all().catch(() => ({ results: [] })) : Promise.resolve({ results: [] }),
-
-    postId ? cp.db.prepare(
-      `SELECT meta_id, meta_key, meta_value FROM ${prefix}postmeta
-       WHERE post_id = ? ORDER BY meta_id`
-    ).bind(postId).all().catch(() => ({ results: [] })) : Promise.resolve({ results: [] }),
-
-    postId ? cp.db.prepare(
-      `SELECT t.name FROM ${prefix}terms t
-       JOIN ${prefix}term_taxonomy tt ON t.term_id = tt.term_id
-       JOIN ${prefix}term_relationships tr ON tt.term_taxonomy_id = tr.term_taxonomy_id
-       WHERE tr.object_id = ? AND tt.taxonomy = 'post_tag'`
-    ).bind(postId).all().catch(() => ({ results: [] })) : Promise.resolve({ results: [] }),
-  ]);
-
-  categories     = catsResult.results || [];
-  postCategoryIds = new Set((assignedResult.results || []).map(r => String(r.term_id)));
-  let postMetas   = (metaResult.results || []).filter(m => !String(m.meta_key).startsWith('_'));
-  let existingTags = (tagResult.results || []).map(r => r.name);
-
-  const isNew     = !postId || !post;
-  const typeLabel = postType === 'page' ? L.page : L.post;
-  const listHref  = postType === 'page' ? '/cp-admin/edit?post_type=page' : '/cp-admin/edit';
-
-  // ── HTML 렌더링 ──────────────────────────────────────────
-
-  const pageContent = `
-<style>
-/* ── 메타박스 시스템 ── */
-.metabox-holder{display:grid;grid-template-columns:1fr 282px;gap:20px;align-items:start}
-.metabox{background:#fff;border:1px solid #dcdcde;border-radius:4px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,.07)}
-.metabox-title{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;cursor:pointer;user-select:none;border-bottom:1px solid #dcdcde;background:#f9f9f9;border-radius:4px 4px 0 0}
-.metabox-title h3{margin:0;font-size:13px;font-weight:600;color:#1d2327}
-.metabox-toggle{font-size:10px;color:#646970;transition:transform .2s}
-.metabox.closed .metabox-toggle{transform:rotate(-90deg)}
-.metabox.closed .metabox-body{display:none}
-.metabox-body{padding:14px}
-/* 제목 영역 */
-#titlediv{background:#fff;border:1px solid #dcdcde;border-radius:4px;margin-bottom:20px;padding:0;box-shadow:0 1px 3px rgba(0,0,0,.07)}
-#title{width:100%;border:none;padding:16px 20px;font-size:22px;font-weight:600;outline:none;color:#1d2327;border-radius:4px;font-family:inherit}
-#titlediv .permalink-row{padding:6px 20px 10px;font-size:13px;color:#646970;border-top:1px solid #f0f0f1}
-#titlediv .permalink-row a{color:#2271b1;text-decoration:none}
-#titlediv .permalink-row a:hover{text-decoration:underline}
-/* ── 블록 에디터 ── */
-#wp-content-editor-tools{padding:8px 12px;border-bottom:1px solid #dcdcde;display:flex;gap:4px;flex-wrap:wrap;background:#f9f9f9;align-items:center}
-.toolbar-btn{padding:4px 8px;border:1px solid #dcdcde;border-radius:3px;background:#fff;cursor:pointer;font-size:13px;line-height:1.4;transition:.1s;position:relative}
-.toolbar-btn:hover{background:#f0f0f1;border-color:#8c8f94}
-.toolbar-btn.active{background:#e0e0e0}
-.toolbar-sep{width:1px;background:#dcdcde;margin:2px 4px;align-self:stretch}
-/* 블록 컨테이너 */
-#block-editor-wrap{position:relative;min-height:420px}
-#block-editor{min-height:420px;padding:16px 20px 60px;outline:none;font-size:15px;line-height:1.8;color:#1d2327;cursor:text}
-#block-editor:focus{outline:none}
-#block-editor [data-block]{position:relative;margin:0 0 4px;border-radius:4px;transition:.1s}
-#block-editor [data-block]:hover{outline:1px dashed #dcdcde}
-#block-editor [data-block]:focus-within{outline:2px solid rgba(34,113,177,.25)}
-/* 블록 타입별 스타일 */
-#block-editor p{margin:0 0 2px;padding:4px 0}
-#block-editor h1{font-size:2rem;font-weight:800;margin:8px 0 4px;line-height:1.2}
-#block-editor h2{font-size:1.5rem;font-weight:700;margin:8px 0 4px}
-#block-editor h3{font-size:1.25rem;font-weight:700;margin:6px 0 4px}
-#block-editor h4{font-size:1.1rem;font-weight:700;margin:6px 0 4px}
-#block-editor h5{font-size:1rem;font-weight:700;margin:4px 0}
-#block-editor h6{font-size:.9rem;font-weight:700;margin:4px 0;color:#646970}
-#block-editor blockquote{border-left:4px solid #2271b1;margin:8px 0;padding:8px 16px;background:#f8f9fa;border-radius:0 4px 4px 0;color:#3c434a}
-#block-editor pre{background:#1d2327;color:#e0e0e0;padding:14px 16px;border-radius:4px;font-family:monospace;font-size:13px;overflow-x:auto;margin:8px 0}
-#block-editor code{background:#f0f0f1;padding:2px 6px;border-radius:3px;font-family:monospace;font-size:13px}
-#block-editor hr{border:none;border-top:2px solid #dcdcde;margin:16px 0}
-#block-editor ul,#block-editor ol{padding-left:24px;margin:4px 0}
-#block-editor li{padding:2px 0}
-#block-editor img{max-width:100%;border-radius:4px;display:block;margin:8px 0}
-#block-editor .cp-block-button-wrap{margin:8px 0}
-#block-editor .cp-block-btn{display:inline-block;background:#2271b1;color:#fff;padding:10px 22px;border-radius:4px;text-decoration:none;font-size:15px;font-weight:500;cursor:default}
-#block-editor table{width:100%;border-collapse:collapse;margin:8px 0}
-#block-editor table td,#block-editor table th{border:1px solid #dcdcde;padding:8px 12px;font-size:14px}
-#block-editor table th{background:#f0f0f1;font-weight:600}
-/* 슬래시 커맨드 팝업 */
-#slash-menu{position:absolute;background:#fff;border:1px solid #dcdcde;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:260px;max-height:320px;overflow-y:auto;z-index:999;display:none}
-#slash-menu.visible{display:block}
-.slash-menu-item{display:flex;align-items:center;gap:10px;padding:8px 14px;cursor:pointer;transition:.1s;font-size:13px}
-.slash-menu-item:hover,.slash-menu-item.selected{background:#f0f6ff}
-.slash-menu-icon{font-size:18px;width:28px;text-align:center;flex-shrink:0}
-.slash-menu-label{font-weight:600;color:#1d2327}
-.slash-menu-desc{font-size:11px;color:#646970;margin-top:1px}
-.slash-menu-section{padding:6px 14px 4px;font-size:11px;font-weight:700;color:#646970;text-transform:uppercase;letter-spacing:.5px;border-top:1px solid #f0f0f1;margin-top:4px}
-.slash-menu-section:first-child{border-top:none;margin-top:0}
-/* 블록 추가 힌트 */
-.cp-block-hint{display:flex;align-items:center;gap:8px;padding:10px 4px;color:#c3c4c7;font-size:14px;cursor:text;user-select:none}
-.cp-block-hint:hover{color:#8c8f94}
-.cp-block-add-btn{width:24px;height:24px;border-radius:50%;border:1.5px solid #c3c4c7;background:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;color:#c3c4c7;transition:.15s;flex-shrink:0}
-.cp-block-add-btn:hover{border-color:#2271b1;color:#2271b1;background:rgba(34,113,177,.05)}
-/* HTML 뷰 */
-#editor-html{display:none;width:100%;min-height:420px;padding:20px;border:none;font-family:'JetBrains Mono','Fira Code',monospace;font-size:13px;resize:vertical;outline:none;color:#1d2327;line-height:1.7;background:#fafafa}
-/* 커스텀 필드 */
-#custom-fields-table{width:100%;border-collapse:collapse;font-size:13px}
-#custom-fields-table th{text-align:left;padding:6px 8px;background:#f0f0f1;font-weight:600;border:1px solid #dcdcde}
-#custom-fields-table td{padding:6px 8px;border:1px solid #dcdcde;vertical-align:top}
-#custom-fields-table input{width:100%;border:1px solid #dcdcde;border-radius:3px;padding:4px 6px;font-size:13px}
-#custom-fields-table textarea{width:100%;border:1px solid #dcdcde;border-radius:3px;padding:4px 6px;font-size:13px;resize:vertical;min-height:48px}
-/* Publish 박스 */
-.publish-actions{display:flex;gap:8px;margin-top:12px}
-.publish-actions .cp-btn{flex:1;justify-content:center}
-.post-meta-info{margin-top:10px;padding-top:10px;border-top:1px solid #dcdcde;font-size:12px;color:#646970;line-height:1.8}
-</style>
-
-<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
-  <a href="${listHref}" style="color:#2271b1;text-decoration:none;font-size:13px">&larr; ${L.allItems(typeLabel)}</a>
-  ${post && post.post_status === 'publish' ? `<a href="/${post.post_name || '?p='+post.ID}" target="_blank" class="cp-btn cp-btn-secondary" style="font-size:12px;padding:4px 10px">${L.viewItem(typeLabel)}</a>` : ''}
-</div>
-
-<form method="post" id="post-form">
-
-<!-- 제목 -->
-<div id="titlediv">
-  <input type="text" name="post_title" id="title"
-         value="${esc(post?.post_title || '')}"
-         placeholder="${L.addTitle}">
-  ${post?.post_name ? `
-  <div class="permalink-row">
-    ${L.permalink}: <a href="/${esc(post.post_name)}" target="_blank">${esc(post.post_name)}</a>
-    &nbsp;<a href="#" onclick="document.getElementById('slug-edit').style.display='inline';return false">${L.editSlug}</a>
-  </div>` : ''}
-</div>
-
-<div class="metabox-holder">
-
-  <!-- ── 좌측 컬럼 ── -->
-  <div id="postbox-container-2">
-
-    <!-- 에디터 메타박스 -->
-    <div class="metabox" id="postdivrich">
-      <div class="metabox-title" onclick="toggleMetabox(this)">
-        <h3>${L.content}</h3>
-        <span class="metabox-toggle">&#9660;</span>
-      </div>
-      <div class="metabox-body" style="padding:0">
-        <div id="wp-content-editor-tools">
-          <button type="button" class="toolbar-btn" onclick="execFmt('bold')" title="굵게"><b>B</b></button>
-          <button type="button" class="toolbar-btn" onclick="execFmt('italic')" title="기울임"><i>I</i></button>
-          <button type="button" class="toolbar-btn" onclick="execFmt('underline')" title="밑줄"><u>U</u></button>
-          <button type="button" class="toolbar-btn" onclick="execFmt('strikeThrough')" title="취소선"><s>S</s></button>
-          <div class="toolbar-sep"></div>
-          <button type="button" class="toolbar-btn" onclick="insertLink2()" title="링크">🔗</button>
-          <button type="button" class="toolbar-btn" onclick="insertImage2()" title="이미지">🖼</button>
-          <div class="toolbar-sep"></div>
-          <button type="button" class="toolbar-btn" onclick="execFmt('removeFormat')" title="서식 제거" style="font-size:11px">Tx</button>
-          <div style="flex:1"></div>
-          <button type="button" class="toolbar-btn" id="btn-visual" onclick="switchEditorTab('visual')" style="background:#e0e0e0" title="비주얼 편집">비주얼</button>
-          <button type="button" class="toolbar-btn" id="btn-html" onclick="switchEditorTab('html')" title="HTML 편집">HTML</button>
-        </div>
-        <div id="block-editor-wrap">
-          <div id="block-editor" contenteditable="true" spellcheck="true"></div>
-          <div id="slash-menu" role="listbox" aria-label="블록 선택"></div>
-        </div>
-        <textarea id="editor-html" name="post_content">${esc(post?.post_content || '')}</textarea>
-      </div>
-    </div>
-
-    <!-- 발췌문 메타박스 -->
-    <div class="metabox" id="postexcerpt">
-      <div class="metabox-title" onclick="toggleMetabox(this)">
-        <h3>${L.excerpt}</h3>
-        <span class="metabox-toggle">&#9660;</span>
-      </div>
-      <div class="metabox-body">
-        <textarea name="post_excerpt" rows="3" class="cp-form-textarea" style="max-width:100%;width:100%"
-                  placeholder="${L.excerptPlaceholder}">${esc(post?.post_excerpt || '')}</textarea>
-        <p class="cp-description">${L.excerptDesc}</p>
-      </div>
-    </div>
-
-    <!-- 슬러그 메타박스 -->
-    <div class="metabox" id="slugdiv">
-      <div class="metabox-title" onclick="toggleMetabox(this)">
-        <h3>${L.slug}</h3>
-        <span class="metabox-toggle">&#9660;</span>
-      </div>
-      <div class="metabox-body">
-        <input type="text" name="post_name" class="cp-form-input" style="max-width:100%;width:100%"
-               id="post_name" value="${esc(post?.post_name || '')}"
-               placeholder="${L.slugPlaceholder}">
-        <p class="cp-description">${L.slugDesc}</p>
-      </div>
-    </div>
-
-    <!-- 커스텀 필드 메타박스 -->
-    <div class="metabox closed" id="postcustom">
-      <div class="metabox-title" onclick="toggleMetabox(this)">
-        <h3>${L.customFields}</h3>
-        <span class="metabox-toggle">&#9660;</span>
-      </div>
-      <div class="metabox-body">
-        <table id="custom-fields-table">
-          <thead>
-            <tr>
-              <th style="width:35%">${L.name}</th>
-              <th>${L.value}</th>
-              <th style="width:60px">${L.delete}</th>
-            </tr>
-          </thead>
-          <tbody id="custom-fields-body">
-            ${postMetas.map((m, idx) => `
-            <tr id="meta-row-${m.meta_id}">
-              <td>
-                <input type="hidden" name="meta_id[]" value="${esc(String(m.meta_id))}">
-                <input type="text" name="meta_key[]" value="${esc(m.meta_key)}" placeholder="${L.key}">
-              </td>
-              <td>
-                <textarea name="meta_value[]" rows="2">${esc(m.meta_value || '')}</textarea>
-              </td>
-              <td style="text-align:center">
-                <button type="button" class="cp-btn cp-btn-danger" style="padding:3px 8px;font-size:12px"
-                        onclick="removeMetaRow(this)">&times;</button>
-              </td>
-            </tr>`).join('')}
-          </tbody>
-        </table>
-        <div style="margin-top:12px;padding-top:12px;border-top:1px solid #dcdcde">
-          <strong style="font-size:13px">${L.addNewField}</strong>
-          <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:8px;margin-top:8px;align-items:start">
-            <input type="text" id="new-meta-key" placeholder="${L.key}" class="cp-form-input" style="max-width:100%">
-            <textarea id="new-meta-value" rows="2" class="cp-form-textarea" placeholder="${L.value}" style="max-width:100%;width:100%"></textarea>
-            <button type="button" class="cp-btn" style="align-self:start" onclick="addMetaRow()">${L.add}</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-  </div><!-- /postbox-container-2 -->
-
-  <!-- ── 우측 사이드바 ── -->
-  <div id="postbox-container-1">
-
-    <!-- Publish 메타박스 -->
-    <div class="metabox" id="submitdiv">
-      <div class="metabox-title" onclick="toggleMetabox(this)">
-        <h3>${L.publish}</h3>
-        <span class="metabox-toggle">&#9660;</span>
-      </div>
-      <div class="metabox-body">
-        <div style="margin-bottom:10px">
-          <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px">${L.status}</label>
-          <select name="post_status" id="post_status_select" class="cp-form-select" style="max-width:100%;width:100%" onchange="onStatusChange(this.value)">
-            <option value="draft"   ${(post?.post_status || 'draft') === 'draft'   ? 'selected' : ''}>${L.draft}</option>
-            <option value="publish" ${(post?.post_status === 'publish' || post?.post_status === 'future') ? 'selected' : ''}>${L.published}</option>
-            <option value="private" ${post?.post_status === 'private' ? 'selected' : ''}>${L.private}</option>
-            <option value="pending" ${post?.post_status === 'pending' ? 'selected' : ''}>${L.pendingReview}</option>
-          </select>
-        </div>
-        <!-- 예약 발행 날짜 선택 -->
-        <div id="schedule-date-wrap" style="margin-bottom:10px;${(post?.post_status === 'future') ? '' : 'display:none'}">
-          <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px">&#128197; ${L.scheduleFor || '예약 발행 시간'}</label>
-          <input type="datetime-local" name="post_date" id="post_date_input"
-                 class="cp-form-input" style="width:100%"
-                 value="${post?.post_date ? post.post_date.replace(' ','T').slice(0,16) : ''}">
-          <p class="cp-description" style="margin-top:4px">${L.scheduleDesc || '미래 날짜를 선택하면 자동 예약 발행됩니다.'}</p>
-        </div>
-        <div class="publish-actions">
-          <button type="button" class="cp-btn cp-btn-secondary"
-                  onclick="document.querySelector('[name=post_status]').value='draft';document.getElementById('post-form').submit()">
-            ${L.saveDraft}
-          </button>
-          <button type="button" class="cp-btn" id="publish-btn"
-                  onclick="submitPublish()">
-            ${post?.post_status === 'future' ? (L.scheduled || '예약됨') : (isNew ? L.publish : L.update)}
-          </button>
-        </div>
-        ${post ? `
-        <div class="post-meta-info">
-          <div>${L.created}: ${esc(formatDate(post.post_date))}</div>
-          <div>${L.modified}: ${esc(formatDate(post.post_modified))}</div>
-          <div>ID: ${post.ID}</div>
-        </div>` : ''}
-      </div>
-    </div>
-
-    <!-- 카테고리 메타박스 (post only) -->
-    ${postType === 'post' ? `
-    <div class="metabox" id="categorydiv">
-      <div class="metabox-title" onclick="toggleMetabox(this)">
-        <h3>${L.categories}</h3>
-        <span class="metabox-toggle">&#9660;</span>
-      </div>
-      <div class="metabox-body">
-        ${categories.length ? `
-        <div style="max-height:180px;overflow-y:auto;margin-bottom:8px">
-          ${categories.map(cat => `
-            <label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;cursor:pointer">
-              <input type="checkbox" name="post_category[]" value="${cat.term_id}" ${postCategoryIds.has(String(cat.term_id)) ? 'checked' : ''}>
-              ${esc(cat.name)}
-            </label>
-          `).join('')}
-        </div>` : `<p style="color:#646970;font-size:13px">${L.noCategories}</p>`}
-        <div style="border-top:1px solid #dcdcde;padding-top:10px;font-size:12px">
-          <a href="/cp-admin/edit-tags?taxonomy=category" style="color:#2271b1">${L.manageCategories}</a>
-        </div>
-      </div>
-    </div>` : ''}
-
-    <!-- 태그 메타박스 (post only) -->
-    ${postType === 'post' ? `
-    <div class="metabox" id="tagsdiv-post_tag">
-      <div class="metabox-title" onclick="toggleMetabox(this)">
-        <h3>${L.tags}</h3>
-        <span class="metabox-toggle">&#9660;</span>
-      </div>
-      <div class="metabox-body">
-        <div style="display:flex;gap:6px;margin-bottom:8px">
-          <input type="text" id="tag-input" class="cp-form-input" style="flex:1;max-width:none"
-                 placeholder="${L.tagsPlaceholder}" onkeydown="if(event.key==='Enter'){event.preventDefault();addTag()}">
-          <button type="button" class="cp-btn cp-btn-secondary" onclick="addTag()">${L.add}</button>
-        </div>
-        <div id="tag-cloud" style="min-height:32px;display:flex;flex-wrap:wrap;gap:4px"></div>
-        <input type="hidden" name="post_tags" id="post_tags_input" value="">
-        <p class="cp-description" style="margin-top:8px">${L.tagsDesc}</p>
-      </div>
-    </div>` : ''}
-
-    <!-- 특성 이미지 메타박스 -->
-    <div class="metabox" id="postimagediv">
-      <div class="metabox-title" onclick="toggleMetabox(this)">
-        <h3>${L.featuredImage}</h3>
-        <span class="metabox-toggle">&#9660;</span>
-      </div>
-      <div class="metabox-body">
-        <div id="featured-image-wrap">
-          <div style="background:#f0f0f1;border:2px dashed #dcdcde;border-radius:4px;padding:20px;text-align:center;color:#646970;font-size:13px;cursor:pointer"
-               onclick="setFeaturedImage()">
-            <div style="font-size:28px;margin-bottom:6px">&#128247;</div>
-            <a style="color:#2271b1">${L.setFeaturedImage}</a>
-          </div>
-        </div>
-        <input type="hidden" name="meta_featured_image" id="featured-image-url" value="">
-      </div>
-    </div>
-
-    <!-- 페이지 속성 메타박스 (page only) -->
-    ${postType === 'page' ? `
-    <div class="metabox" id="pageparentdiv">
-      <div class="metabox-title" onclick="toggleMetabox(this)">
-        <h3>${L.pageAttributes}</h3>
-        <span class="metabox-toggle">&#9660;</span>
-      </div>
-      <div class="metabox-body">
-        <div style="margin-bottom:10px">
-          <label style="font-size:13px;font-weight:600;display:block;margin-bottom:4px">${L.template}</label>
-          <select name="page_template" class="cp-form-select" style="width:100%;max-width:100%">
-            <option value="default">${L.defaultTemplate}</option>
-            <option value="full-width">${L.fullWidth}</option>
-            <option value="sidebar-left">${L.sidebarLeft}</option>
-            <option value="blank">${L.blankTemplate}</option>
-          </select>
-        </div>
-        <div>
-          <label style="font-size:13px;font-weight:600;display:block;margin-bottom:4px">${L.order}</label>
-          <input type="number" name="menu_order" class="cp-form-input" style="max-width:80px"
-                 value="${esc(String(post?.menu_order || 0))}">
-          <p class="cp-description">${L.orderDesc}</p>
-        </div>
-      </div>
-    </div>` : ''}
-
-  </div><!-- /postbox-container-1 -->
-</div><!-- /metabox-holder -->
-</form>
-
-<script>
-// ═══════════════════════════════════════════════════════════════
-// CloudPress 블록 에디터 — / 슬래시 커맨드
-// ═══════════════════════════════════════════════════════════════
-
-const editor = document.getElementById('block-editor');
-const slashMenu = document.getElementById('slash-menu');
-let editorMode = 'visual';
-let slashQuery = '';
-let slashRange = null;
-let selectedIdx = 0;
-
-// ── 초기화: 기존 콘텐츠 로드 ─────────────────────────────────
-(function initEditor() {
-  const raw = document.getElementById('editor-html').value;
-  if (raw.trim()) {
-    editor.innerHTML = raw;
-  } else {
-    insertEmptyParagraph();
-  }
-  // 각 블록에 data-block 속성 부여
-  normalizeBlocks();
-})();
-
-function insertEmptyParagraph() {
-  const p = document.createElement('p');
-  p.setAttribute('data-block', 'paragraph');
-  p.innerHTML = '<br>';
-  editor.appendChild(p);
-  placeCursorIn(p);
+function esc(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
-function normalizeBlocks() {
-  Array.from(editor.childNodes).forEach(node => {
-    if (node.nodeType === 3 && node.textContent.trim()) {
-      // 텍스트 노드 → p로 래핑
-      const p = document.createElement('p');
-      p.setAttribute('data-block', 'paragraph');
-      p.textContent = node.textContent;
-      editor.replaceChild(p, node);
-    } else if (node.nodeType === 1 && !node.getAttribute('data-block')) {
-      node.setAttribute('data-block', guessBlockType(node));
-    }
-  });
-}
-
-function guessBlockType(el) {
-  const tag = el.tagName?.toLowerCase();
-  if (/^h[1-6]$/.test(tag)) return 'heading';
-  if (tag === 'blockquote') return 'quote';
-  if (tag === 'pre') return 'code';
-  if (tag === 'ul') return 'list';
-  if (tag === 'ol') return 'list-ordered';
-  if (tag === 'hr') return 'separator';
-  if (tag === 'table') return 'table';
-  if (tag === 'figure' || tag === 'img') return 'image';
-  return 'paragraph';
-}
-
-// ── 블록 정의 ─────────────────────────────────────────────────
-const BLOCKS = [
-  { group: '텍스트', items: [
-    { id: 'paragraph',   icon: '¶',   label: '단락',           desc: '일반 텍스트 단락',         key: ['p','단락','paragraph','텍스트'] },
-    { id: 'h1',          icon: 'H1',  label: '제목 1 (H1)',    desc: '가장 큰 제목',             key: ['h1','제목1','heading1'] },
-    { id: 'h2',          icon: 'H2',  label: '제목 2 (H2)',    desc: '큰 제목',                  key: ['h2','제목2','heading2'] },
-    { id: 'h3',          icon: 'H3',  label: '제목 3 (H3)',    desc: '중간 제목',                key: ['h3','제목3','heading3'] },
-    { id: 'h4',          icon: 'H4',  label: '제목 4 (H4)',    desc: '작은 제목',                key: ['h4','제목4','heading4'] },
-    { id: 'h5',          icon: 'H5',  label: '제목 5 (H5)',    desc: '더 작은 제목',             key: ['h5','제목5','heading5'] },
-    { id: 'h6',          icon: 'H6',  label: '제목 6 (H6)',    desc: '가장 작은 제목',           key: ['h6','제목6','heading6'] },
-    { id: 'quote',       icon: '❝',   label: '인용구',         desc: '인용 블록',                key: ['인용','quote','blockquote','bq'] },
-    { id: 'pullquote',   icon: '❞',   label: '풀 인용구',      desc: '강조된 인용 블록',         key: ['풀인용','pullquote'] },
-    { id: 'verse',       icon: '🎵',  label: '시/운문',        desc: '들여쓰기와 줄바꿈 유지',   key: ['시','verse','poem'] },
-    { id: 'preformatted',icon: '</>',  label: '서식 있는 텍스트',desc: '공백·줄바꿈 그대로 표시', key: ['pre','서식','preformatted'] },
-    { id: 'code',        icon: '{}',  label: '코드 블록',      desc: '프로그래밍 코드',          key: ['code','코드','코드블록'] },
-    { id: 'details',     icon: '▾',   label: '세부 정보',      desc: '접고 펼칠 수 있는 블록',   key: ['details','접기','accordion'] },
-    { id: 'footnotes',   icon: '†',   label: '각주',           desc: '페이지 하단 각주',         key: ['footnote','각주'] },
-  ]},
-  { group: '목록', items: [
-    { id: 'list',           icon: '•',  label: '글머리 목록',   desc: '순서 없는 목록 (ul)',       key: ['ul','목록','list','bullet'] },
-    { id: 'list-ordered',   icon: '1.', label: '번호 목록',     desc: '순서 있는 목록 (ol)',       key: ['ol','번호','ordered','numbered'] },
-  ]},
-  { group: '미디어', items: [
-    { id: 'image',        icon: '🖼',  label: '이미지',         desc: 'URL 또는 업로드로 이미지', key: ['img','이미지','image','사진'] },
-    { id: 'gallery',      icon: '🖼🖼', label: '갤러리',        desc: '여러 이미지 그리드',        key: ['gallery','갤러리'] },
-    { id: 'video',        icon: '▶',  label: '동영상',          desc: 'YouTube/Vimeo 임베드',     key: ['video','영상','youtube','vimeo'] },
-    { id: 'audio',        icon: '🎵',  label: '오디오',         desc: '오디오 파일 삽입',          key: ['audio','오디오','소리'] },
-    { id: 'file',         icon: '📎',  label: '파일',           desc: '다운로드 파일 링크',        key: ['file','파일','download','다운로드'] },
-    { id: 'media-text',   icon: '📰',  label: '미디어 & 텍스트',desc: '이미지+텍스트 나란히',      key: ['media','미디어텍스트','media-text'] },
-  ]},
-  { group: '디자인', items: [
-    { id: 'button',      icon: '🔘', label: '버튼',            desc: '클릭 버튼',                key: ['btn','버튼','button','link'] },
-    { id: 'buttons',     icon: '🔘🔘',label: '버튼 그룹',      desc: '여러 버튼 묶음',            key: ['buttons','버튼그룹'] },
-    { id: 'table',       icon: '⊞',  label: '표 (Table)',      desc: '데이터 테이블',             key: ['table','표','grid','테이블'] },
-    { id: 'separator',   icon: '—',  label: '구분선',          desc: '수평 구분선 (hr)',          key: ['hr','구분','separator','divider','---'] },
-    { id: 'spacer',      icon: '↕',  label: '공백',            desc: '수직 여백 추가',            key: ['spacer','공백','space'] },
-    { id: 'columns',     icon: '⋮⋮', label: '열 (Columns)',    desc: '여러 열 레이아웃',          key: ['columns','열','col','2열','3열'] },
-    { id: 'group',       icon: '🗂',  label: '그룹',            desc: '블록들을 그룹으로 묶기',    key: ['group','그룹','container'] },
-    { id: 'cover',       icon: '🎨',  label: '커버',            desc: '배경 이미지 위에 텍스트',   key: ['cover','커버','hero'] },
-    { id: 'html',        icon: '<>', label: '커스텀 HTML',      desc: '순수 HTML 직접 입력',       key: ['html','raw','커스텀'] },
-  ]},
-  { group: '위젯', items: [
-    { id: 'shortcode',   icon: '[…]', label: '단축코드',        desc: '단축코드 (Shortcode)',      key: ['shortcode','단축코드','short'] },
-    { id: 'archives',    icon: '📅',  label: '아카이브',        desc: '월별 아카이브 목록',        key: ['archives','아카이브','월별'] },
-    { id: 'categories',  icon: '🏷',  label: '카테고리',        desc: '카테고리 목록',             key: ['category','카테고리'] },
-    { id: 'tag-cloud',   icon: '☁',  label: '태그 클라우드',   desc: '태그 구름',                 key: ['tags','태그','tag-cloud','tagcloud'] },
-    { id: 'search',      icon: '🔍',  label: '검색',            desc: '검색 폼 위젯',              key: ['search','검색'] },
-    { id: 'latest-posts',icon: '📝',  label: '최신 글',         desc: '최근 게시글 목록',          key: ['recent','posts','최신글','latest'] },
-    { id: 'calendar',    icon: '📅',  label: '달력',            desc: '게시글 달력',               key: ['calendar','달력'] },
-    { id: 'rss',         icon: '📡',  label: 'RSS 피드',        desc: '외부 RSS 피드 표시',        key: ['rss','피드','feed'] },
-    { id: 'social-links',icon: '🌐',  label: '소셜 링크',       desc: 'SNS 링크 모음',             key: ['social','소셜','sns'] },
-    { id: 'embed',       icon: '🔗',  label: '임베드',          desc: '외부 콘텐츠 삽입',          key: ['embed','임베드','oembed'] },
-  ]},
-];
-
-// ── 블록 삽입 ─────────────────────────────────────────────────
-function insertBlock(blockId) {
-  hideSlashMenu();
-
-  // 슬래시 텍스트 노드 제거
-  if (slashRange) {
-    try {
-      const node = slashRange.startContainer;
-      if (node.nodeType === 3) {
-        const text = node.textContent;
-        const slashPos = text.lastIndexOf('/');
-        if (slashPos !== -1) {
-          node.textContent = text.slice(0, slashPos);
-        }
-      }
-    } catch(_) {}
-  }
-
-  // 현재 빈 블록 또는 새 위치 결정
-  const sel = window.getSelection();
-  let currentBlock = sel?.anchorNode?.closest?.('[data-block]') || editor.lastElementChild;
-
-  let newEl = null;
-
-  switch (blockId) {
-    case 'paragraph':
-      newEl = makeBlock('p', 'paragraph', '');
-      break;
-    case 'h1': case 'h2': case 'h3': case 'h4': case 'h5': case 'h6':
-      newEl = makeBlock(blockId, 'heading', '');
-      break;
-    case 'quote':
-      newEl = makeBlock('blockquote', 'quote', '인용문을 입력하세요…');
-      break;
-    case 'preformatted':
-      newEl = makeBlock('pre', 'preformatted', '');
-      break;
-    case 'list':
-      newEl = document.createElement('ul');
-      newEl.setAttribute('data-block', 'list');
-      newEl.innerHTML = '<li>목록 항목</li>';
-      break;
-    case 'list-ordered':
-      newEl = document.createElement('ol');
-      newEl.setAttribute('data-block', 'list-ordered');
-      newEl.innerHTML = '<li>목록 항목</li>';
-      break;
-    case 'separator':
-      newEl = document.createElement('hr');
-      newEl.setAttribute('data-block', 'separator');
-      newEl.contentEditable = 'false';
-      break;
-    case 'image': {
-      const src = prompt('이미지 URL을 입력하세요:');
-      if (!src) return;
-      const alt = prompt('대체 텍스트 (선택):') || '';
-      newEl = document.createElement('figure');
-      newEl.setAttribute('data-block', 'image');
-      newEl.innerHTML = \`<img src="${src}" alt="${alt}" style="max-width:100%;border-radius:4px">\`;
-      break;
-    }
-    case 'video': {
-      const vurl = prompt('YouTube/Vimeo URL을 입력하세요:');
-      if (!vurl) return;
-      const vid = extractVideoId(vurl);
-      newEl = document.createElement('figure');
-      newEl.setAttribute('data-block', 'video');
-      newEl.innerHTML = vid
-        ? \`<iframe src="https://www.youtube.com/embed/${vid}" width="100%" height="315" frameborder="0" allowfullscreen style="border-radius:4px;display:block"></iframe>\`
-        : \`<a href="${vurl}" target="_blank">${vurl}</a>\`;
-      break;
-    }
-    case 'button': {
-      const txt = prompt('버튼 텍스트:', '자세히 보기') || '자세히 보기';
-      const href = prompt('링크 URL:', '#') || '#';
-      newEl = document.createElement('div');
-      newEl.setAttribute('data-block', 'button');
-      newEl.className = 'cp-block-button-wrap';
-      newEl.innerHTML = \`<a href="${href}" class="cp-block-btn">${txt}</a>\`;
-      break;
-    }
-    case 'table': {
-      const cols = parseInt(prompt('열 수:', '3') || '3');
-      const rows = parseInt(prompt('행 수 (헤더 포함):', '3') || '3');
-      newEl = document.createElement('table');
-      newEl.setAttribute('data-block', 'table');
-      let html = '<thead><tr>' + Array(cols).fill(0).map((_,i) => \`<th contenteditable="true">제목 ${i+1}</th>\`).join('') + '</tr></thead><tbody>';
-      for (let r = 1; r < rows; r++) {
-        html += '<tr>' + Array(cols).fill(0).map(() => '<td contenteditable="true">내용</td>').join('') + '</tr>';
-      }
-      html += '</tbody>';
-      newEl.innerHTML = html;
-      break;
-    }
-    case 'code': {
-      newEl = document.createElement('pre');
-      newEl.setAttribute('data-block', 'code');
-      newEl.innerHTML = '<code>// 코드를 입력하세요</code>';
-      break;
-    }
-    case 'html': {
-      const rawHtml = prompt('HTML 코드를 입력하세요:');
-      if (!rawHtml) return;
-      newEl = document.createElement('div');
-      newEl.setAttribute('data-block', 'html');
-      newEl.innerHTML = rawHtml;
-      break;
-    }
-    case 'pullquote': {
-      newEl = document.createElement('blockquote');
-      newEl.setAttribute('data-block', 'pullquote');
-      newEl.className = 'cp-pullquote';
-      newEl.setAttribute('contenteditable', 'true');
-      newEl.textContent = '강조하고 싶은 인용문을 입력하세요…';
-      break;
-    }
-    case 'verse': {
-      newEl = document.createElement('pre');
-      newEl.setAttribute('data-block', 'verse');
-      newEl.className = 'cp-verse';
-      newEl.setAttribute('contenteditable', 'true');
-      newEl.textContent = '시 또는 운문을 입력하세요…';
-      break;
-    }
-    case 'details': {
-      newEl = document.createElement('details');
-      newEl.setAttribute('data-block', 'details');
-      newEl.innerHTML = '<summary contenteditable="true">클릭하여 펼치기</summary><div contenteditable="true" style="padding:8px 0">내용을 입력하세요…</div>';
-      break;
-    }
-    case 'footnotes': {
-      newEl = document.createElement('div');
-      newEl.setAttribute('data-block', 'footnotes');
-      newEl.className = 'cp-footnotes';
-      newEl.innerHTML = '<sup>1</sup> <span contenteditable="true">각주 내용을 입력하세요.</span>';
-      break;
-    }
-    case 'gallery': {
-      const urls = [];
-      for (let gi = 0; gi < 3; gi++) {
-        const u = prompt(\`이미지 \${gi+1} URL (없으면 빈칸):\`);
-        if (u) urls.push(u); else break;
-      }
-      newEl = document.createElement('div');
-      newEl.setAttribute('data-block', 'gallery');
-      newEl.className = 'cp-gallery';
-      newEl.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px';
-      newEl.innerHTML = urls.map(u => \`<img src="\${u}" style="width:100%;height:120px;object-fit:cover;border-radius:4px">\`).join('');
-      break;
-    }
-    case 'audio': {
-      const asrc = prompt('오디오 파일 URL:');
-      if (!asrc) return;
-      newEl = document.createElement('figure');
-      newEl.setAttribute('data-block', 'audio');
-      newEl.innerHTML = \`<audio controls style="width:100%"><source src="\${asrc}"></audio>\`;
-      break;
-    }
-    case 'file': {
-      const furl = prompt('파일 URL:');
-      if (!furl) return;
-      const flabel = prompt('링크 텍스트:', '파일 다운로드') || '파일 다운로드';
-      newEl = document.createElement('div');
-      newEl.setAttribute('data-block', 'file');
-      newEl.innerHTML = \`<a href="\${furl}" download style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:#f0f0f1;border-radius:4px;text-decoration:none;color:#1d2327">📎 \${flabel}</a>\`;
-      break;
-    }
-    case 'media-text': {
-      const msrc = prompt('이미지 URL:');
-      newEl = document.createElement('div');
-      newEl.setAttribute('data-block', 'media-text');
-      newEl.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:center';
-      newEl.innerHTML = msrc
-        ? \`<img src="\${msrc}" style="width:100%;border-radius:4px"><div contenteditable="true">텍스트를 입력하세요…</div>\`
-        : \`<div style="background:#f0f0f1;height:120px;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#666">이미지</div><div contenteditable="true">텍스트를 입력하세요…</div>\`;
-      break;
-    }
-    case 'buttons': {
-      newEl = document.createElement('div');
-      newEl.setAttribute('data-block', 'buttons');
-      newEl.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap';
-      newEl.innerHTML = '<a href="#" class="cp-block-btn" contenteditable="true">버튼 1</a><a href="#" class="cp-block-btn cp-block-btn-outline" contenteditable="true">버튼 2</a>';
-      break;
-    }
-    case 'spacer': {
-      const spH = prompt('공백 높이 (px):', '40') || '40';
-      newEl = document.createElement('div');
-      newEl.setAttribute('data-block', 'spacer');
-      newEl.style.cssText = \`height:\${parseInt(spH)}px;background:transparent\`;
-      newEl.contentEditable = 'false';
-      break;
-    }
-    case 'columns': {
-      const colN = parseInt(prompt('열 수 (2-4):', '2') || '2');
-      const n = Math.max(2, Math.min(4, colN));
-      newEl = document.createElement('div');
-      newEl.setAttribute('data-block', 'columns');
-      newEl.style.cssText = \`display:grid;grid-template-columns:repeat(\${n},1fr);gap:16px\`;
-      newEl.innerHTML = Array(n).fill(0).map(() => '<div contenteditable="true" style="padding:8px;min-height:60px;border:1px dashed #ddd;border-radius:4px">내용을 입력하세요…</div>').join('');
-      break;
-    }
-    case 'group': {
-      newEl = document.createElement('div');
-      newEl.setAttribute('data-block', 'group');
-      newEl.style.cssText = 'padding:16px;background:#f9f9f9;border-radius:8px;border:1px solid #e0e0e0';
-      const inner = document.createElement('div');
-      inner.setAttribute('contenteditable', 'true');
-      inner.textContent = '그룹 내용을 입력하세요…';
-      newEl.appendChild(inner);
-      break;
-    }
-    case 'cover': {
-      const cbg = prompt('배경 이미지 URL (없으면 색상 배경):') || '';
-      newEl = document.createElement('div');
-      newEl.setAttribute('data-block', 'cover');
-      newEl.style.cssText = cbg
-        ? \`background-image:url(\${cbg});background-size:cover;background-position:center;padding:48px 32px;border-radius:8px;text-align:center;position:relative\`
-        : 'background:#1d2327;padding:48px 32px;border-radius:8px;text-align:center';
-      newEl.innerHTML = \`<h2 contenteditable="true" style="color:#fff;margin:0;font-size:2rem">제목을 입력하세요</h2><p contenteditable="true" style="color:rgba(255,255,255,.8);margin:12px 0 0">부제목을 입력하세요</p>\`;
-      break;
-    }
-    case 'shortcode': {
-      const sc = prompt('단축코드:', '[gallery]') || '[shortcode]';
-      newEl = document.createElement('div');
-      newEl.setAttribute('data-block', 'shortcode');
-      newEl.style.cssText = 'background:#f0f0f1;padding:10px 14px;border-radius:4px;font-family:monospace;font-size:13px;color:#646970';
-      newEl.setAttribute('contenteditable', 'true');
-      newEl.textContent = sc;
-      break;
-    }
-    case 'archives':
-    case 'categories':
-    case 'tag-cloud':
-    case 'latest-posts':
-    case 'calendar':
-    case 'rss':
-    case 'search': {
-      const labelMap = { archives:'아카이브', categories:'카테고리', 'tag-cloud':'태그 클라우드', 'latest-posts':'최신 글', calendar:'달력', rss:'RSS 피드', search:'검색 폼' };
-      newEl = document.createElement('div');
-      newEl.setAttribute('data-block', blockId);
-      newEl.style.cssText = 'background:#f9f9f9;border:1px dashed #ccc;border-radius:4px;padding:16px;text-align:center;color:#646970;font-size:13px';
-      newEl.innerHTML = \`[위젯: \${labelMap[blockId]||blockId}]\`;
-      newEl.contentEditable = 'false';
-      break;
-    }
-    case 'social-links': {
-      newEl = document.createElement('div');
-      newEl.setAttribute('data-block', 'social-links');
-      newEl.style.cssText = 'display:flex;gap:12px;flex-wrap:wrap';
-      ['Twitter','Facebook','Instagram','YouTube','GitHub'].forEach(sn => {
-        const a = document.createElement('a');
-        a.href = '#'; a.textContent = sn;
-        a.style.cssText = 'padding:6px 12px;background:#f0f0f1;border-radius:4px;text-decoration:none;color:#1d2327;font-size:13px';
-        a.contentEditable = 'true';
-        newEl.appendChild(a);
-      });
-      break;
-    }
-    case 'embed': {
-      const eurl = prompt('삽입할 URL (YouTube, Twitter 등):');
-      if (!eurl) return;
-      newEl = document.createElement('div');
-      newEl.setAttribute('data-block', 'embed');
-      const vid2 = extractVideoId(eurl);
-      if (vid2) {
-        newEl.innerHTML = \`<iframe src="https://www.youtube.com/embed/\${vid2}" width="100%" height="315" frameborder="0" allowfullscreen style="border-radius:4px;display:block"></iframe>\`;
-      } else {
-        newEl.innerHTML = \`<blockquote style="border:1px solid #ddd;padding:16px;border-radius:4px"><a href="\${eurl}" target="_blank">\${eurl}</a></blockquote>\`;
-      }
-      break;
-    }
-    default:
-      newEl = makeBlock('p', 'paragraph', '');
-  }
-
-  // 현재 블록 뒤에 삽입
-  if (currentBlock && currentBlock.parentNode === editor) {
-    if (isEmpty(currentBlock)) {
-      editor.replaceChild(newEl, currentBlock);
-    } else {
-      currentBlock.insertAdjacentElement('afterend', newEl);
-    }
-  } else {
-    editor.appendChild(newEl);
-  }
-
-  // 뒤에 빈 단락 추가 (HR, image 등)
-  if (['separator','image','video','table','button','html','gallery','audio','file','media-text','buttons','spacer','columns','group','cover','shortcode','archives','categories','tag-cloud','latest-posts','calendar','rss','search','social-links','embed'].includes(blockId)) {
-    const after = makeBlock('p', 'paragraph', '');
-    newEl.insertAdjacentElement('afterend', after);
-    placeCursorIn(after);
-  } else {
-    placeCursorIn(newEl);
-  }
-
-  syncToHtml();
-}
-
-function makeBlock(tag, type, text) {
-  const el = document.createElement(tag);
-  el.setAttribute('data-block', type);
-  if (text) el.textContent = text;
-  else el.innerHTML = '<br>';
-  return el;
-}
-
-function isEmpty(el) {
-  return !el || el.innerHTML === '' || el.innerHTML === '<br>' || el.textContent.trim() === '';
-}
-
-function placeCursorIn(el) {
-  if (!el || el.tagName === 'HR') return;
-  el.focus();
-  const range = document.createRange();
-  range.selectNodeContents(el);
-  range.collapse(false);
-  const sel = window.getSelection();
-  sel.removeAllRanges();
-  sel.addRange(range);
-}
-
-// ── 슬래시 메뉴 ─────────────────────────────────────────────
-function showSlashMenu(range, query) {
-  slashRange = range;
-  slashQuery = query.toLowerCase();
-  selectedIdx = 0;
-  renderSlashMenu();
-  positionSlashMenu(range);
-  slashMenu.classList.add('visible');
-}
-
-function hideSlashMenu() {
-  slashMenu.classList.remove('visible');
-  slashRange = null;
-  slashQuery = '';
-}
-
-function renderSlashMenu() {
-  const q = slashQuery;
-  let html = '';
-  let totalIdx = 0;
-  let first = true;
-
-  BLOCKS.forEach(group => {
-    const matched = group.items.filter(item =>
-      !q || item.key.some(k => k.includes(q)) || item.label.toLowerCase().includes(q) || item.id.includes(q)
-    );
-    if (!matched.length) return;
-
-    html += \`<div class="slash-menu-section${first ? ' first' : ''}">${group.group}</div>\`;
-    first = false;
-
-    matched.forEach(item => {
-      const isSelected = totalIdx === selectedIdx;
-      html += \`<div class="slash-menu-item${isSelected ? ' selected' : ''}" role="option" data-block-id="${item.id}" onclick="insertBlock('${item.id}')">
-        <span class="slash-menu-icon">${item.icon}</span>
-        <div>
-          <div class="slash-menu-label">${item.label}</div>
-          <div class="slash-menu-desc">${item.desc}</div>
-        </div>
-      </div>\`;
-      totalIdx++;
-    });
-  });
-
-  slashMenu.innerHTML = html || '<div style="padding:12px 16px;color:#646970;font-size:13px">일치하는 블록이 없습니다</div>';
-}
-
-function positionSlashMenu(range) {
-  const rect = range.getBoundingClientRect();
-  const wrapRect = editor.closest('#block-editor-wrap').getBoundingClientRect();
-  const top  = rect.bottom - wrapRect.top + 4;
-  const left = Math.max(0, rect.left - wrapRect.left);
-  slashMenu.style.top  = top + 'px';
-  slashMenu.style.left = left + 'px';
-}
-
-function getSlashMenuItems() {
-  return slashMenu.querySelectorAll('.slash-menu-item');
-}
-
-// ── 키보드 이벤트 ────────────────────────────────────────────
-editor.addEventListener('keydown', function(e) {
-  if (slashMenu.classList.contains('visible')) {
-    const items = getSlashMenuItems();
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      selectedIdx = Math.min(selectedIdx + 1, items.length - 1);
-      renderSlashMenu();
-      return;
-    }
-    if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      selectedIdx = Math.max(selectedIdx - 1, 0);
-      renderSlashMenu();
-      return;
-    }
-    if (e.key === 'Enter' || e.key === 'Tab') {
-      e.preventDefault();
-      const selected = items[selectedIdx];
-      if (selected) {
-        const blockId = selected.getAttribute('data-block-id');
-        insertBlock(blockId);
-      }
-      return;
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      hideSlashMenu();
-      return;
-    }
-  }
-
-  // Enter → 새 단락 블록
-  if (e.key === 'Enter' && !e.shiftKey) {
-    const sel = window.getSelection();
-    const block = sel?.anchorNode?.closest?.('[data-block]');
-    if (block && (block.tagName === 'PRE' || block.getAttribute('data-block') === 'preformatted')) {
-      // pre 안에서는 Enter = 개행
-      return;
-    }
-    e.preventDefault();
-    const newP = makeBlock('p', 'paragraph', '');
-    if (block && block.parentNode === editor) {
-      block.insertAdjacentElement('afterend', newP);
-    } else {
-      editor.appendChild(newP);
-    }
-    placeCursorIn(newP);
-    syncToHtml();
-    return;
-  }
-
-  // Backspace: 빈 블록 제거
-  if (e.key === 'Backspace') {
-    const sel = window.getSelection();
-    const block = sel?.anchorNode?.closest?.('[data-block]');
-    if (block && isEmpty(block) && editor.children.length > 1) {
-      e.preventDefault();
-      const prev = block.previousElementSibling;
-      editor.removeChild(block);
-      if (prev) placeCursorIn(prev);
-      syncToHtml();
-    }
-  }
-});
-
-editor.addEventListener('input', function(e) {
-  const sel = window.getSelection();
-  if (!sel.rangeCount) return;
-  const range = sel.getRangeAt(0);
-  const node  = range.startContainer;
-
-  if (node.nodeType !== 3) { syncToHtml(); return; }
-
-  const text    = node.textContent;
-  const offset  = range.startOffset;
-  const before  = text.slice(0, offset);
-  const slashAt = before.lastIndexOf('/');
-
-  if (slashAt !== -1) {
-    const query = before.slice(slashAt + 1);
-    // 슬래시 뒤에 공백 없이 알파벳/한글만
-    if (/^[\w가-힣]*$/.test(query)) {
-      const slashR = range.cloneRange();
-      slashR.setStart(node, slashAt);
-      slashR.setEnd(node, offset);
-      showSlashMenu(slashR, query);
-      syncToHtml();
-      return;
-    }
-  }
-
-  hideSlashMenu();
-  syncToHtml();
-});
-
-// 에디터 바깥 클릭 → 메뉴 숨김
-document.addEventListener('click', e => {
-  if (!slashMenu.contains(e.target) && !editor.contains(e.target)) {
-    hideSlashMenu();
-  }
-});
-
-// ── 포맷팅 함수 ──────────────────────────────────────────────
-function execFmt(cmd) {
-  editor.focus();
-  document.execCommand(cmd, false, null);
-  syncToHtml();
-}
-
-function insertLink2() {
-  const url = prompt('URL을 입력하세요:');
-  if (url) { editor.focus(); document.execCommand('createLink', false, url); syncToHtml(); }
-}
-
-function insertImage2() {
-  insertBlock('image');
-}
-
-// ── 탭 전환 ──────────────────────────────────────────────────
-function switchEditorTab(mode) {
-  editorMode = mode;
-  const wrap  = document.getElementById('block-editor-wrap');
-  const html  = document.getElementById('editor-html');
-  const bVis  = document.getElementById('btn-visual');
-  const bHtml = document.getElementById('btn-html');
-
-  if (mode === 'html') {
-    syncToHtml();
-    wrap.style.display  = 'none';
-    html.style.display  = 'block';
-    html.style.minHeight= '420px';
-    bVis.classList.remove('active');
-    bHtml.classList.add('active');
-    bHtml.style.background = '#e0e0e0';
-    bVis.style.background  = '';
-  } else {
-    syncFromHtml();
-    html.style.display  = 'none';
-    wrap.style.display  = '';
-    bVis.classList.add('active');
-    bHtml.classList.remove('active');
-    bVis.style.background  = '#e0e0e0';
-    bHtml.style.background = '';
-  }
-}
-
-function syncToHtml() {
-  document.getElementById('editor-html').value = editor.innerHTML;
-}
-
-function syncFromHtml() {
-  editor.innerHTML = document.getElementById('editor-html').value || '<p data-block="paragraph"><br></p>';
-  normalizeBlocks();
-}
-
-// ── 유틸 ─────────────────────────────────────────────────────
-function extractVideoId(url) {
-  const m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\s]+)/);
-  return m ? m[1] : null;
-}
-
-// ── 메타박스 접기/펼치기 ─────────────────────────────────────
-function toggleMetabox(titleEl) {
-  const box = titleEl.closest('.metabox');
-  box.classList.toggle('closed');
-  const id     = box.id;
-  const closed = box.classList.contains('closed');
-  try {
-    const state = JSON.parse(localStorage.getItem('cp_metabox_state') || '{}');
-    state[id] = closed;
-    localStorage.setItem('cp_metabox_state', JSON.stringify(state));
-  } catch(_) {}
-}
-
-(function() {
-  try {
-    const state = JSON.parse(localStorage.getItem('cp_metabox_state') || '{}');
-    Object.entries(state).forEach(([id, closed]) => {
-      const el = document.getElementById(id);
-      if (el) el.classList.toggle('closed', closed);
-    });
-  } catch(_) {}
-})();
-
-// ── 커스텀 필드 ─────────────────────────────────────────────
-let metaRowIdx = ${postMetas.length};
-function addMetaRow() {
-  const key = document.getElementById('new-meta-key').value.trim();
-  const val = document.getElementById('new-meta-value').value;
-  if (!key) { alert('키를 입력하세요.'); return; }
-  const tbody = document.getElementById('custom-fields-body');
-  const tr = document.createElement('tr');
-  tr.innerHTML = \`
-    <td>
-      <input type="hidden" name="meta_id[]" value="new_\${metaRowIdx}">
-      <input type="text" name="meta_key[]" value="\${key.replace(/"/g,'&quot;')}">
-    </td>
-    <td><textarea name="meta_value[]" rows="2">\${val.replace(/</g,'&lt;')}</textarea></td>
-    <td style="text-align:center">
-      <button type="button" class="cp-btn cp-btn-danger" style="padding:3px 8px;font-size:12px"
-              onclick="removeMetaRow(this)">&times;</button>
-    </td>\`;
-  tbody.appendChild(tr);
-  document.getElementById('new-meta-key').value   = '';
-  document.getElementById('new-meta-value').value = '';
-  metaRowIdx++;
-}
-function removeMetaRow(btn) { btn.closest('tr').remove(); }
-
-// ── 태그 ────────────────────────────────────────────────────
-let tags = ${JSON.stringify(existingTags)};
-if (tags.length) renderTags();
-function addTag() {
-  const input = document.getElementById('tag-input');
-  const raw   = input.value.trim();
-  if (!raw) return;
-  raw.split(',').map(t => t.trim()).filter(Boolean).forEach(t => {
-    if (!tags.includes(t)) { tags.push(t); renderTags(); }
-  });
-  input.value = '';
-}
-function removeTag(t) { tags = tags.filter(x => x !== t); renderTags(); }
-function renderTags() {
-  const cloud = document.getElementById('tag-cloud');
-  cloud.innerHTML = tags.map(t =>
-    \`<span style="background:#f0f0f1;border:1px solid #dcdcde;border-radius:12px;padding:2px 10px;font-size:12px;display:flex;align-items:center;gap:4px">
-       \${t}
-       <button type="button" onclick="removeTag('\${t}')" style="background:none;border:none;cursor:pointer;color:#646970;font-size:14px;padding:0;line-height:1">&times;</button>
-     </span>\`
-  ).join('');
-  document.getElementById('post_tags_input').value = tags.join(',');
-}
-
-// ── 특성 이미지 ─────────────────────────────────────────────
-function setFeaturedImage() {
-  const url = prompt('이미지 URL을 입력하세요:');
-  if (url) {
-    document.getElementById('featured-image-url').value = url;
-    document.getElementById('featured-image-wrap').innerHTML =
-      \`<img src="\${url}" style="max-width:100%;border-radius:4px;margin-bottom:8px">
-       <br><a href="#" onclick="clearFeaturedImage();return false" style="font-size:12px;color:#d63638">특성 이미지 제거</a>\`;
-  }
-}
-function clearFeaturedImage() {
-  document.getElementById('featured-image-url').value = '';
-  document.getElementById('featured-image-wrap').innerHTML =
-    \`<div style="background:#f0f0f1;border:2px dashed #dcdcde;border-radius:4px;padding:20px;text-align:center;color:#646970;font-size:13px;cursor:pointer" onclick="setFeaturedImage()">
-       <div style="font-size:28px;margin-bottom:6px">🖼</div>
-       <a style="color:#2271b1">특성 이미지 설정</a>
-     </div>\`;
-}
-
-// ── 제출 전 동기화 ───────────────────────────────────────────
-document.getElementById('post-form').addEventListener('submit', function() {
-  if (editorMode === 'visual') syncToHtml();
-});
-
-// ── 슬러그 자동 생성 ─────────────────────────────────────────
-document.getElementById('title').addEventListener('blur', function() {
-  const slugField = document.getElementById('post_name');
-  if (!slugField.value && this.value) {
-    slugField.value = this.value.toLowerCase()
-      .replace(/[\s]+/g,'-')
-      .replace(/[^a-z0-9\-가-힣]/g,'')
-      .replace(/^-|-$/g,'');
-  }
-});
-
-// ── 예약발행 상태 변경 핸들러 ──────────────────────────────────
-function onStatusChange(val) {
-  const wrap = document.getElementById('schedule-date-wrap');
-  const btn  = document.getElementById('publish-btn');
-  if (val === 'publish') {
-    wrap.style.display = 'block';
-    if (btn) btn.textContent = '예약/발행';
-  } else {
-    wrap.style.display = 'none';
-    if (btn) btn.textContent = val === 'draft' ? '임시저장' : '업데이트';
-  }
-}
-
-function submitPublish() {
-  const sel   = document.getElementById('post_status_select');
-  const dateI = document.getElementById('post_date_input');
-  if (sel && sel.value === 'publish' && dateI && dateI.value) {
-    const chosen = new Date(dateI.value);
-    if (chosen > new Date()) {
-      sel.value = 'publish'; // server will set 'future' automatically
-    }
-  }
-  document.getElementById('post-form').submit();
-}
-
-
-</script>
-`;
-
-  const html = await renderAdminShell(cp, pageContent, {
-    title: isNew ? `${L.new} ${typeLabel}` : `${L.edit} ${typeLabel}`,
-    notices,
-  });
-  return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
-}
-
-// ---------------------------------------------------------------------------
-// postmeta 저장 헬퍼
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// 카테고리 저장 헬퍼 (term_relationships + term_taxonomy count 갱신)
-// ---------------------------------------------------------------------------
-
-async function savePostCategories(cp, prefix, postId, categoryIds) {
-  if (!postId) return;
-  try {
-    await cp.db.prepare(
-      `DELETE FROM ${prefix}term_relationships WHERE object_id=? AND term_taxonomy_id IN (SELECT term_taxonomy_id FROM ${prefix}term_taxonomy WHERE taxonomy='category')`
-    ).bind(postId).run();
-  } catch(_) {}
-  const ids = (categoryIds||[]).map(c=>parseInt(c)).filter(Boolean);
-  if (!ids.length) return;
-  const ph = ids.map(()=>'?').join(',');
-  const ttRows = await cp.db.prepare(
-    `SELECT term_id, term_taxonomy_id FROM ${prefix}term_taxonomy WHERE term_id IN (${ph}) AND taxonomy='category'`
-  ).bind(...ids).all().catch(()=>({results:[]}));
-  for (const tt of (ttRows.results||[])) {
-    await cp.db.prepare(
-      `INSERT OR IGNORE INTO ${prefix}term_relationships (object_id,term_taxonomy_id) VALUES(?,?)`
-    ).bind(postId,tt.term_taxonomy_id).run().catch(()=>{});
-  }
-  // 개별 루프 없이 단일 서브쿼리 UPDATE
-  await cp.db.prepare(
-    `UPDATE ${prefix}term_taxonomy SET count=(SELECT COUNT(*) FROM ${prefix}term_relationships tr JOIN ${prefix}posts p ON p.ID=tr.object_id WHERE tr.term_taxonomy_id=${prefix}term_taxonomy.term_taxonomy_id AND p.post_status='publish') WHERE taxonomy='category'`
-  ).run().catch(()=>{});
-}
-
-async function savePostTags(cp, prefix, postId, tagsStr) {
-  if (!postId) return;
-  try {
-    await cp.db.prepare(
-      `DELETE FROM ${prefix}term_relationships WHERE object_id=? AND term_taxonomy_id IN (SELECT term_taxonomy_id FROM ${prefix}term_taxonomy WHERE taxonomy='post_tag')`
-    ).bind(postId).run();
-  } catch(_) {}
-  const tagNames = (tagsStr||'').split(',').map(t=>t.trim()).filter(Boolean);
-  if (!tagNames.length) return;
-  // 기존 태그 한 번에 조회 (루프 SELECT 제거)
-  const ph = tagNames.map(()=>'?').join(',');
-  const existingRows = await cp.db.prepare(
-    `SELECT t.term_id, t.name, tt.term_taxonomy_id FROM ${prefix}terms t JOIN ${prefix}term_taxonomy tt ON tt.term_id=t.term_id AND tt.taxonomy='post_tag' WHERE t.name IN (${ph})`
-  ).bind(...tagNames).all().catch(()=>({results:[]}));
-  const existingMap = new Map((existingRows.results||[]).map(r=>[r.name,r]));
-  for (const name of tagNames) {
-    try {
-      let termTaxonomyId;
-      if (existingMap.has(name)) {
-        termTaxonomyId = existingMap.get(name).term_taxonomy_id;
-      } else {
-        const slug = name.toLowerCase().replace(/\s+/g,'-').replace(/[^a-z0-9\-가-힣]/g,'');
-        const ins = await cp.db.prepare(`INSERT INTO ${prefix}terms (name,slug) VALUES(?,?)`).bind(name,slug).run();
-        const termId = ins.meta?.last_row_id;
-        if (!termId) continue;
-        const ttIns = await cp.db.prepare(`INSERT INTO ${prefix}term_taxonomy (term_id,taxonomy,description,parent,count) VALUES(?,'post_tag','',0,0)`).bind(termId).run();
-        termTaxonomyId = ttIns.meta?.last_row_id;
-      }
-      if (termTaxonomyId) {
-        await cp.db.prepare(`INSERT OR IGNORE INTO ${prefix}term_relationships (object_id,term_taxonomy_id) VALUES(?,?)`).bind(postId,termTaxonomyId).run();
-      }
-    } catch(_) {}
-  }
-}
-
-async function savePostMeta(cp, prefix, postId, metaIds, metaKeys, metaValues) {
-  if (!postId || !metaKeys?.length) return;
-  await cp.db.prepare(
-    `DELETE FROM ${prefix}postmeta WHERE post_id=? AND meta_key NOT LIKE '\\_%' ESCAPE '\\'`
-  ).bind(postId).run().catch(()=>{});
-  // D1 batch: 여러 INSERT를 한 번의 왕복으로
-  const stmts = [];
-  for (let i = 0; i < metaKeys.length; i++) {
-    const key = (metaKeys[i]||'').trim();
-    const val = metaValues[i]||'';
-    if (!key || key.startsWith('_')) continue;
-    stmts.push(cp.db.prepare(`INSERT INTO ${prefix}postmeta (post_id,meta_key,meta_value) VALUES(?,?,?)`).bind(postId,key,val));
-  }
-  if (stmts.length) await cp.db.batch(stmts).catch(()=>{});
-}
-
-
-// ---------------------------------------------------------------------------
-// 언어 레이블
-// ---------------------------------------------------------------------------
-
-function getLabels(lang) {
-  const KO = {
-    postNotFound: '포스트를 찾을 수 없습니다.',
-    postUpdated: '포스트가 업데이트되었습니다.',
-    postPublished: '포스트가 게시되었습니다.',
-    allItems: t => `모든 ${t}`,
-    viewItem: t => `${t} 보기`,
-    addTitle: '제목 추가',
-    permalink: '퍼마링크',
-    editSlug: '편집',
-    content: '본문',
-    excerpt: '발췌문',
-    excerptPlaceholder: '발췌문을 입력하세요 (선택사항)',
-    excerptDesc: '자동 생성된 발췌문 대신 직접 입력할 수 있습니다.',
-    slug: '슬러그',
-    slugPlaceholder: '제목에서 자동 생성',
-    slugDesc: 'URL에 사용될 슬러그를 입력하세요.',
-    customFields: '사용자 정의 필드',
-    name: '이름',
-    value: '값',
-    delete: '삭제',
-    key: '키',
-    addNewField: '새 필드 추가',
-    add: '추가',
-    keyRequired: '키를 입력하세요.',
-    publish: '게시',
-    status: '상태',
-    draft: '초안',
-    published: '게시됨',
-    private: '비공개',
-    pendingReview: '검토 대기',
-    scheduleFor: '예약 발행 시간',
-    scheduleDesc: '미래 날짜를 선택하면 자동 예약 발행됩니다.',
-    scheduled: '예약됨',
-    saveDraft: '초안 저장',
-    update: '업데이트',
-    new: '새',
-    edit: '편집',
-    post: '포스트',
-    page: '페이지',
-    created: '생성',
-    modified: '수정',
-    categories: '카테고리',
-    noCategories: '카테고리가 없습니다.',
-    manageCategories: '카테고리 관리',
-    tags: '태그',
-    tagsPlaceholder: '태그 입력 후 Enter 또는 쉼표',
-    tagsDesc: '쉼표로 구분하여 여러 태그를 추가하세요.',
-    featuredImage: '특성 이미지',
-    setFeaturedImage: '특성 이미지 설정',
-    removeFeaturedImage: '특성 이미지 제거',
-    pageAttributes: '페이지 속성',
-    template: '템플릿',
-    defaultTemplate: '기본 템플릿',
-    fullWidth: '전체 너비',
-    sidebarLeft: '왼쪽 사이드바',
-    blankTemplate: '빈 템플릿',
-    order: '순서',
-    orderDesc: '숫자가 낮을수록 먼저 표시됩니다.',
-    enterUrl: 'URL을 입력하세요:',
-    enterImageUrl: '이미지 URL을 입력하세요:',
-    bold: '굵게', italic: '기울임', underline: '밑줄', strikethrough: '취소선',
-    bulletList: '글머리 기호', numberedList: '번호 목록',
-    indent: '들여쓰기', outdent: '내어쓰기',
-    blockquote: '인용구', separator: '구분선', link: '링크', image: '이미지', removeFormat: '서식 제거',
-  };
-  const EN = {
-    postNotFound: 'Post not found.',
-    postUpdated: 'Post updated.',
-    postPublished: 'Post published.',
-    allItems: t => `All ${t}s`,
-    viewItem: t => `View ${t}`,
-    addTitle: 'Add title',
-    permalink: 'Permalink',
-    editSlug: 'Edit',
-    content: 'Content',
-    excerpt: 'Excerpt',
-    excerptPlaceholder: 'Write an excerpt (optional)',
-    excerptDesc: 'Excerpts are optional hand-crafted summaries.',
-    slug: 'Slug',
-    slugPlaceholder: 'auto-generated-from-title',
-    slugDesc: 'The URL-friendly slug for this post.',
-    customFields: 'Custom Fields',
-    name: 'Name',
-    value: 'Value',
-    delete: 'Delete',
-    key: 'Key',
-    addNewField: 'Add New Custom Field',
-    add: 'Add',
-    keyRequired: 'Please enter a key.',
-    publish: 'Publish',
-    status: 'Status',
-    draft: 'Draft',
-    published: 'Published',
-    private: 'Private',
-    pendingReview: 'Pending Review',
-    scheduleFor: 'Schedule For',
-    scheduleDesc: 'Select a future date to schedule this post.',
-    scheduled: 'Scheduled',
-    saveDraft: 'Save Draft',
-    update: 'Update',
-    new: 'New',
-    edit: 'Edit',
-    post: 'Post',
-    page: 'Page',
-    created: 'Created',
-    modified: 'Modified',
-    categories: 'Categories',
-    noCategories: 'No categories found.',
-    manageCategories: 'Manage Categories',
-    tags: 'Tags',
-    tagsPlaceholder: 'Add tag then Enter or comma',
-    tagsDesc: 'Separate tags with commas.',
-    featuredImage: 'Featured Image',
-    setFeaturedImage: 'Set featured image',
-    removeFeaturedImage: 'Remove featured image',
-    pageAttributes: 'Page Attributes',
-    template: 'Template',
-    defaultTemplate: 'Default Template',
-    fullWidth: 'Full Width',
-    sidebarLeft: 'Sidebar Left',
-    blankTemplate: 'Blank',
-    order: 'Order',
-    orderDesc: 'Pages are usually sorted by this field.',
-    enterUrl: 'Enter URL:',
-    enterImageUrl: 'Enter image URL:',
-    bold: 'Bold', italic: 'Italic', underline: 'Underline', strikethrough: 'Strikethrough',
-    bulletList: 'Bullet List', numberedList: 'Numbered List',
-    indent: 'Indent', outdent: 'Outdent',
-    blockquote: 'Blockquote', separator: 'Horizontal Rule', link: 'Insert Link', image: 'Insert Image', removeFormat: 'Remove Formatting',
-  };
-  return lang === 'ko_KR' ? KO : EN;
-}
-
-__name(handlePostEdit, "handlePostEdit");
-function esc4(s) {
-  return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-__name(esc4, "esc");
-function formatDate3(d) {
-  if (!d)
-    return "";
-  try {
-    return new Date(d).toLocaleString();
-  } catch (_) {
-    return d;
-  }
-}
-__name(formatDate3, "formatDate");
-function slugify3(str) {
-  return (str || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-}
-__name(slugify3, "slugify");
-
-// cp-admin/pages/pages.js
-function esc5(str) {
-  return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-__name(esc5, "esc");
-async function handlePages(request, cp) {
-  const prefix = cp.db_prefix || "cp_";
+function cacheKey(request) {
   const url = new URL(request.url);
-  const method = request.method.toUpperCase();
-  let notice = null;
-  if (method === "POST") {
-    const fd = await request.formData().catch(() => new FormData());
-    const action = fd.get("action") || "";
-    const id = parseInt(fd.get("post_id") || 0);
-    if (action === "trash" && id) {
-      await cp.db.prepare(
-        `UPDATE ${prefix}posts SET post_status='trash' WHERE ID=? AND post_type='page'`
-      ).bind(id).run();
-      notice = { type: "success", message: "Page moved to Trash." };
-    }
-    if (action === "restore" && id) {
-      await cp.db.prepare(
-        `UPDATE ${prefix}posts SET post_status='draft' WHERE ID=? AND post_type='page'`
-      ).bind(id).run();
-      notice = { type: "success", message: "Page restored." };
-    }
-    if (action === "delete" && id) {
-      await cp.db.prepare(`DELETE FROM ${prefix}posts WHERE ID=? AND post_type='page'`).bind(id).run();
-      notice = { type: "success", message: "Page permanently deleted." };
-    }
-  }
-  const status = url.searchParams.get("status") || "any";
-  const search = (url.searchParams.get("s") || "").trim();
-  const page = Math.max(1, parseInt(url.searchParams.get("paged") || 1));
-  const limit = 20;
-  const offset = (page - 1) * limit;
-  const conditions = [`post_type='page'`];
-  const params = [];
-  if (status !== "any") {
-    conditions.push(`post_status=?`);
-    params.push(status);
-  } else {
-    conditions.push(`post_status != 'trash'`);
-  }
-  if (search) {
-    conditions.push(`post_title LIKE ?`);
-    params.push(`%${search}%`);
-  }
-  const where = `WHERE ${conditions.join(" AND ")}`;
-  const total = await cp.db.prepare(`SELECT COUNT(*) as n FROM ${prefix}posts ${where}`).bind(...params).first();
-  const rows = await cp.db.prepare(
-    `SELECT ID, post_title, post_status, post_date, post_modified, post_author
-     FROM ${prefix}posts ${where} ORDER BY post_date DESC LIMIT ? OFFSET ?`
-  ).bind(...params, limit, offset).all();
-  const pages = rows.results || [];
-  const totalPages = Math.ceil((total?.n || 0) / limit);
-  const statusTabs = ["any", "publish", "draft", "pending", "trash"].map((s) => {
-    const active = status === s ? ' style="font-weight:bold;border-bottom:2px solid #0073aa"' : "";
-    const label = s === "any" ? "All" : s.charAt(0).toUpperCase() + s.slice(1);
-    const q = new URLSearchParams(url.searchParams);
-    q.set("status", s);
-    q.delete("paged");
-    return `<a href="?${q}"${active}>${esc5(label)}</a>`;
-  }).join(" | ");
-  const rows_html = pages.map((p) => `
-  <tr>
-    <td><strong><a href="/cp-admin/post?post_id=${p.ID}&post_type=page">${esc5(p.post_title || "(no title)")}</a></strong>
-      <div class="row-actions">
-        <a href="/cp-admin/post?post_id=${p.ID}&post_type=page">Edit</a> |
-        <form method="post" style="display:inline" onsubmit="return confirm('Move to trash?')">
-          <input type="hidden" name="post_id" value="${p.ID}">
-          <input type="hidden" name="action" value="trash">
-          <button type="submit" class="cp-btn-link">Trash</button>
-        </form>
-        ${p.post_status === "publish" ? `| <a href="/${esc5(p.ID)}" target="_blank">View</a>` : ""}
-      </div>
-    </td>
-    <td><span class="cp-status cp-status-${esc5(p.post_status)}">${esc5(p.post_status)}</span></td>
-    <td>${esc5(new Date(p.post_date).toLocaleDateString("ko-KR"))}</td>
-  </tr>`).join("");
-  const content = `
-<div class="cp-card">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-    <h1>Pages</h1>
-    <a href="/cp-admin/page-new" class="cp-btn">&#43; Add New Page</a>
-  </div>
-  <div style="margin-bottom:12px">${statusTabs}</div>
-  <form method="get" style="margin-bottom:12px;display:flex;gap:8px">
-    <input type="hidden" name="status" value="${esc5(status)}">
-    <input type="text" name="s" value="${esc5(search)}" placeholder="Search pages..." style="padding:6px 10px;border:1px solid #ccc;border-radius:4px;flex:1">
-    <button type="submit" class="cp-btn cp-btn-secondary">Search</button>
-  </form>
-  <table class="cp-table">
-    <thead><tr><th>Title</th><th>Status</th><th>Date</th></tr></thead>
-    <tbody>${rows_html || '<tr><td colspan="3" style="text-align:center;color:#999">No pages found.</td></tr>'}</tbody>
-  </table>
-  <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-    ${page > 1 ? `<a href="?paged=${page - 1}&status=${esc5(status)}" class="cp-btn cp-btn-secondary">&laquo; Prev</a>` : ""}
-    <span style="line-height:36px;color:#666">Page ${page} of ${totalPages || 1}</span>
-    ${page < totalPages ? `<a href="?paged=${page + 1}&status=${esc5(status)}" class="cp-btn cp-btn-secondary">Next &raquo;</a>` : ""}
-  </div>
-</div>`;
-  return new Response(
-    await renderAdminShell(cp, content, { title: "Pages", notices: notice ? [notice] : [] }),
-    { headers: { "Content-Type": "text/html; charset=utf-8" } }
-  );
+  const skipParams = new Set(['utm_source','utm_medium','utm_campaign','utm_content','utm_term','fbclid','gclid','_ga']);
+  const params = [...url.searchParams.entries()]
+    .filter(([k]) => !skipParams.has(k))
+    .sort(([a],[b]) => a.localeCompare(b));
+  const cleanSearch = params.length ? '?' + new URLSearchParams(params).toString() : '';
+  return `${url.origin}${url.pathname}${cleanSearch}`;
 }
-__name(handlePages, "handlePages");
 
-// cp-includes/media-handler.js
-init_cp_load();
-async function handleMedia(request, env, ctx) {
-  const url = new URL(request.url);
-  const path = url.pathname.replace(/^\/cp-content\/uploads\//, "").replace(/^\/uploads\//, "");
-  if (!path || path.includes("..")) {
-    return new Response("Not Found", { status: 404 });
-  }
+function wafCheck(request, url) {
+  const path = decodeURIComponent(url.pathname);
+  const query = decodeURIComponent(url.search);
+  const ua = request.headers.get('user-agent') || '';
+  if (WAF_PATH.test(path)) return { block: true, reason: 'path_traversal', status: 403 };
+  if (WAF_SQLI.test(path) || WAF_SQLI.test(query)) return { block: true, reason: 'sqli', status: 403 };
+  if (WAF_XSS.test(path) || WAF_XSS.test(query)) return { block: true, reason: 'xss', status: 403 };
+  if (WAF_RFI.test(query)) return { block: true, reason: 'rfi', status: 403 };
+  const badBot = /sqlmap|nikto|nessus|masscan|zgrab|dirbuster|nuclei|openvas|acunetix|havij|pangolin/i;
+  if (badBot.test(ua)) return { block: true, reason: 'bad_bot', status: 403, tarpit: true };
+  if (path === '/xmlrpc.php') return { block: true, reason: 'xmlrpc', status: 403 };
+  return { block: false };
+}
+
+async function rateLimitCheck(env, ip, isWrite, pathname) {
+  if (!env.CACHE) return { allowed: true };
+  const isLoginPath = pathname === '/wp-login.php' || pathname === '/wp-admin/';
+  const maxReq = isLoginPath ? 10 : (isWrite ? RATE_LIMIT_MAX_W : RATE_LIMIT_MAX);
+  const banKey   = `ddos_ban:${ip}`;
+  const countKey = `rl:${ip}:${Math.floor(Date.now() / 1000 / RATE_LIMIT_WIN)}`;
   try {
-    const b64 = await env.CP_KV.get(`cp:media:${path}`);
-    if (b64) {
-      const binary = base64ToBinary(b64);
-      const mimeType = guessMime(path);
-      return new Response(binary, {
-        headers: {
-          "Content-Type": mimeType,
-          "Cache-Control": "public, max-age=31536000, immutable",
-          "Content-Length": String(binary.byteLength)
-        }
-      });
-    }
-  } catch (_) {
-  }
-  try {
-    const row = await env.CP_DB.prepare(
-      `SELECT mime_type, file_size FROM cp_media WHERE file_path=? LIMIT 1`
-    ).bind(path).first();
-    if (row) {
-      const b64 = await env.CP_KV.get(`cp:media:${path}`);
-      if (b64) {
-        const binary = base64ToBinary(b64);
-        return new Response(binary, {
-          headers: {
-            "Content-Type": row.mime_type,
-            "Cache-Control": "public, max-age=86400"
-          }
-        });
+    const banned = await env.CACHE.get(banKey);
+    if (banned) return { allowed: false, banned: true };
+    const cur = parseInt(await env.CACHE.get(countKey) || '0', 10);
+    if (cur >= maxReq) {
+      if (cur >= maxReq * 3) {
+        await env.CACHE.put(banKey, '1', { expirationTtl: DDOS_BAN_TTL });
       }
+      return { allowed: false, limit: maxReq, current: cur };
     }
-  } catch (_) {
+    env.CACHE.put(countKey, String(cur + 1), { expirationTtl: RATE_LIMIT_WIN + 5 }).catch(() => {});
+    return { allowed: true };
+  } catch {
+    return { allowed: true };
   }
-  return new Response("Not Found", { status: 404 });
 }
-__name(handleMedia, "handleMedia");
-async function handleUpload(cp, file, postId = 0) {
-  const MAX_SIZE = 5 * 1024 * 1024;
-  if (!file || !file.name)
-    return { error: "No file provided." };
-  if (file.size > MAX_SIZE)
-    return { error: `File too large. Maximum size is ${MAX_SIZE / 1024 / 1024} MB.` };
-  const allowed = getAllowedMimeTypes();
-  const mime = file.type || guessMime(file.name);
-  if (!Object.values(allowed).includes(mime) && !mime.startsWith("image/")) {
-    return { error: `File type "${mime}" is not allowed.` };
-  }
-  const prefix = cp.db_prefix || "cp_";
-  const ext = (file.name.split(".").pop() || "").toLowerCase();
-  const safeName = sanitizeFileName(file.name);
-  const date = /* @__PURE__ */ new Date();
-  const yearMonth = `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, "0")}`;
-  const uniqueName = `${Date.now()}-${safeName}`;
-  const filePath = `${yearMonth}/${uniqueName}`;
-  const now = date.toISOString().replace("T", " ").slice(0, 19);
-  const buffer = await file.arrayBuffer();
-  const b64 = binaryToBase64(buffer);
-  try {
-    await cp.kv.put(`cp:media:${filePath}`, b64);
-  } catch (e) {
-    return { error: `KV storage error: ${e.message}` };
-  }
-  const result = await cp.db.prepare(`
-    INSERT INTO ${prefix}media
-      (file_name, file_path, mime_type, file_size, post_id, uploaded_by, upload_date, storage)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'kv')
-  `).bind(
-    safeName,
-    filePath,
-    mime,
-    file.size,
-    postId,
-    cp.currentUser?.ID || 0,
-    now
-  ).run();
-  const mediaId = result.meta?.last_row_id || 0;
-  const siteUrl = cp.config.SITE_URL || cp.url.origin;
-  return {
-    media_id: mediaId,
-    file_path: filePath,
-    url: `${siteUrl}/uploads/${filePath}`,
-    mime_type: mime,
-    file_size: file.size
-  };
+
+function getClientIP(request) {
+  return request.headers.get('cf-connecting-ip')
+    || request.headers.get('x-real-ip')
+    || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+    || '0.0.0.0';
 }
-__name(handleUpload, "handleUpload");
-async function getMediaItems(cp, args = {}) {
-  const prefix = cp.db_prefix || "cp_";
-  const limit = Math.min(parseInt(args.limit || 40), 200);
-  const offset = parseInt(args.offset || 0);
-  const mime = args.mime_type || "";
-  const postId = args.post_id || 0;
-  const where = [];
-  const params = [];
-  if (mime) {
-    where.push("mime_type LIKE ?");
-    params.push(`${mime}%`);
-  }
-  if (postId) {
-    where.push("post_id=?");
-    params.push(postId);
-  }
-  const whereStr = where.length ? `WHERE ${where.join(" AND ")}` : "";
-  const rows = await cp.db.prepare(`
-    SELECT media_id, file_name, file_path, mime_type, file_size, width, height,
-           post_id, uploaded_by, upload_date, alt_text, caption
-    FROM ${prefix}media ${whereStr}
-    ORDER BY upload_date DESC
-    LIMIT ? OFFSET ?
-  `).bind(...params, limit, offset).all();
-  const siteUrl = cp.config?.SITE_URL || "";
-  return (rows.results || []).map((m) => ({
-    ...m,
-    url: `${siteUrl}/uploads/${m.file_path}`
-  }));
+
+function isStaticAsset(pathname) {
+  return /\.(css|js|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|webp|avif|mp4|webm|pdf|zip|gz|xml|txt|json)$/i.test(pathname);
 }
-__name(getMediaItems, "getMediaItems");
-async function deleteMedia(cp, mediaId) {
-  const prefix = cp.db_prefix || "cp_";
-  const row = await cp.db.prepare(`SELECT file_path FROM ${prefix}media WHERE media_id=? LIMIT 1`).bind(mediaId).first();
-  if (!row)
-    return false;
-  try {
-    await cp.kv.delete(`cp:media:${row.file_path}`);
-  } catch (_) {
-  }
-  await cp.db.prepare(`DELETE FROM ${prefix}media WHERE media_id=?`).bind(mediaId).run();
+
+function isCacheable(request, url) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') return false;
+  const p = url.pathname;
+  if (p.startsWith('/wp-admin') || p.startsWith('/wp-login')) return false;
+  if (url.searchParams.has('nocache') || url.searchParams.has('preview')) return false;
+  const cookie = request.headers.get('cookie') || '';
+  if (/wordpress_logged_in|wp-postpass/i.test(cookie)) return false;
   return true;
 }
-__name(deleteMedia, "deleteMedia");
-function getAllowedMimeTypes() {
-  return {
-    jpg: "image/jpeg",
-    jpeg: "image/jpeg",
-    png: "image/png",
-    gif: "image/gif",
-    webp: "image/webp",
-    svg: "image/svg+xml",
-    pdf: "application/pdf",
-    mp3: "audio/mpeg",
-    ogg: "audio/ogg",
-    mp4: "video/mp4",
-    webm: "video/webm",
-    txt: "text/plain",
-    csv: "text/csv",
-    zip: "application/zip"
-  };
-}
-__name(getAllowedMimeTypes, "getAllowedMimeTypes");
-function guessMime(filename) {
-  const ext = (filename.split(".").pop() || "").toLowerCase();
-  const map = getAllowedMimeTypes();
-  return map[ext] || "application/octet-stream";
-}
-__name(guessMime, "guessMime");
-function sanitizeFileName(name) {
-  return name.replace(/[^a-zA-Z0-9._-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").toLowerCase();
-}
-__name(sanitizeFileName, "sanitizeFileName");
-function binaryToBase64(buffer) {
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
-}
-__name(binaryToBase64, "binaryToBase64");
-function base64ToBinary(b64) {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes.buffer;
-}
-__name(base64ToBinary, "base64ToBinary");
 
-// cp-admin/pages/media.js
-function esc6(str) {
-  return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-__name(esc6, "esc");
-async function handleMediaPage(request, cp) {
-  const method = request.method.toUpperCase();
-  const url = new URL(request.url);
-  let notice = null;
-  if (method === "POST") {
-    const ct = request.headers.get("Content-Type") || "";
-    if (ct.includes("multipart/form-data")) {
-      const fd = await request.formData().catch(() => new FormData());
-      const action = fd.get("action") || "";
-      if (action === "delete") {
-        const id = parseInt(fd.get("media_id") || 0);
-        if (id) {
-          await deleteMedia(cp, id);
-          notice = { type: "success", message: "Media file deleted." };
-        }
-      } else {
-        const file = fd.get("file");
-        if (file && file.name) {
-          const result = await handleUpload(cp, file);
-          if (result.error) {
-            notice = { type: "error", message: result.error };
-          } else {
-            notice = { type: "success", message: `File uploaded: <a href="${esc6(result.url)}" target="_blank">${esc6(result.file_path)}</a>` };
-          }
-        }
-      }
-    }
-  }
-  const page = Math.max(1, parseInt(url.searchParams.get("paged") || 1));
-  const limit = 20;
-  const items = await getMediaItems(cp, { limit, offset: (page - 1) * limit });
-  const siteUrl = cp.config?.SITE_URL || cp.url.origin;
-  const gridHtml = items.map((m) => {
-    const isImg = m.mime_type?.startsWith("image/");
-    const thumb = isImg ? `<img src="${esc6(m.url)}" alt="${esc6(m.alt_text)}" style="width:100%;height:100%;object-fit:cover;border-radius:4px">` : `<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:2rem;color:#888">&#128196;</div>`;
-    return `
-  <div class="cp-media-item" style="position:relative;background:#f0f0f0;border-radius:6px;overflow:hidden;aspect-ratio:1">
-    <a href="${esc6(m.url)}" target="_blank" style="display:block;height:100%">${thumb}</a>
-    <div style="padding:4px 6px;background:#fff;border-top:1px solid #e0e0e0;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc6(m.file_name)}">
-      ${esc6(m.file_name)}
-    </div>
-    <form method="post" style="margin:0" onsubmit="return confirm('Delete this file?')">
-      <input type="hidden" name="action" value="delete">
-      <input type="hidden" name="media_id" value="${m.media_id}">
-      <button type="submit" title="Delete" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,.6);border:none;color:#fff;border-radius:50%;width:22px;height:22px;cursor:pointer;font-size:12px;line-height:22px;padding:0">&#10005;</button>
-    </form>
-  </div>`;
-  }).join("");
-  const content = `
-<div class="cp-card">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-    <h1>Media Library</h1>
-  </div>
+const edgeCache = caches.default;
 
-  <!-- Upload Form -->
-  <details style="margin-bottom:20px;background:#f9f9f9;border:1px solid #ddd;border-radius:6px;padding:16px">
-    <summary style="cursor:pointer;font-weight:600;font-size:15px">&#8593; Upload New File</summary>
-    <form method="post" enctype="multipart/form-data" style="margin-top:16px">
-      <div style="display:flex;gap:12px;align-items:flex-end">
-        <div style="flex:1">
-          <label style="display:block;margin-bottom:4px;font-weight:500">Choose File</label>
-          <input type="file" name="file" accept="image/*,application/pdf,text/*,audio/*,video/*" required
-                 style="display:block;width:100%;padding:8px;border:2px dashed #ccc;border-radius:4px;cursor:pointer">
-        </div>
-        <button type="submit" class="cp-btn">Upload</button>
-      </div>
-      <p style="color:#888;font-size:12px;margin-top:8px">Max 5 MB. Stored in KV (no R2 required).</p>
-    </form>
-  </details>
-
-  <!-- Grid -->
-  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px">
-    ${gridHtml || '<p style="color:#999;grid-column:1/-1;text-align:center">No media files yet.</p>'}
-  </div>
-
-  ${items.length === limit ? `<div style="margin-top:16px;text-align:right"><a href="?paged=${page + 1}" class="cp-btn cp-btn-secondary">Next Page &raquo;</a></div>` : ""}
-  ${page > 1 ? `<div style="margin-top:16px"><a href="?paged=${page - 1}" class="cp-btn cp-btn-secondary">&laquo; Previous</a></div>` : ""}
-</div>`;
-  return new Response(
-    await renderAdminShell(cp, content, { title: "Media Library", notices: notice ? [notice] : [] }),
-    { headers: { "Content-Type": "text/html; charset=utf-8" } }
-  );
-}
-__name(handleMediaPage, "handleMediaPage");
-
-// cp-admin/pages/comments.js
-async function handleComments(request, cp) {
-  const prefix = cp.db_prefix || "cp_";
-  const url = new URL(request.url);
-  const method = request.method.toUpperCase();
-  const action = url.searchParams.get("action") || "";
-  const cid = parseInt(url.searchParams.get("c") || "0");
-  const status = url.searchParams.get("comment_status") || "all";
-  const page = Math.max(1, parseInt(url.searchParams.get("paged") || "1"));
-  const perPage = 20;
-  const notices = [];
-  if (method === "POST") {
-    const fd = await request.formData().catch(() => new FormData());
-    const bulkAction = fd.get("action") || action;
-    const ids = fd.getAll("delete_comments[]").map(Number).filter(Boolean);
-    if (cid && !ids.length)
-      ids.push(cid);
-    if (ids.length) {
-      if (bulkAction === "approve") {
-        for (const id of ids)
-          await cp.db.prepare(`UPDATE ${prefix}comments SET comment_approved='1' WHERE comment_ID=?`).bind(id).run();
-        notices.push({ type: "success", message: `${ids.length} comment(s) approved.` });
-      } else if (bulkAction === "unapprove") {
-        for (const id of ids)
-          await cp.db.prepare(`UPDATE ${prefix}comments SET comment_approved='0' WHERE comment_ID=?`).bind(id).run();
-        notices.push({ type: "success", message: `${ids.length} comment(s) unapproved.` });
-      } else if (bulkAction === "spam") {
-        for (const id of ids)
-          await cp.db.prepare(`UPDATE ${prefix}comments SET comment_approved='spam' WHERE comment_ID=?`).bind(id).run();
-        notices.push({ type: "success", message: `${ids.length} comment(s) marked as spam.` });
-      } else if (bulkAction === "trash" || bulkAction === "delete") {
-        for (const id of ids)
-          await cp.db.prepare(`DELETE FROM ${prefix}comments WHERE comment_ID=?`).bind(id).run();
-        notices.push({ type: "success", message: `${ids.length} comment(s) deleted.` });
-      }
-    }
-  }
-  const counts = await Promise.all([
-    cp.db.prepare(`SELECT COUNT(*) as n FROM ${prefix}comments`).first(),
-    cp.db.prepare(`SELECT COUNT(*) as n FROM ${prefix}comments WHERE comment_approved='1'`).first(),
-    cp.db.prepare(`SELECT COUNT(*) as n FROM ${prefix}comments WHERE comment_approved='0'`).first(),
-    cp.db.prepare(`SELECT COUNT(*) as n FROM ${prefix}comments WHERE comment_approved='spam'`).first()
-  ]);
-  const [total, approved, pending, spam] = counts.map((r) => r?.n ?? 0);
-  let whereSql = "";
-  if (status === "approved")
-    whereSql = `WHERE c.comment_approved='1'`;
-  else if (status === "pending")
-    whereSql = `WHERE c.comment_approved='0'`;
-  else if (status === "spam")
-    whereSql = `WHERE c.comment_approved='spam'`;
-  const offset = (page - 1) * perPage;
-  const { results: comments } = await cp.db.prepare(`
-    SELECT c.*, p.post_title
-    FROM ${prefix}comments c
-    LEFT JOIN ${prefix}posts p ON c.comment_post_ID = p.ID
-    ${whereSql}
-    ORDER BY c.comment_date DESC
-    LIMIT ? OFFSET ?
-  `).bind(perPage, offset).all();
-  const totalFiltered = status === "all" ? total : status === "approved" ? approved : status === "pending" ? pending : spam;
-  const totalPages = Math.ceil(totalFiltered / perPage);
-  const noticeHtml = notices.map(
-    (n) => `<div class="cp-notice cp-notice-${n.type}">${esc7(n.message)}</div>`
-  ).join("");
-  const statusTabs = [
-    { key: "all", label: `All (${total})` },
-    { key: "approved", label: `Approved (${approved})` },
-    { key: "pending", label: `Pending (${pending})` },
-    { key: "spam", label: `Spam (${spam})` }
-  ].map((t) => `<a href="?comment_status=${t.key}" class="cp-tab${status === t.key ? " active" : ""}">${t.label}</a>`).join(" | ");
-  const rows = (comments || []).map((c) => `
-    <tr>
-      <td><input type="checkbox" name="delete_comments[]" value="${c.comment_ID}"></td>
-      <td>
-        <strong>${esc7(c.comment_author)}</strong><br>
-        <a href="mailto:${esc7(c.comment_author_email)}">${esc7(c.comment_author_email)}</a><br>
-        <span style="color:#646970;font-size:12px">${esc7(c.comment_author_IP || "")}</span>
-      </td>
-      <td>
-        <div style="max-width:380px">${esc7(truncate3(c.comment_content, 120))}</div>
-        <div class="cp-row-actions" style="margin-top:4px">
-          <a href="?action=approve&c=${c.comment_ID}" style="color:#46b450">Approve</a> |
-          <a href="?action=unapprove&c=${c.comment_ID}" style="color:#f56e28">Unapprove</a> |
-          <a href="?action=spam&c=${c.comment_ID}" style="color:#dc3232">Spam</a> |
-          <a href="?action=delete&c=${c.comment_ID}" style="color:#dc3232" onclick="return confirm('Delete this comment?')">Delete</a>
-        </div>
-      </td>
-      <td>
-        <a href="/cp-admin/post?post=${c.comment_post_ID}">${esc7(c.post_title || "(no title)")}</a>
-      </td>
-      <td>
-        <span class="cp-badge ${c.comment_approved === "1" ? "cp-badge-publish" : "cp-badge-pending"}">
-          ${c.comment_approved === "1" ? "Approved" : c.comment_approved === "spam" ? "Spam" : "Pending"}
-        </span>
-      </td>
-      <td style="font-size:12px;color:#646970">${esc7(formatDate4(c.comment_date))}</td>
-    </tr>
-  `).join("");
-  const pagination = totalPages > 1 ? `
-    <div style="margin-top:12px;text-align:right">
-      ${page > 1 ? `<a href="?comment_status=${status}&paged=${page - 1}" class="cp-btn cp-btn-secondary">&#8592; Prev</a>` : ""}
-      <span style="margin:0 8px;color:#646970">Page ${page} / ${totalPages}</span>
-      ${page < totalPages ? `<a href="?comment_status=${status}&paged=${page + 1}" class="cp-btn cp-btn-secondary">Next &#8594;</a>` : ""}
-    </div>` : "";
-  const content = `
-${noticeHtml}
-<div class="cp-card">
-  <div style="margin-bottom:12px">${statusTabs}</div>
-  <form method="post">
-    <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center">
-      <select name="action" class="cp-form-select" style="width:auto">
-        <option value="">Bulk Actions</option>
-        <option value="approve">Approve</option>
-        <option value="unapprove">Unapprove</option>
-        <option value="spam">Mark as Spam</option>
-        <option value="delete">Delete</option>
-      </select>
-      <button type="submit" class="cp-btn cp-btn-secondary">Apply</button>
-    </div>
-    <div class="cp-table-wrap">
-      <table class="cp-table">
-        <thead>
-          <tr>
-            <th><input type="checkbox" id="cb-all"></th>
-            <th>Author</th>
-            <th>Comment</th>
-            <th>In Response To</th>
-            <th>Status</th>
-            <th>Submitted</th>
-          </tr>
-        </thead>
-        <tbody>${rows || '<tr><td colspan="6" style="text-align:center;color:#646970;padding:24px">No comments found.</td></tr>'}</tbody>
-      </table>
-    </div>
-    ${pagination}
-  </form>
-</div>
-<script>
-  document.getElementById('cb-all')?.addEventListener('change', function() {
-    document.querySelectorAll('input[name="delete_comments[]"]').forEach(cb => cb.checked = this.checked);
-  });
-<\/script>`;
-  const html = await renderAdminShell(cp, content, { title: "Comments" });
-  return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
-}
-__name(handleComments, "handleComments");
-function esc7(str) {
-  return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-__name(esc7, "esc");
-function truncate3(str, n) {
-  return str && str.length > n ? str.slice(0, n) + "..." : str || "";
-}
-__name(truncate3, "truncate");
-function formatDate4(d) {
+async function cacheGet(request) {
   try {
-    return new Date(d).toLocaleString();
-  } catch (_) {
-    return d || "";
-  }
+    const cached = await edgeCache.match(request);
+    if (!cached) return null;
+    const age = parseInt(cached.headers.get('x-cp-age') || '0', 10);
+    const ttl = parseInt(cached.headers.get('x-cp-ttl') || String(CACHE_TTL_HTML), 10);
+    const stale = Date.now() / 1000 - age > ttl;
+    return { response: cached, stale };
+  } catch { return null; }
 }
-__name(formatDate4, "formatDate");
 
-// cp-admin/pages/themes.js
-init_theme_loader();
-init_option();
-function esc8(str) {
-  return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-__name(esc8, "esc");
-async function handleThemes(request, cp) {
-  const method = request.method.toUpperCase();
-  let notice = null;
-  const prefix = cp.db_prefix || 'cp_';
-
-  if (method === 'POST') {
-    const fd = await request.formData().catch(() => new FormData());
-    const action = fd.get('action') || '';
-    const slug = (fd.get('theme') || '').trim();
-
-    if (action === 'activate' && slug) {
-      await updateOption(cp, 'template', slug);
-      await updateOption(cp, 'stylesheet', slug);
-      notice = { type: 'success', message: `테마 "${esc8(slug)}"이(가) 활성화되었습니다.` };
-    }
-
-    if (action === 'delete' && slug) {
-      try {
-        const list = JSON.parse(await cp.kv.get('cp:themes:list') || '[]');
-        await cp.kv.put('cp:themes:list', JSON.stringify(list.filter(t => t.slug !== slug)));
-        await cp.kv.delete(`cp:theme:meta:${slug}`);
-        notice = { type: 'success', message: `테마 "${esc8(slug)}"이(가) 삭제되었습니다.` };
-      } catch(_) {}
-    }
-
-    // WordPress.org에서 설치
-    if (action === 'install_wporg' && slug) {
-      try {
-        const res = await fetch(`https://api.wordpress.org/themes/info/1.1/?action=theme_information&request[slug]=${encodeURIComponent(slug)}&request[fields][description]=1&request[fields][screenshot_url]=1`);
-        const data = await res.json();
-        if (data && data.slug) {
-          const meta = { slug: data.slug, name: data.name, version: data.version, description: data.sections?.description || '', author: data.author, screenshot: data.screenshot_url || '', source: 'wporg', download_link: data.download_link };
-          const list = JSON.parse(await cp.kv.get('cp:themes:list') || '[]');
-          if (!list.find(t => t.slug === data.slug)) list.push(meta);
-          await cp.kv.put('cp:themes:list', JSON.stringify(list));
-          await cp.kv.put(`cp:theme:meta:${data.slug}`, JSON.stringify(meta));
-          await updateOption(cp, 'template', data.slug);
-          await updateOption(cp, 'stylesheet', data.slug);
-          notice = { type: 'success', message: `"${esc8(data.name)}" 테마가 설치 및 활성화되었습니다.` };
-        } else {
-          notice = { type: 'error', message: '테마를 찾을 수 없습니다.' };
-        }
-      } catch(e) { notice = { type: 'error', message: '설치 실패: ' + e.message }; }
-    }
-
-    // ZIP 업로드 설치
-    if (action === 'upload_theme') {
-      const file = fd.get('themezip');
-      if (file && file.name) {
-        const slugName = file.name.replace(/\.zip$/i, '').replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
-        const meta = { slug: slugName, name: slugName, version: '1.0.0', description: '업로드된 테마', author: '', source: 'upload' };
-        const list = JSON.parse(await cp.kv.get('cp:themes:list') || '[]');
-        if (!list.find(t => t.slug === slugName)) list.push(meta);
-        await cp.kv.put('cp:themes:list', JSON.stringify(list));
-        await cp.kv.put(`cp:theme:meta:${slugName}`, JSON.stringify(meta));
-        notice = { type: 'success', message: `"${esc8(slugName)}" 테마가 업로드되었습니다.` };
-      }
-    }
-  }
-
-  // WordPress.org 테마 검색
-  const searchQ = new URL(request.url).searchParams.get('search') || '';
-  const tab = new URL(request.url).searchParams.get('tab') || 'installed';
-  let wporgThemes = [];
-  if (tab === 'search' || tab === 'featured') {
-    try {
-      const q = searchQ || 'popular';
-      const apiUrl = searchQ
-        ? `https://api.wordpress.org/themes/info/1.1/?action=query_themes&request[search]=${encodeURIComponent(searchQ)}&request[per_page]=24&request[fields][screenshot_url]=1&request[fields][description]=1`
-        : `https://api.wordpress.org/themes/info/1.1/?action=query_themes&request[browse]=popular&request[per_page]=24&request[fields][screenshot_url]=1`;
-      const res = await fetch(apiUrl);
-      const data = await res.json();
-      wporgThemes = (data.themes || []).map(t => ({ slug: t.slug, name: t.name, version: t.version, description: t.sections?.description || '', author: t.author, screenshot: t.screenshot_url || '', rating: t.rating }));
-    } catch(_) {}
-  }
-
-  const installedThemes = JSON.parse(await cp.kv.get('cp:themes:list') || '[]');
-  const activeSlug = await getOption(cp, 'template', '').catch(() => '');
-
-  const installedCards = installedThemes.length ? installedThemes.map(t => {
-    const isActive = t.slug === activeSlug;
-    return `<div style="border:${isActive?'2px solid #2271b1':'1px solid #dcdcde'};border-radius:6px;padding:16px;background:#fff;position:relative">
-      ${isActive ? '<span style="position:absolute;top:8px;right:8px;background:#2271b1;color:#fff;padding:2px 8px;border-radius:3px;font-size:11px;font-weight:600">활성</span>' : ''}
-      ${t.screenshot ? `<img src="${esc8(t.screenshot)}" style="width:100%;height:140px;object-fit:cover;border-radius:4px;margin-bottom:10px">` : '<div style="height:80px;background:#f0f0f1;border-radius:4px;margin-bottom:10px;display:flex;align-items:center;justify-content:center;color:#999">미리보기 없음</div>'}
-      <strong>${esc8(t.name||t.slug)}</strong>
-      <div style="color:#666;font-size:12px;margin:4px 0">v${esc8(t.version||'')} · ${esc8(t.author||'')}</div>
-      <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
-        ${!isActive ? `<form method="post" style="margin:0"><input type="hidden" name="action" value="activate"><input type="hidden" name="theme" value="${esc8(t.slug)}"><button class="cp-btn" style="font-size:12px;padding:4px 10px">활성화</button></form>` : ''}
-        <form method="post" style="margin:0" onsubmit="return confirm('삭제하시겠습니까?')"><input type="hidden" name="action" value="delete"><input type="hidden" name="theme" value="${esc8(t.slug)}"><button class="cp-btn cp-btn-secondary" style="font-size:12px;padding:4px 10px;color:#d63638">삭제</button></form>
-      </div>
-    </div>`;
-  }).join('') : '<div style="grid-column:1/-1;text-align:center;color:#888;padding:40px">설치된 테마가 없습니다.</div>';
-
-  const wporgCards = wporgThemes.map(t => {
-    const installed = installedThemes.find(i => i.slug === t.slug);
-    return `<div style="border:1px solid #dcdcde;border-radius:6px;padding:0;background:#fff;overflow:hidden">
-      ${t.screenshot ? `<img src="${esc8(t.screenshot)}" style="width:100%;height:140px;object-fit:cover">` : '<div style="height:120px;background:#f0f0f1;display:flex;align-items:center;justify-content:center;color:#999">미리보기 없음</div>'}
-      <div style="padding:12px">
-        <strong style="font-size:14px">${esc8(t.name)}</strong>
-        <div style="color:#666;font-size:12px;margin:3px 0">v${esc8(t.version||'')} · ${esc8(t.author||'')}</div>
-        ${t.rating ? `<div style="color:#f0b429;font-size:12px">${'★'.repeat(Math.round((t.rating||0)/20))}${'☆'.repeat(5-Math.round((t.rating||0)/20))}</div>` : ''}
-        <div style="margin-top:8px">
-          ${installed
-            ? `<span style="color:#00a32a;font-size:12px;font-weight:600">✓ 설치됨</span>`
-            : `<form method="post" style="margin:0"><input type="hidden" name="action" value="install_wporg"><input type="hidden" name="theme" value="${esc8(t.slug)}"><button class="cp-btn" style="font-size:12px;padding:4px 10px;width:100%">설치 및 활성화</button></form>`}
-        </div>
-      </div>
-    </div>`;
-  }).join('');
-
-  const content = `
-<div style="margin-bottom:16px;border-bottom:1px solid #dcdcde;padding-bottom:0;display:flex;gap:0">
-  <a href="?tab=installed" style="padding:8px 16px;text-decoration:none;font-weight:600;border-bottom:${tab==='installed'?'2px solid #2271b1;color:#2271b1':'2px solid transparent;color:#646970'}">설치된 테마 (${installedThemes.length})</a>
-  <a href="?tab=featured" style="padding:8px 16px;text-decoration:none;font-weight:600;border-bottom:${tab==='featured'?'2px solid #2271b1;color:#2271b1':'2px solid transparent;color:#646970'}">인기 테마</a>
-  <a href="?tab=search" style="padding:8px 16px;text-decoration:none;font-weight:600;border-bottom:${tab==='search'?'2px solid #2271b1;color:#2271b1':'2px solid transparent;color:#646970'}">테마 검색</a>
-  <a href="?tab=upload" style="padding:8px 16px;text-decoration:none;font-weight:600;border-bottom:${tab==='upload'?'2px solid #2271b1;color:#2271b1':'2px solid transparent;color:#646970'}">ZIP 업로드</a>
-</div>
-
-${tab === 'installed' ? `
-<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px">
-  ${installedCards}
-</div>` : ''}
-
-${tab === 'featured' || tab === 'search' ? `
-<form method="get" style="margin-bottom:16px;display:flex;gap:8px">
-  <input type="hidden" name="tab" value="search">
-  <input type="text" name="search" value="${esc8(searchQ)}" placeholder="테마 검색..." style="flex:1;padding:8px 12px;border:1px solid #ccc;border-radius:4px">
-  <button type="submit" class="cp-btn">검색</button>
-</form>
-${wporgThemes.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px">${wporgCards}</div>` : '<p style="color:#888;text-align:center;padding:40px">결과 없음</p>'}` : ''}
-
-${tab === 'upload' ? `
-<div class="cp-card" style="max-width:500px">
-  <h3 style="margin:0 0 12px">테마 ZIP 파일 업로드</h3>
-  <form method="post" enctype="multipart/form-data">
-    <input type="hidden" name="action" value="upload_theme">
-    <div style="margin-bottom:12px">
-      <label style="display:block;margin-bottom:6px;font-weight:500">테마 ZIP 파일 선택</label>
-      <input type="file" name="themezip" accept=".zip" required style="display:block;width:100%">
-      <p style="color:#666;font-size:12px;margin-top:4px">WordPress 호환 테마 ZIP 파일을 업로드하세요.</p>
-    </div>
-    <button type="submit" class="cp-btn">업로드 및 설치</button>
-  </form>
-</div>` : ''}`;
-
-  return new Response(
-    await renderAdminShell(cp, content, { title: '테마', notices: notice ? [notice] : [] }),
-    { headers: { 'Content-Type': 'text/html; charset=utf-8' } }
-  );
-}
-__name(handleThemes, "handleThemes");
-
-// cp-admin/pages/plugins.js
-init_option();
-function esc9(str) {
-  return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-__name(esc9, "esc");
-async function getPlugins(cp) {
+async function cachePut(ctx, request, response, ttl = CACHE_TTL_HTML) {
+  if (!response.ok && response.status !== 301 && response.status !== 302) return;
   try {
-    const raw = await cp.kv.get("cp:plugins:list", { type: "json" });
-    return Array.isArray(raw) ? raw : [];
-  } catch (_) {
-    return [];
-  }
+    const cloned = response.clone();
+    const headers = new Headers(cloned.headers);
+    headers.set('Cache-Control', `public, max-age=${ttl}, stale-while-revalidate=${CACHE_TTL_STALE}`);
+    headers.set('x-cp-age', String(Math.floor(Date.now() / 1000)));
+    headers.set('x-cp-ttl', String(ttl));
+    headers.set('x-cp-cached', 'edge');
+    const cachedResp = new Response(cloned.body, { status: cloned.status, headers });
+    ctx.waitUntil(edgeCache.put(request, cachedResp));
+  } catch {}
 }
-__name(getPlugins, "getPlugins");
-async function getActivePlugins(cp) {
+
+async function kvCacheGet(env, key) {
+  if (!env.CACHE) return null;
   try {
-    const raw = await cp.kv.get("cp:plugins:active", { type: "json" });
-    return Array.isArray(raw) ? raw : [];
-  } catch (_) {
-    return [];
-  }
+    const meta = await env.CACHE.getWithMetadata(KV_PAGE_PREFIX + key, { type: 'text' });
+    if (!meta || !meta.value) return null;
+    const { contentType, status, cachedAt, ttl } = meta.metadata || {};
+    const stale = Date.now() / 1000 - (cachedAt || 0) > (ttl || CACHE_TTL_HTML);
+    return { body: meta.value, contentType, status: status || 200, stale, cachedAt };
+  } catch { return null; }
 }
-__name(getActivePlugins, "getActivePlugins");
-async function handlePlugins(request, cp) {
-  const method = request.method.toUpperCase();
-  let notice = null;
 
-  if (method === 'POST') {
-    const fd = await request.formData().catch(() => new FormData());
-    const action = fd.get('action') || '';
-    const slug = (fd.get('plugin') || '').trim();
-    const active2 = await getActivePlugins(cp);
-
-    if (action === 'activate' && slug && !active2.includes(slug)) {
-      active2.push(slug);
-      await cp.kv.put('cp:plugins:active', JSON.stringify(active2)).catch(() => {});
-      notice = { type: 'success', message: `플러그인 "${esc9(slug)}"이(가) 활성화되었습니다.` };
-    }
-    if (action === 'deactivate' && slug) {
-      await cp.kv.put('cp:plugins:active', JSON.stringify(active2.filter(p => p !== slug))).catch(() => {});
-      notice = { type: 'success', message: `플러그인 "${esc9(slug)}"이(가) 비활성화되었습니다.` };
-    }
-    if (action === 'delete' && slug) {
-      const list = await getPlugins(cp);
-      await cp.kv.put('cp:plugins:list', JSON.stringify(list.filter(p => p.slug !== slug))).catch(() => {});
-      await cp.kv.put('cp:plugins:active', JSON.stringify(active2.filter(p => p !== slug))).catch(() => {});
-      notice = { type: 'success', message: `플러그인 "${esc9(slug)}"이(가) 삭제되었습니다.` };
-    }
-
-    // WordPress.org 설치
-    if (action === 'install_wporg' && slug) {
-      try {
-        const res = await fetch(`https://api.wordpress.org/plugins/info/1.2/?action=plugin_information&request[slug]=${encodeURIComponent(slug)}&request[fields][short_description]=1&request[fields][sections]=0&request[fields][versions]=0`);
-        const data = await res.json();
-        if (data && data.slug && !data.error) {
-          const meta = { slug: data.slug, name: data.name, version: data.version, description: data.short_description || '', author: data.author || '', source: 'wporg', download_link: data.download_link, active_installs: data.active_installs };
-          const list = await getPlugins(cp);
-          if (!list.find(p => p.slug === data.slug)) list.push(meta);
-          await cp.kv.put('cp:plugins:list', JSON.stringify(list)).catch(() => {});
-          const act = await getActivePlugins(cp);
-          if (!act.includes(data.slug)) act.push(data.slug);
-          await cp.kv.put('cp:plugins:active', JSON.stringify(act)).catch(() => {});
-          notice = { type: 'success', message: `"${esc9(data.name)}" 플러그인이 설치 및 활성화되었습니다.` };
-        } else {
-          notice = { type: 'error', message: '플러그인을 찾을 수 없습니다.' };
-        }
-      } catch(e) { notice = { type: 'error', message: '설치 실패: ' + e.message }; }
-    }
-
-    // ZIP 업로드 설치
-    if (action === 'upload_plugin') {
-      const file = fd.get('pluginzip');
-      if (file && file.name) {
-        const slugName = file.name.replace(/\.zip$/i, '').replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
-        const meta = { slug: slugName, name: slugName, version: '1.0.0', description: '업로드된 플러그인', author: '', source: 'upload' };
-        const list = await getPlugins(cp);
-        if (!list.find(p => p.slug === slugName)) list.push(meta);
-        await cp.kv.put('cp:plugins:list', JSON.stringify(list)).catch(() => {});
-        notice = { type: 'success', message: `"${esc9(slugName)}" 플러그인이 업로드되었습니다.` };
-      }
-    }
-  }
-
-  const url2 = new URL(request.url);
-  const tab = url2.searchParams.get('tab') || 'installed';
-  const searchQ = url2.searchParams.get('s') || '';
-
-  // WordPress.org 플러그인 검색/목록
-  let wporgPlugins = [];
-  if (tab === 'search' || tab === 'featured' || tab === 'popular') {
-    try {
-      const apiUrl = searchQ
-        ? `https://api.wordpress.org/plugins/info/1.2/?action=query_plugins&request[search]=${encodeURIComponent(searchQ)}&request[per_page]=24&request[fields][short_description]=1&request[fields][icons]=1`
-        : `https://api.wordpress.org/plugins/info/1.2/?action=query_plugins&request[browse]=popular&request[per_page]=24&request[fields][short_description]=1&request[fields][icons]=1`;
-      const res = await fetch(apiUrl);
-      const data = await res.json();
-      wporgPlugins = (data.plugins || []).map(p => ({ slug: p.slug, name: p.name, version: p.version, description: p.short_description || '', author: p.author || '', rating: p.rating, active_installs: p.active_installs, icons: p.icons || {} }));
-    } catch(_) {}
-  }
-
-  const plugins = await getPlugins(cp);
-  const active = await getActivePlugins(cp);
-
-  const installedRows = plugins.map(p => {
-    const isActive = active.includes(p.slug);
-    return `<tr>
-      <td>
-        <strong>${esc9(p.name||p.slug)}</strong>
-        <div style="color:#666;font-size:12px;margin-top:2px">${esc9((p.description||'').replace(/<[^>]+>/g,'').slice(0,100))}</div>
-        <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">
-          ${isActive
-            ? `<form method="post" style="margin:0"><input type="hidden" name="action" value="deactivate"><input type="hidden" name="plugin" value="${esc9(p.slug)}"><button class="cp-btn cp-btn-secondary" style="padding:3px 10px;font-size:12px;color:#d63638">비활성화</button></form>`
-            : `<form method="post" style="margin:0"><input type="hidden" name="action" value="activate"><input type="hidden" name="plugin" value="${esc9(p.slug)}"><button class="cp-btn" style="padding:3px 10px;font-size:12px">활성화</button></form>`}
-          <form method="post" style="margin:0" onsubmit="return confirm('삭제하시겠습니까?')"><input type="hidden" name="action" value="delete"><input type="hidden" name="plugin" value="${esc9(p.slug)}"><button class="cp-btn cp-btn-secondary" style="padding:3px 10px;font-size:12px;color:#d63638">삭제</button></form>
-        </div>
-      </td>
-      <td style="white-space:nowrap">v${esc9(p.version||'?')}</td>
-      <td><span class="cp-badge ${isActive?'cp-badge-publish':'cp-badge-draft'}">${isActive?'활성':'비활성'}</span></td>
-      <td style="font-size:12px;color:#666">${esc9(p.source||'')}</td>
-    </tr>`;
-  }).join('');
-
-  const wporgCards = wporgPlugins.map(p => {
-    const installed = plugins.find(i => i.slug === p.slug);
-    const icon = p.icons['1x'] || p.icons['svg'] || '';
-    const installs = p.active_installs >= 1000000 ? Math.floor(p.active_installs/1000000)+'M+' : p.active_installs >= 1000 ? Math.floor(p.active_installs/1000)+'K+' : p.active_installs;
-    return `<div style="border:1px solid #dcdcde;border-radius:6px;padding:14px;background:#fff;display:flex;flex-direction:column;gap:8px">
-      <div style="display:flex;gap:10px;align-items:flex-start">
-        ${icon ? `<img src="${esc9(icon)}" style="width:48px;height:48px;border-radius:6px;flex-shrink:0">` : '<div style="width:48px;height:48px;background:#f0f0f1;border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:20px">🔌</div>'}
-        <div style="flex:1;min-width:0">
-          <strong style="font-size:13px;display:block">${esc9(p.name)}</strong>
-          <div style="color:#666;font-size:11px">by ${esc9(p.author||'').replace(/<[^>]+>/g,'')}</div>
-          ${p.rating ? `<div style="color:#f0b429;font-size:11px">${'★'.repeat(Math.round((p.rating||0)/20))}${'☆'.repeat(5-Math.round((p.rating||0)/20))} ${installs} 설치</div>` : ''}
-        </div>
-      </div>
-      <p style="color:#555;font-size:12px;margin:0;line-height:1.5">${esc9((p.description||'').replace(/<[^>]+>/g,'').slice(0,120))}</p>
-      ${installed
-        ? `<span style="color:#00a32a;font-size:12px;font-weight:600">✓ 설치됨</span>`
-        : `<form method="post" style="margin:0"><input type="hidden" name="action" value="install_wporg"><input type="hidden" name="plugin" value="${esc9(p.slug)}"><button class="cp-btn" style="font-size:12px;padding:5px 12px;width:100%">설치 및 활성화</button></form>`}
-    </div>`;
-  }).join('');
-
-  const content2 = `
-<div style="margin-bottom:16px;border-bottom:1px solid #dcdcde;display:flex;gap:0;align-items:center;justify-content:space-between">
-  <div style="display:flex">
-    <a href="?tab=installed" style="padding:8px 16px;text-decoration:none;font-weight:600;border-bottom:${tab==='installed'?'2px solid #2271b1;color:#2271b1':'2px solid transparent;color:#646970'}">설치된 플러그인 (${plugins.length})</a>
-    <a href="?tab=popular" style="padding:8px 16px;text-decoration:none;font-weight:600;border-bottom:${tab==='popular'?'2px solid #2271b1;color:#2271b1':'2px solid transparent;color:#646970'}">인기 플러그인</a>
-    <a href="?tab=search" style="padding:8px 16px;text-decoration:none;font-weight:600;border-bottom:${tab==='search'?'2px solid #2271b1;color:#2271b1':'2px solid transparent;color:#646970'}">검색</a>
-    <a href="?tab=upload" style="padding:8px 16px;text-decoration:none;font-weight:600;border-bottom:${tab==='upload'?'2px solid #2271b1;color:#2271b1':'2px solid transparent;color:#646970'}">ZIP 업로드</a>
-  </div>
-</div>
-
-${tab === 'installed' ? `
-<div class="cp-table-wrap">
-  <table class="cp-table">
-    <thead><tr><th>플러그인</th><th>버전</th><th>상태</th><th>출처</th></tr></thead>
-    <tbody>${installedRows || '<tr><td colspan="4" style="text-align:center;color:#999;padding:30px">설치된 플러그인이 없습니다.</td></tr>'}</tbody>
-  </table>
-</div>` : ''}
-
-${tab === 'popular' || tab === 'search' ? `
-<form method="get" style="margin-bottom:16px;display:flex;gap:8px">
-  <input type="hidden" name="tab" value="search">
-  <input type="text" name="s" value="${esc9(searchQ)}" placeholder="플러그인 검색..." style="flex:1;padding:8px 12px;border:1px solid #ccc;border-radius:4px">
-  <button type="submit" class="cp-btn">검색</button>
-</form>
-${wporgPlugins.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px">${wporgCards}</div>` : '<p style="color:#888;text-align:center;padding:40px">결과 없음</p>'}` : ''}
-
-${tab === 'upload' ? `
-<div class="cp-card" style="max-width:500px">
-  <h3 style="margin:0 0 12px">플러그인 ZIP 파일 업로드</h3>
-  <form method="post" enctype="multipart/form-data">
-    <input type="hidden" name="action" value="upload_plugin">
-    <div style="margin-bottom:12px">
-      <label style="display:block;margin-bottom:6px;font-weight:500">플러그인 ZIP 파일 선택</label>
-      <input type="file" name="pluginzip" accept=".zip" required style="display:block;width:100%">
-      <p style="color:#666;font-size:12px;margin-top:4px">WordPress 호환 플러그인 ZIP 파일을 업로드하세요.</p>
-    </div>
-    <button type="submit" class="cp-btn">업로드 및 설치</button>
-  </form>
-</div>` : ''}`;
-
-  return new Response(
-    await renderAdminShell(cp, content2, { title: '플러그인', notices: notice ? [notice] : [] }),
-    { headers: { 'Content-Type': 'text/html; charset=utf-8' } }
-  );
-}
-__name(handlePlugins, "handlePlugins");
-
-// cp-admin/pages/users.js
-init_crypto();
-function esc10(str) {
-  return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-__name(esc10, "esc");
-async function handleUsers(request, cp) {
-  const prefix = cp.db_prefix || "cp_";
-  const method = request.method.toUpperCase();
-  const url = new URL(request.url);
-  let notice = null;
-  if (method === "POST") {
-    const fd = await request.formData().catch(() => new FormData());
-    const action = fd.get("action") || "";
-    const uid = parseInt(fd.get("user_id") || 0);
-    const me2 = cp.currentUser?.ID;
-    if (action === "delete" && uid && uid !== me2) {
-      await cp.db.prepare(`DELETE FROM ${prefix}users WHERE ID=?`).bind(uid).run();
-      await cp.db.prepare(`DELETE FROM ${prefix}usermeta WHERE user_id=?`).bind(uid).run();
-      notice = { type: "success", message: "User deleted." };
-    }
-    if (action === "add_user") {
-      const login = (fd.get("user_login") || "").trim();
-      const email = (fd.get("user_email") || "").trim();
-      const pass = (fd.get("user_pass") || "").trim();
-      const role2 = fd.get("role") || "subscriber";
-      const now = (/* @__PURE__ */ new Date()).toISOString().replace("T", " ").slice(0, 19);
-      if (!login || !email || !pass) {
-        notice = { type: "error", message: "Login, email, and password are required." };
-      } else {
-        const exists = await cp.db.prepare(`SELECT ID FROM ${prefix}users WHERE user_login=? OR user_email=?`).bind(login, email).first();
-        if (exists) {
-          notice = { type: "error", message: "Username or email already in use." };
-        } else {
-          const hash = await hashPassword(pass);
-          const res = await cp.db.prepare(
-            `INSERT INTO ${prefix}users (user_login,user_pass,user_email,user_registered,user_status,display_name)
-             VALUES (?,?,?,?,0,?)`
-          ).bind(login, hash, email, now, login).run();
-          const newId = res.meta?.last_row_id;
-          if (newId) {
-            await cp.db.prepare(`INSERT INTO ${prefix}usermeta (user_id,meta_key,meta_value) VALUES (?,?,?)`).bind(newId, `${prefix}capabilities`, JSON.stringify({ [role2]: true })).run();
-          }
-          notice = { type: "success", message: `User "${esc10(login)}" created.` };
-        }
-      }
-    }
-  }
-  const search = (url.searchParams.get("s") || "").trim();
-  const role = url.searchParams.get("role") || "";
-  const page = Math.max(1, parseInt(url.searchParams.get("paged") || 1));
-  const limit = 20;
-  const conds = [];
-  const params = [];
-  if (search) {
-    conds.push("(user_login LIKE ? OR user_email LIKE ? OR display_name LIKE ?)");
-    params.push(`%${search}%`, `%${search}%`, `%${search}%`);
-  }
-  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
-  const total = await cp.db.prepare(`SELECT COUNT(*) as n FROM ${prefix}users ${where}`).bind(...params).first();
-  const rows = await cp.db.prepare(
-    `SELECT u.ID, u.user_login, u.user_email, u.display_name, u.user_registered,
-            m.meta_value as caps
-     FROM ${prefix}users u
-     LEFT JOIN ${prefix}usermeta m ON m.user_id=u.ID AND m.meta_key='${prefix}capabilities'
-     ${where} ORDER BY u.ID ASC LIMIT ? OFFSET ?`
-  ).bind(...params, limit, (page - 1) * limit).all();
-  const users = rows.results || [];
-  const me = cp.currentUser?.ID;
-  function parseRole(caps) {
-    try {
-      const obj = typeof caps === "string" ? JSON.parse(caps) : caps || {};
-      return Object.keys(obj).find((k) => obj[k]) || "subscriber";
-    } catch (_) {
-      return "subscriber";
-    }
-  }
-  __name(parseRole, "parseRole");
-  const tableRows = users.map((u) => {
-    const userRole = parseRole(u.caps);
-    const isSelf = u.ID === me;
-    return `
-  <tr>
-    <td><strong>${esc10(u.user_login)}</strong>${isSelf ? ' <span style="color:#0073aa">(You)</span>' : ""}</td>
-    <td>${esc10(u.display_name || u.user_login)}</td>
-    <td><a href="mailto:${esc10(u.user_email)}">${esc10(u.user_email)}</a></td>
-    <td>${esc10(userRole)}</td>
-    <td style="white-space:nowrap">
-      <a href="/cp-admin/user-edit?user_id=${u.ID}" class="cp-btn cp-btn-secondary" style="padding:4px 10px;font-size:12px">Edit</a>
-      ${!isSelf ? `
-      <form method="post" style="display:inline" onsubmit="return confirm('Delete user?')">
-        <input type="hidden" name="action" value="delete">
-        <input type="hidden" name="user_id" value="${u.ID}">
-        <button type="submit" class="cp-btn" style="background:#a00;padding:4px 10px;font-size:12px">Delete</button>
-      </form>` : ""}
-    </td>
-  </tr>`;
-  }).join("");
-  const totalPages = Math.ceil((total?.n || 0) / limit);
-  const content = `
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
-  <h1>Users</h1>
-</div>
-
-<!-- Add user -->
-<details class="cp-card" style="margin-bottom:20px">
-  <summary style="cursor:pointer;font-weight:600">&#43; Add New User</summary>
-  <form method="post" style="margin-top:16px;display:grid;grid-template-columns:1fr 1fr;gap:12px">
-    <input type="hidden" name="action" value="add_user">
-    <div>
-      <label style="display:block;margin-bottom:4px;font-weight:500">Username *</label>
-      <input type="text" name="user_login" required style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box">
-    </div>
-    <div>
-      <label style="display:block;margin-bottom:4px;font-weight:500">Email *</label>
-      <input type="email" name="user_email" required style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box">
-    </div>
-    <div>
-      <label style="display:block;margin-bottom:4px;font-weight:500">Password *</label>
-      <input type="password" name="user_pass" required style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box">
-    </div>
-    <div>
-      <label style="display:block;margin-bottom:4px;font-weight:500">Role</label>
-      <select name="role" style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:4px;background:#fff;box-sizing:border-box">
-        <option value="subscriber">Subscriber</option>
-        <option value="contributor">Contributor</option>
-        <option value="author">Author</option>
-        <option value="editor">Editor</option>
-        <option value="administrator">Administrator</option>
-      </select>
-    </div>
-    <div style="grid-column:1/-1">
-      <button type="submit" class="cp-btn">Add User</button>
-    </div>
-  </form>
-</details>
-
-<!-- Table -->
-<div class="cp-card">
-  <form method="get" style="margin-bottom:12px;display:flex;gap:8px">
-    <input type="text" name="s" value="${esc10(search)}" placeholder="Search users..." style="padding:6px 10px;border:1px solid #ccc;border-radius:4px;flex:1">
-    <button type="submit" class="cp-btn cp-btn-secondary">Search</button>
-  </form>
-  <table class="cp-table">
-    <thead><tr><th>Username</th><th>Name</th><th>Email</th><th>Role</th><th>Actions</th></tr></thead>
-    <tbody>${tableRows || '<tr><td colspan="5" style="text-align:center;color:#999;padding:20px">No users found.</td></tr>'}</tbody>
-  </table>
-  <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-    ${page > 1 ? `<a href="?paged=${page - 1}&s=${esc10(search)}" class="cp-btn cp-btn-secondary">&laquo; Prev</a>` : ""}
-    <span style="line-height:36px;color:#666">Page ${page} of ${totalPages || 1}</span>
-    ${page < totalPages ? `<a href="?paged=${page + 1}&s=${esc10(search)}" class="cp-btn cp-btn-secondary">Next &raquo;</a>` : ""}
-  </div>
-</div>`;
-  return new Response(
-    await renderAdminShell(cp, content, { title: "Users", notices: notice ? [notice] : [] }),
-    { headers: { "Content-Type": "text/html; charset=utf-8" } }
-  );
-}
-__name(handleUsers, "handleUsers");
-
-// cp-admin/pages/user-edit.js
-init_crypto();
-function esc11(str) {
-  return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-__name(esc11, "esc");
-async function handleUserEdit(request, cp) {
-  const prefix = cp.db_prefix || "cp_";
-  const url = new URL(request.url);
-  const method = request.method.toUpperCase();
-  const userId = parseInt(url.searchParams.get("user_id") || cp.currentUser?.ID || 0);
-  let notice = null;
-  if (!userId) {
-    return new Response("User not found", { status: 404 });
-  }
-  if (method === "POST") {
-    const fd = await request.formData().catch(() => new FormData());
-    const displayName = (fd.get("display_name") || "").trim();
-    const email = (fd.get("user_email") || "").trim();
-    const newPass = (fd.get("new_pass") || "").trim();
-    const role = fd.get("role") || "";
-    if (!email || !email.includes("@")) {
-      notice = { type: "error", message: "Valid email required." };
-    } else {
-      const updates = ["display_name=?", "user_email=?"];
-      const params = [displayName, email];
-      if (newPass) {
-        const hash = await hashPassword(newPass);
-        updates.push("user_pass=?");
-        params.push(hash);
-      }
-      params.push(userId);
-      await cp.db.prepare(
-        `UPDATE ${prefix}users SET ${updates.join(",")} WHERE ID=?`
-      ).bind(...params).run();
-      if (role) {
-        const existing = await cp.db.prepare(
-          `SELECT umeta_id FROM ${prefix}usermeta WHERE user_id=? AND meta_key=?`
-        ).bind(userId, `${prefix}capabilities`).first();
-        const caps = JSON.stringify({ [role]: true });
-        if (existing) {
-          await cp.db.prepare(
-            `UPDATE ${prefix}usermeta SET meta_value=? WHERE user_id=? AND meta_key=?`
-          ).bind(caps, userId, `${prefix}capabilities`).run();
-        } else {
-          await cp.db.prepare(
-            `INSERT INTO ${prefix}usermeta (user_id,meta_key,meta_value) VALUES (?,?,?)`
-          ).bind(userId, `${prefix}capabilities`, caps).run();
-        }
-      }
-      notice = { type: "success", message: "User updated." };
-    }
-  }
-  const user = await cp.db.prepare(
-    `SELECT u.ID, u.user_login, u.user_email, u.display_name, u.user_registered,
-            m.meta_value as caps
-     FROM ${prefix}users u
-     LEFT JOIN ${prefix}usermeta m ON m.user_id=u.ID AND m.meta_key='${prefix}capabilities'
-     WHERE u.ID=? LIMIT 1`
-  ).bind(userId).first();
-  if (!user)
-    return new Response("User not found", { status: 404 });
-  function getRole(caps) {
-    try {
-      const obj = typeof caps === "string" ? JSON.parse(caps) : caps || {};
-      return Object.keys(obj).find((k) => obj[k]) || "subscriber";
-    } catch (_) {
-      return "subscriber";
-    }
-  }
-  __name(getRole, "getRole");
-  const currentRole = getRole(user.caps);
-  const roles = ["subscriber", "contributor", "author", "editor", "administrator"];
-  const content = `
-<div class="cp-card" style="max-width:600px">
-  <h1>Edit User: ${esc11(user.user_login)}</h1>
-  <form method="post">
-    <div style="display:grid;gap:16px;margin-top:16px">
-
-      <div>
-        <label style="display:block;margin-bottom:4px;font-weight:500">Username</label>
-        <input type="text" value="${esc11(user.user_login)}" disabled
-               style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;box-sizing:border-box;color:#666">
-        <p style="color:#888;font-size:12px;margin:4px 0 0">Username cannot be changed.</p>
-      </div>
-
-      <div>
-        <label style="display:block;margin-bottom:4px;font-weight:500">Display Name</label>
-        <input type="text" name="display_name" value="${esc11(user.display_name || user.user_login)}"
-               style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box">
-      </div>
-
-      <div>
-        <label style="display:block;margin-bottom:4px;font-weight:500">Email *</label>
-        <input type="email" name="user_email" value="${esc11(user.user_email)}" required
-               style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box">
-      </div>
-
-      <div>
-        <label style="display:block;margin-bottom:4px;font-weight:500">Role</label>
-        <select name="role" style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:4px;background:#fff;box-sizing:border-box">
-          ${roles.map((r) => `<option value="${r}"${r === currentRole ? " selected" : ""}>${r.charAt(0).toUpperCase() + r.slice(1)}</option>`).join("")}
-        </select>
-      </div>
-
-      <div>
-        <label style="display:block;margin-bottom:4px;font-weight:500">New Password</label>
-        <input type="password" name="new_pass" placeholder="Leave blank to keep current password"
-               style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box">
-      </div>
-
-      <div style="display:flex;gap:10px;margin-top:8px">
-        <button type="submit" class="cp-btn">Save Changes</button>
-        <a href="/cp-admin/users" class="cp-btn cp-btn-secondary">Cancel</a>
-      </div>
-    </div>
-  </form>
-</div>`;
-  return new Response(
-    await renderAdminShell(cp, content, { title: `Edit User: ${user.user_login}`, notices: notice ? [notice] : [] }),
-    { headers: { "Content-Type": "text/html; charset=utf-8" } }
-  );
-}
-__name(handleUserEdit, "handleUserEdit");
-
-// cp-admin/pages/profile.js
-init_crypto();
-function esc12(str) {
-  return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-__name(esc12, "esc");
-async function handleProfile(request, cp) {
-  const prefix = cp.db_prefix || "cp_";
-  const method = request.method.toUpperCase();
-  const me = cp.currentUser;
-  let notice = null;
-  if (!me) {
-    return new Response("", { status: 302, headers: { Location: "/cp-login" } });
-  }
-  if (method === "POST") {
-    const fd = await request.formData().catch(() => new FormData());
-    const displayName = (fd.get("display_name") || "").trim();
-    const email = (fd.get("user_email") || "").trim();
-    const firstName = (fd.get("first_name") || "").trim();
-    const lastName = (fd.get("last_name") || "").trim();
-    const bio = (fd.get("description") || "").trim();
-    const newPass = (fd.get("new_pass") || "").trim();
-    const confirmPass = (fd.get("confirm_pass") || "").trim();
-    if (!email || !email.includes("@")) {
-      notice = { type: "error", message: "Valid email required." };
-    } else if (newPass && newPass !== confirmPass) {
-      notice = { type: "error", message: "Passwords do not match." };
-    } else {
-      const updates = ["display_name=?", "user_email=?"];
-      const params = [displayName || me.user_login, email];
-      if (newPass) {
-        const hash = await hashPassword(newPass);
-        updates.push("user_pass=?");
-        params.push(hash);
-      }
-      params.push(me.ID);
-      await cp.db.prepare(`UPDATE ${prefix}users SET ${updates.join(",")} WHERE ID=?`).bind(...params).run();
-      const metaFields = { first_name: firstName, last_name: lastName, description: bio };
-      for (const [key, val] of Object.entries(metaFields)) {
-        const existing = await cp.db.prepare(
-          `SELECT umeta_id FROM ${prefix}usermeta WHERE user_id=? AND meta_key=? LIMIT 1`
-        ).bind(me.ID, key).first();
-        if (existing) {
-          await cp.db.prepare(`UPDATE ${prefix}usermeta SET meta_value=? WHERE user_id=? AND meta_key=?`).bind(val, me.ID, key).run();
-        } else {
-          await cp.db.prepare(`INSERT INTO ${prefix}usermeta (user_id,meta_key,meta_value) VALUES (?,?,?)`).bind(me.ID, key, val).run();
-        }
-      }
-      notice = { type: "success", message: "Profile updated." };
-    }
-  }
-  const user = await cp.db.prepare(
-    `SELECT ID, user_login, user_email, display_name FROM ${prefix}users WHERE ID=? LIMIT 1`
-  ).bind(me.ID).first();
-  const metaRows = await cp.db.prepare(
-    `SELECT meta_key, meta_value FROM ${prefix}usermeta WHERE user_id=? AND meta_key IN ('first_name','last_name','description')`
-  ).bind(me.ID).all();
-  const meta = {};
-  (metaRows.results || []).forEach((r) => {
-    meta[r.meta_key] = r.meta_value;
-  });
-  const content = `
-<div class="cp-card" style="max-width:640px">
-  <h1>Your Profile</h1>
-  <form method="post" style="margin-top:16px">
-    <div style="display:grid;gap:16px">
-
-      <div>
-        <label style="display:block;margin-bottom:4px;font-weight:500">Username</label>
-        <input type="text" value="${esc12(user?.user_login)}" disabled
-               style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;box-sizing:border-box;color:#666">
-      </div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div>
-          <label style="display:block;margin-bottom:4px;font-weight:500">First Name</label>
-          <input type="text" name="first_name" value="${esc12(meta.first_name || "")}"
-                 style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box">
-        </div>
-        <div>
-          <label style="display:block;margin-bottom:4px;font-weight:500">Last Name</label>
-          <input type="text" name="last_name" value="${esc12(meta.last_name || "")}"
-                 style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box">
-        </div>
-      </div>
-
-      <div>
-        <label style="display:block;margin-bottom:4px;font-weight:500">Display Name</label>
-        <input type="text" name="display_name" value="${esc12(user?.display_name || user?.user_login || "")}"
-               style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box">
-      </div>
-
-      <div>
-        <label style="display:block;margin-bottom:4px;font-weight:500">Email *</label>
-        <input type="email" name="user_email" value="${esc12(user?.user_email || "")}" required
-               style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box">
-      </div>
-
-      <div>
-        <label style="display:block;margin-bottom:4px;font-weight:500">Bio</label>
-        <textarea name="description" rows="4" style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;resize:vertical">${esc12(meta.description || "")}</textarea>
-      </div>
-
-      <hr style="border:none;border-top:1px solid #eee;margin:4px 0">
-      <h3 style="margin:0">Change Password</h3>
-
-      <div>
-        <label style="display:block;margin-bottom:4px;font-weight:500">New Password</label>
-        <input type="password" name="new_pass" placeholder="Leave blank to keep current"
-               style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box">
-      </div>
-      <div>
-        <label style="display:block;margin-bottom:4px;font-weight:500">Confirm Password</label>
-        <input type="password" name="confirm_pass" placeholder="Repeat new password"
-               style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box">
-      </div>
-
-      <div>
-        <button type="submit" class="cp-btn">Save Changes</button>
-      </div>
-    </div>
-  </form>
-</div>`;
-  return new Response(
-    await renderAdminShell(cp, content, { title: "Your Profile", notices: notice ? [notice] : [] }),
-    { headers: { "Content-Type": "text/html; charset=utf-8" } }
-  );
-}
-__name(handleProfile, "handleProfile");
-
-// cp-admin/pages/options.js
-async function handleOptions(request, cp) {
-  const content = `
-<div class="cp-card">
-  <h1>Settings</h1>
-  <p style="color:#666;margin-bottom:24px">Manage your CloudPress site settings.</p>
-  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px">
-
-    <a href="/cp-admin/options-general" style="display:block;padding:20px;background:#f9f9f9;border:1px solid #ddd;border-radius:8px;text-decoration:none;color:inherit;transition:box-shadow .15s" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,.1)'" onmouseout="this.style.boxShadow=''">
-      <div style="font-size:2rem;margin-bottom:8px">&#9881;&#65039;</div>
-      <strong>General</strong>
-      <p style="color:#888;font-size:13px;margin:4px 0 0">Site title, tagline, URL, email, timezone.</p>
-    </a>
-
-    <a href="/cp-admin/options-writing" style="display:block;padding:20px;background:#f9f9f9;border:1px solid #ddd;border-radius:8px;text-decoration:none;color:inherit;transition:box-shadow .15s" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,.1)'" onmouseout="this.style.boxShadow=''">
-      <div style="font-size:2rem;margin-bottom:8px">&#128221;</div>
-      <strong>Writing</strong>
-      <p style="color:#888;font-size:13px;margin:4px 0 0">Default post category, post format, editor settings.</p>
-    </a>
-
-    <a href="/cp-admin/options-reading" style="display:block;padding:20px;background:#f9f9f9;border:1px solid #ddd;border-radius:8px;text-decoration:none;color:inherit;transition:box-shadow .15s" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,.1)'" onmouseout="this.style.boxShadow=''">
-      <div style="font-size:2rem;margin-bottom:8px">&#128214;</div>
-      <strong>Reading</strong>
-      <p style="color:#888;font-size:13px;margin:4px 0 0">Front page, blog page, posts per page, feed.</p>
-    </a>
-
-    <a href="/cp-admin/options-discussion" style="display:block;padding:20px;background:#f9f9f9;border:1px solid #ddd;border-radius:8px;text-decoration:none;color:inherit;transition:box-shadow .15s" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,.1)'" onmouseout="this.style.boxShadow=''">
-      <div style="font-size:2rem;margin-bottom:8px">&#128172;</div>
-      <strong>Discussion</strong>
-      <p style="color:#888;font-size:13px;margin:4px 0 0">Comment moderation, notifications, avatars.</p>
-    </a>
-
-    <a href="/cp-admin/options-media" style="display:block;padding:20px;background:#f9f9f9;border:1px solid #ddd;border-radius:8px;text-decoration:none;color:inherit;transition:box-shadow .15s" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,.1)'" onmouseout="this.style.boxShadow=''">
-      <div style="font-size:2rem;margin-bottom:8px">&#128247;</div>
-      <strong>Media</strong>
-      <p style="color:#888;font-size:13px;margin:4px 0 0">Image sizes, upload settings.</p>
-    </a>
-
-    <a href="/cp-admin/options-permalink" style="display:block;padding:20px;background:#f9f9f9;border:1px solid #ddd;border-radius:8px;text-decoration:none;color:inherit;transition:box-shadow .15s" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,.1)'" onmouseout="this.style.boxShadow=''">
-      <div style="font-size:2rem;margin-bottom:8px">&#128279;</div>
-      <strong>Permalinks</strong>
-      <p style="color:#888;font-size:13px;margin:4px 0 0">URL structure for posts and pages.</p>
-    </a>
-
-  </div>
-</div>`;
-  return new Response(
-    await renderAdminShell(cp, content, { title: "Settings" }),
-    { headers: { "Content-Type": "text/html; charset=utf-8" } }
-  );
-}
-__name(handleOptions, "handleOptions");
-
-// cp-admin/pages/options-general.js
-init_option();
-async function handleOptionsGeneral(request, cp) {
-  const prefix = cp.config.DB_PREFIX || "cp_";
-  const method = request.method.toUpperCase();
-  let notices = [];
-  const optionKeys = [
-    "blogname",
-    "blogdescription",
-    "siteurl",
-    "admin_email",
-    "blogcharset",
-    "WPLANG",
-    "date_format",
-    "time_format",
-    "timezone_string",
-    "gmt_offset",
-    "start_of_week",
-    "default_role",
-    "users_can_register",
-    "cp_github_repo"
-  ];
-  if (method === "POST") {
-    const fd = await request.formData().catch(() => new FormData());
-    for (const key of optionKeys) {
-      const val = fd.get(key);
-      if (val !== null) {
-        await updateOption(cp, key, val);
-      }
-    }
-    const newRepo = fd.get("cp_github_repo") || "";
-    try {
-      const cfg = await cp.kv.get("cp:config", { type: "json" }) || {};
-      cfg.GITHUB_REPO = newRepo;
-      await cp.kv.put("cp:config", JSON.stringify(cfg));
-    } catch (_) {
-    }
-    notices.push({ type: "success", message: "Settings saved." });
-  }
-  const opts = {};
-  for (const key of optionKeys) {
-    opts[key] = await getOption(cp, key).catch(() => "");
-  }
-  const githubToken = cp.config.GITHUB_TOKEN || cp.env?.CP_GITHUB_TOKEN || "";
-  const content = `
-<form method="post">
-  <div class="cp-card">
-    <h2>Site Settings</h2>
-    <table class="cp-form-table">
-      <tr>
-        <th><label for="blogname">Site Title</label></th>
-        <td><input type="text" id="blogname" name="blogname" class="cp-form-input"
-                   value="${esc13(opts.blogname)}"></td>
-      </tr>
-      <tr>
-        <th><label for="blogdescription">Tagline</label></th>
-        <td>
-          <input type="text" id="blogdescription" name="blogdescription" class="cp-form-input"
-                 value="${esc13(opts.blogdescription)}">
-          <p class="cp-description">In a few words, explain what this site is about.</p>
-        </td>
-      </tr>
-      <tr>
-        <th><label for="siteurl">Site Address (URL)</label></th>
-        <td>
-          <input type="url" id="siteurl" name="siteurl" class="cp-form-input"
-                 value="${esc13(opts.siteurl)}">
-          <p class="cp-description">Your Cloudflare Worker route URL.</p>
-        </td>
-      </tr>
-      <tr>
-        <th><label for="admin_email">Admin Email</label></th>
-        <td>
-          <input type="email" id="admin_email" name="admin_email" class="cp-form-input"
-                 value="${esc13(opts.admin_email)}">
-        </td>
-      </tr>
-      <tr>
-        <th><label for="users_can_register">Membership</label></th>
-        <td>
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-            <input type="checkbox" id="users_can_register" name="users_can_register" value="1"
-                   ${opts.users_can_register === "1" ? "checked" : ""}>
-            Anyone can register
-          </label>
-        </td>
-      </tr>
-      <tr>
-        <th><label for="default_role">New User Default Role</label></th>
-        <td>
-          <select id="default_role" name="default_role" class="cp-form-select">
-            ${["subscriber", "contributor", "author", "editor", "administrator"].map(
-    (role) => `<option value="${role}" ${opts.default_role === role ? "selected" : ""}>${capitalize2(role)}</option>`
-  ).join("")}
-          </select>
-          <p class="cp-description">Admin manually assigns roles. All accounts start with this default role.</p>
-        </td>
-      </tr>
-    </table>
-  </div>
-
-  <div class="cp-card">
-    <h2>Date &amp; Time</h2>
-    <table class="cp-form-table">
-      <tr>
-        <th><label for="date_format">Date Format</label></th>
-        <td>
-          <input type="text" id="date_format" name="date_format" class="cp-form-input"
-                 value="${esc13(opts.date_format || "F j, Y")}">
-          <p class="cp-description">Example: <code>F j, Y</code> -> ${(/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}</p>
-        </td>
-      </tr>
-      <tr>
-        <th><label for="time_format">Time Format</label></th>
-        <td>
-          <input type="text" id="time_format" name="time_format" class="cp-form-input"
-                 value="${esc13(opts.time_format || "g:i a")}">
-        </td>
-      </tr>
-      <tr>
-        <th><label for="timezone_string">Timezone</label></th>
-        <td>
-          <select id="timezone_string" name="timezone_string" class="cp-form-select">
-            ${getTimezones().map(
-    (tz) => `<option value="${esc13(tz)}" ${opts.timezone_string === tz ? "selected" : ""}>${esc13(tz)}</option>`
-  ).join("")}
-          </select>
-        </td>
-      </tr>
-      <tr>
-        <th><label for="WPLANG">사이트 언어</label></th>
-        <td>
-          <select id="WPLANG" name="WPLANG" class="cp-form-select">
-            <option value="ko_KR" ${opts.WPLANG === "ko_KR" || !opts.WPLANG ? "selected" : ""}>한국어</option>
-            <option value="en_US" ${opts.WPLANG === "en_US" ? "selected" : ""}>English (United States)</option>
-            <option value="ja" ${opts.WPLANG === "ja" ? "selected" : ""}>日本語</option>
-            <option value="zh_CN" ${opts.WPLANG === "zh_CN" ? "selected" : ""}>中文 (简体)</option>
-            <option value="zh_TW" ${opts.WPLANG === "zh_TW" ? "selected" : ""}>中文 (繁體)</option>
-            <option value="fr_FR" ${opts.WPLANG === "fr_FR" ? "selected" : ""}>Français</option>
-            <option value="de_DE" ${opts.WPLANG === "de_DE" ? "selected" : ""}>Deutsch</option>
-            <option value="es_ES" ${opts.WPLANG === "es_ES" ? "selected" : ""}>Español</option>
-          </select>
-          <p class="cp-description">관리자 화면 및 사이트에 사용할 언어를 선택하세요.</p>
-        </td>
-      </tr>
-      <tr>
-        <th><label for="start_of_week">Week Starts On</label></th>
-        <td>
-          <select id="start_of_week" name="start_of_week" class="cp-form-select">
-            ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map(
-    (d, i) => `<option value="${i}" ${opts.start_of_week == i ? "selected" : ""}>${d}</option>`
-  ).join("")}
-          </select>
-        </td>
-      </tr>
-    </table>
-  </div>
-
-  <!-- GitHub Integration -->
-  <div class="cp-card" id="github">
-    <h2>&#127758; GitHub Integration</h2>
-    <p style="color:#646970;font-size:13.5px;margin-bottom:16px">
-      Connect a GitHub repository to install themes and plugins.
-      Set your token as a Cloudflare Worker secret: <code>npx wrangler secret put CP_GITHUB_TOKEN</code>
-    </p>
-    <table class="cp-form-table">
-      <tr>
-        <th><label for="cp_github_repo">GitHub Repository</label></th>
-        <td>
-          <input type="text" id="cp_github_repo" name="cp_github_repo" class="cp-form-input"
-                 value="${esc13(opts.cp_github_repo || cp.config.GITHUB_REPO || "")}"
-                 placeholder="owner/repo-name">
-          <p class="cp-description">
-            GitHub repo containing <code>themes/</code> and <code>plugins/</code> folders.
-            Example: <code>myorg/cloudpress-themes</code><br>
-            Full URL also works: <code>https://github.com/owner/repo</code>
-          </p>
-        </td>
-      </tr>
-      <tr>
-        <th>GitHub Token</th>
-        <td>
-          <span class="cp-badge ${githubToken ? "cp-badge-publish" : "cp-badge-draft"}">
-            ${githubToken ? "&#10003; Token configured as Worker secret" : "&#8855; Not configured"}
-          </span>
-          ${!githubToken ? `
-          <p class="cp-description" style="margin-top:8px">
-            <strong>To set token:</strong><br>
-            <code>npx wrangler secret put CP_GITHUB_TOKEN</code><br>
-            Generate at: <a href="https://github.com/settings/tokens" target="_blank">github.com/settings/tokens</a>
-            (requires <code>repo</code> scope for private repos, or no scope for public)
-          </p>
-          ` : ""}
-        </td>
-      </tr>
-      <tr>
-        <th></th>
-        <td>
-          <a href="/cp-admin/github-sync" class="cp-btn cp-btn-secondary">Open GitHub Sync Manager &rarr;</a>
-        </td>
-      </tr>
-    </table>
-  </div>
-
-  <p>
-    <button type="submit" class="cp-btn">Save Changes</button>
-  </p>
-</form>
-`;
-  const html = await renderAdminShell(cp, content, { title: "General Settings", notices });
-  return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
-}
-__name(handleOptionsGeneral, "handleOptionsGeneral");
-function getTimezones() {
-  return [
-    "UTC",
-    "America/New_York",
-    "America/Chicago",
-    "America/Denver",
-    "America/Los_Angeles",
-    "America/Anchorage",
-    "Pacific/Honolulu",
-    "Europe/London",
-    "Europe/Paris",
-    "Europe/Berlin",
-    "Europe/Moscow",
-    "Asia/Dubai",
-    "Asia/Kolkata",
-    "Asia/Shanghai",
-    "Asia/Seoul",
-    "Asia/Tokyo",
-    "Australia/Sydney",
-    "Pacific/Auckland"
-  ];
-}
-__name(getTimezones, "getTimezones");
-function esc13(s) {
-  return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-__name(esc13, "esc");
-function capitalize2(s) {
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-__name(capitalize2, "capitalize");
-
-// cp-admin/pages/options-writing.js
-init_option();
-function esc14(str) {
-  return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-__name(esc14, "esc");
-async function handleOptionsWriting(request, cp) {
-  const method = request.method.toUpperCase();
-  let notice = null;
-  const keys = [
-    "default_category",
-    "default_post_format",
-    "default_link_category",
-    "mailserver_url",
-    "mailserver_login",
-    "mailserver_pass",
-    "mailserver_port"
-  ];
-  if (method === "POST") {
-    const fd = await request.formData().catch(() => new FormData());
-    for (const key of keys) {
-      const val = fd.get(key);
-      if (val !== null)
-        await updateOption(cp, key, val.trim());
-    }
-    notice = { type: "success", message: "Settings saved." };
-  }
-  const vals = {};
-  for (const key of keys) {
-    vals[key] = await getOption(cp, key, "").catch(() => "");
-  }
-  let categories = [];
+async function kvCachePut(env, key, body, contentType = 'text/html; charset=utf-8', status = 200, ttl = CACHE_TTL_HTML) {
+  if (!env.CACHE) return;
   try {
-    const prefix = cp.db_prefix || "cp_";
-    const cats = await cp.db.prepare(
-      `SELECT t.term_id, t.name FROM ${prefix}terms t
-       JOIN ${prefix}term_taxonomy tt ON tt.term_id=t.term_id
-       WHERE tt.taxonomy='category' ORDER BY t.name ASC`
-    ).all();
-    categories = cats.results || [];
-  } catch (_) {
-  }
-  const catOptions = categories.map(
-    (c) => `<option value="${esc14(c.term_id)}"${vals.default_category == c.term_id ? " selected" : ""}>${esc14(c.name)}</option>`
-  ).join("");
-  const formats = ["", "aside", "chat", "gallery", "link", "image", "quote", "status", "video", "audio"];
-  const fmtOptions = formats.map(
-    (f) => `<option value="${esc14(f)}"${vals.default_post_format === f ? " selected" : ""}>${f || "Standard"}</option>`
-  ).join("");
-  const content = `
-<div class="cp-card" style="max-width:700px">
-  <h1>Writing Settings</h1>
-  <form method="post" style="margin-top:16px">
-    <table style="width:100%;border-collapse:collapse">
-      <tbody>
-
-        <tr style="border-bottom:1px solid #eee">
-          <th style="width:200px;text-align:left;padding:14px 0;font-weight:500;vertical-align:top">Default Post Category</th>
-          <td style="padding:14px 0 14px 20px">
-            <select name="default_category" style="padding:8px 10px;border:1px solid #ccc;border-radius:4px;background:#fff;min-width:200px">
-              ${catOptions || '<option value="1">Uncategorized</option>'}
-            </select>
-          </td>
-        </tr>
-
-        <tr style="border-bottom:1px solid #eee">
-          <th style="text-align:left;padding:14px 0;font-weight:500;vertical-align:top">Default Post Format</th>
-          <td style="padding:14px 0 14px 20px">
-            <select name="default_post_format" style="padding:8px 10px;border:1px solid #ccc;border-radius:4px;background:#fff;min-width:200px">
-              ${fmtOptions}
-            </select>
-          </td>
-        </tr>
-
-        <tr>
-          <td colspan="2" style="padding:20px 0 8px"><h3 style="margin:0">Post via Email</h3>
-          <p style="color:#888;font-size:13px;margin:4px 0 0">CloudPress uses Cloudflare Email Workers for post-by-email. Configure your mail server below.</p></td>
-        </tr>
-
-        <tr style="border-bottom:1px solid #eee">
-          <th style="text-align:left;padding:14px 0;font-weight:500">Mail Server</th>
-          <td style="padding:14px 0 14px 20px">
-            <input type="text" name="mailserver_url" value="${esc14(vals.mailserver_url)}" placeholder="mail.example.com"
-                   style="padding:8px 10px;border:1px solid #ccc;border-radius:4px;width:220px">
-            Port: <input type="number" name="mailserver_port" value="${esc14(vals.mailserver_port || "110")}"
-                         style="padding:8px 10px;border:1px solid #ccc;border-radius:4px;width:70px">
-          </td>
-        </tr>
-
-        <tr style="border-bottom:1px solid #eee">
-          <th style="text-align:left;padding:14px 0;font-weight:500">Login Name</th>
-          <td style="padding:14px 0 14px 20px">
-            <input type="text" name="mailserver_login" value="${esc14(vals.mailserver_login)}"
-                   style="padding:8px 10px;border:1px solid #ccc;border-radius:4px;width:220px">
-          </td>
-        </tr>
-
-        <tr style="border-bottom:1px solid #eee">
-          <th style="text-align:left;padding:14px 0;font-weight:500">Password</th>
-          <td style="padding:14px 0 14px 20px">
-            <input type="password" name="mailserver_pass" value="${esc14(vals.mailserver_pass)}"
-                   style="padding:8px 10px;border:1px solid #ccc;border-radius:4px;width:220px">
-          </td>
-        </tr>
-
-      </tbody>
-    </table>
-    <div style="margin-top:20px">
-      <button type="submit" class="cp-btn">Save Changes</button>
-    </div>
-  </form>
-</div>`;
-  return new Response(
-    await renderAdminShell(cp, content, { title: "Writing Settings", notices: notice ? [notice] : [] }),
-    { headers: { "Content-Type": "text/html; charset=utf-8" } }
-  );
+    await env.CACHE.put(
+      KV_PAGE_PREFIX + key,
+      body,
+      { expirationTtl: CACHE_TTL_STALE, metadata: { contentType, status, cachedAt: Math.floor(Date.now() / 1000), ttl } }
+    );
+  } catch {}
 }
-__name(handleOptionsWriting, "handleOptionsWriting");
 
-// cp-admin/pages/options-reading.js
-init_option();
-function esc15(str) {
-  return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+//    (KV  ) 
+function getSessionToken(request) {
+  const cookie = request.headers.get('cookie') || '';
+  // wordpress_logged_in_SESSION=<token> 
+  const match = cookie.match(/wordpress_logged_in_[^=]+=([^;]+)/);
+  return match ? match[1].trim() : null;
 }
-__name(esc15, "esc");
-async function handleOptionsReading(request, cp) {
-  const method = request.method.toUpperCase();
-  let notice = null;
-  const prefix = cp.db_prefix || "cp_";
-  const keys = ["show_on_front", "page_on_front", "page_for_posts", "posts_per_page", "posts_per_rss", "rss_use_excerpt", "blog_public"];
-  if (method === "POST") {
-    const fd = await request.formData().catch(() => new FormData());
-    for (const key of keys) {
-      const val = fd.get(key);
-      if (val !== null)
-        await updateOption(cp, key, val.trim());
-    }
-    await updateOption(cp, "blog_public", fd.get("blog_public") ? "1" : "0");
-    await updateOption(cp, "rss_use_excerpt", fd.get("rss_use_excerpt") ? "1" : "0");
-    notice = { type: "success", message: "Settings saved." };
-  }
-  const vals = {};
-  for (const key of keys) {
-    vals[key] = await getOption(cp, key, "").catch(() => "");
-  }
-  let pages = [];
+
+async function validateSession(env, request) {
+  const token = getSessionToken(request);
+  if (!token) return null;
+  if (!env.CACHE) return null;
   try {
-    const res = await cp.db.prepare(
-      `SELECT ID, post_title FROM ${prefix}posts WHERE post_type='page' AND post_status='publish' ORDER BY post_title ASC`
-    ).all();
-    pages = res.results || [];
-  } catch (_) {
-  }
-  const pageOpts = /* @__PURE__ */ __name((selected) => pages.map(
-    (p) => `<option value="${esc15(p.ID)}"${String(selected) === String(p.ID) ? " selected" : ""}>${esc15(p.post_title)}</option>`
-  ).join(""), "pageOpts");
-  const showOnFront = vals.show_on_front || "posts";
-  const content = `
-<div class="cp-card" style="max-width:700px">
-  <h1>Reading Settings</h1>
-  <form method="post" style="margin-top:16px">
-    <table style="width:100%;border-collapse:collapse">
-      <tbody>
-
-        <tr style="border-bottom:1px solid #eee">
-          <th style="width:200px;text-align:left;padding:14px 0;font-weight:500;vertical-align:top">Your homepage displays</th>
-          <td style="padding:14px 0 14px 20px">
-            <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-              <input type="radio" name="show_on_front" value="posts" ${showOnFront === "posts" ? "checked" : ""}>
-              Your latest posts
-            </label>
-            <label style="display:flex;align-items:center;gap:8px">
-              <input type="radio" name="show_on_front" value="page" ${showOnFront === "page" ? "checked" : ""}>
-              A static page
-            </label>
-            <div style="margin-top:10px;padding-left:24px;display:grid;gap:8px">
-              <div>
-                <label style="font-size:13px;color:#555">Homepage: </label>
-                <select name="page_on_front" style="padding:6px 8px;border:1px solid #ccc;border-radius:4px;background:#fff">
-                  <option value="">-- Select --</option>
-                  ${pageOpts(vals.page_on_front)}
-                </select>
-              </div>
-              <div>
-                <label style="font-size:13px;color:#555">Posts page: </label>
-                <select name="page_for_posts" style="padding:6px 8px;border:1px solid #ccc;border-radius:4px;background:#fff">
-                  <option value="">-- Select --</option>
-                  ${pageOpts(vals.page_for_posts)}
-                </select>
-              </div>
-            </div>
-          </td>
-        </tr>
-
-        <tr style="border-bottom:1px solid #eee">
-          <th style="text-align:left;padding:14px 0;font-weight:500">Blog pages show at most</th>
-          <td style="padding:14px 0 14px 20px">
-            <input type="number" name="posts_per_page" value="${esc15(vals.posts_per_page || "10")}" min="1" max="100"
-                   style="padding:8px 10px;border:1px solid #ccc;border-radius:4px;width:70px"> posts
-          </td>
-        </tr>
-
-        <tr style="border-bottom:1px solid #eee">
-          <th style="text-align:left;padding:14px 0;font-weight:500">Syndication feeds show the most recent</th>
-          <td style="padding:14px 0 14px 20px">
-            <input type="number" name="posts_per_rss" value="${esc15(vals.posts_per_rss || "10")}" min="1" max="100"
-                   style="padding:8px 10px;border:1px solid #ccc;border-radius:4px;width:70px"> items
-          </td>
-        </tr>
-
-        <tr style="border-bottom:1px solid #eee">
-          <th style="text-align:left;padding:14px 0;font-weight:500;vertical-align:top">For each post in a feed, include</th>
-          <td style="padding:14px 0 14px 20px">
-            <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-              <input type="radio" name="rss_use_excerpt" value="0" ${vals.rss_use_excerpt === "0" || !vals.rss_use_excerpt ? "checked" : ""}>
-              Full text
-            </label>
-            <label style="display:flex;align-items:center;gap:8px">
-              <input type="radio" name="rss_use_excerpt" value="1" ${vals.rss_use_excerpt === "1" ? "checked" : ""}>
-              Excerpt
-            </label>
-          </td>
-        </tr>
-
-        <tr>
-          <th style="text-align:left;padding:14px 0;font-weight:500;vertical-align:top">Search engine visibility</th>
-          <td style="padding:14px 0 14px 20px">
-            <label style="display:flex;align-items:flex-start;gap:8px">
-              <input type="checkbox" name="blog_public" value="0" ${vals.blog_public === "0" ? "checked" : ""} style="margin-top:3px">
-              <span>Discourage search engines from indexing this site
-                <span style="display:block;color:#888;font-size:12px;margin-top:2px">It is up to search engines to honor this request.</span>
-              </span>
-            </label>
-          </td>
-        </tr>
-
-      </tbody>
-    </table>
-    <div style="margin-top:20px">
-      <button type="submit" class="cp-btn">Save Changes</button>
-    </div>
-  </form>
-</div>`;
-  return new Response(
-    await renderAdminShell(cp, content, { title: "Reading Settings", notices: notice ? [notice] : [] }),
-    { headers: { "Content-Type": "text/html; charset=utf-8" } }
-  );
+    const raw = await env.CACHE.get(SESSION_KV_PREFIX + token);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch { return null; }
 }
-__name(handleOptionsReading, "handleOptionsReading");
 
-// cp-admin/pages/options-discussion.js
-init_option();
-function esc16(str) {
-  return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-__name(esc16, "esc");
-var KEYS_DISCUSSION = [
-  "default_pingback_flag",
-  "default_ping_status",
-  "default_comment_status",
-  "require_name_email",
-  "comment_registration",
-  "close_comments_for_old_posts",
-  "close_comments_days_old",
-  "thread_comments",
-  "thread_comments_depth",
-  "page_comments",
-  "comments_per_page",
-  "default_comments_page",
-  "comment_order",
-  "comments_notify",
-  "moderation_notify",
-  "comment_moderation",
-  "comment_previously_approved",
-  "comment_max_links",
-  "moderation_keys",
-  "disallowed_keys",
-  "show_avatars",
-  "avatar_rating",
-  "avatar_default"
-];
-var CHECKBOX_KEYS = [
-  "default_pingback_flag",
-  "default_ping_status",
-  "default_comment_status",
-  "require_name_email",
-  "comment_registration",
-  "close_comments_for_old_posts",
-  "thread_comments",
-  "page_comments",
-  "comments_notify",
-  "moderation_notify",
-  "comment_moderation",
-  "comment_previously_approved",
-  "show_avatars"
-];
-async function handleOptionsDiscussion(request, cp) {
-  const method = request.method.toUpperCase();
-  let notice = null;
-  if (method === "POST") {
-    const fd = await request.formData().catch(() => new FormData());
-    for (const key of KEYS_DISCUSSION) {
-      if (CHECKBOX_KEYS.includes(key)) {
-        await updateOption(cp, key, fd.get(key) ? "1" : "0");
-      } else {
-        const val = fd.get(key);
-        if (val !== null)
-          await updateOption(cp, key, val.trim());
-      }
-    }
-    notice = { type: "success", message: "Settings saved." };
-  }
-  const v = {};
-  for (const key of KEYS_DISCUSSION) {
-    v[key] = await getOption(cp, key, "").catch(() => "");
-  }
-  function chk(key) {
-    return v[key] === "1" ? "checked" : "";
-  }
-  __name(chk, "chk");
-  const content = `
-<div class="cp-card" style="max-width:720px">
-  <h1>Discussion Settings</h1>
-  <form method="post" style="margin-top:16px">
-
-    <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:8px;margin-bottom:0">Default post settings</h2>
-    <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
-      <tr style="border-bottom:1px solid #eee"><td style="padding:12px 0">
-        <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="default_pingback_flag" value="1" ${chk("default_pingback_flag")}> Attempt to notify any blogs linked to from the article</label>
-      </td></tr>
-      <tr style="border-bottom:1px solid #eee"><td style="padding:12px 0">
-        <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="default_ping_status" value="1" ${chk("default_ping_status")}> Allow link notifications from other blogs (pingbacks and trackbacks) on new posts</label>
-      </td></tr>
-      <tr><td style="padding:12px 0">
-        <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="default_comment_status" value="1" ${chk("default_comment_status")}> Allow people to submit comments on new posts</label>
-      </td></tr>
-    </table>
-
-    <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:8px;margin-bottom:0">Other comment settings</h2>
-    <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
-      <tr style="border-bottom:1px solid #eee"><td style="padding:12px 0">
-        <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="require_name_email" value="1" ${chk("require_name_email")}> Comment author must fill out name and email</label>
-      </td></tr>
-      <tr style="border-bottom:1px solid #eee"><td style="padding:12px 0">
-        <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="comment_registration" value="1" ${chk("comment_registration")}> Users must be registered and logged in to comment</label>
-      </td></tr>
-      <tr style="border-bottom:1px solid #eee"><td style="padding:12px 0">
-        <label style="display:flex;align-items:center;gap:8px">
-          <input type="checkbox" name="close_comments_for_old_posts" value="1" ${chk("close_comments_for_old_posts")}>
-          Automatically close comments on posts older than
-          <input type="number" name="close_comments_days_old" value="${esc16(v.close_comments_days_old || "14")}" min="1" style="width:60px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;margin:0 4px"> days
-        </label>
-      </td></tr>
-      <tr style="border-bottom:1px solid #eee"><td style="padding:12px 0">
-        <label style="display:flex;align-items:center;gap:8px">
-          <input type="checkbox" name="thread_comments" value="1" ${chk("thread_comments")}>
-          Enable threaded (nested) comments
-          <input type="number" name="thread_comments_depth" value="${esc16(v.thread_comments_depth || "5")}" min="2" max="10" style="width:50px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;margin:0 4px"> levels deep
-        </label>
-      </td></tr>
-      <tr><td style="padding:12px 0">
-        <label style="display:flex;align-items:center;gap:8px">
-          <input type="checkbox" name="page_comments" value="1" ${chk("page_comments")}>
-          Break comments into pages with
-          <input type="number" name="comments_per_page" value="${esc16(v.comments_per_page || "50")}" min="1" style="width:60px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;margin:0 4px"> comments per page
-        </label>
-      </td></tr>
-    </table>
-
-    <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:8px;margin-bottom:0">Email me whenever</h2>
-    <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
-      <tr style="border-bottom:1px solid #eee"><td style="padding:12px 0">
-        <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="comments_notify" value="1" ${chk("comments_notify")}> Anyone posts a comment</label>
-      </td></tr>
-      <tr><td style="padding:12px 0">
-        <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="moderation_notify" value="1" ${chk("moderation_notify")}> A comment is held for moderation</label>
-      </td></tr>
-    </table>
-
-    <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:8px;margin-bottom:0">Before a comment appears</h2>
-    <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
-      <tr style="border-bottom:1px solid #eee"><td style="padding:12px 0">
-        <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="comment_moderation" value="1" ${chk("comment_moderation")}> Comment must be manually approved</label>
-      </td></tr>
-      <tr><td style="padding:12px 0">
-        <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="comment_previously_approved" value="1" ${chk("comment_previously_approved")}> Comment author must have a previously approved comment</label>
-      </td></tr>
-    </table>
-
-    <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:8px;margin-bottom:0">Comment Moderation</h2>
-    <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
-      <tr><td style="padding:12px 0">
-        <label style="display:block;margin-bottom:6px">Hold a comment if it contains
-          <input type="number" name="comment_max_links" value="${esc16(v.comment_max_links || "2")}" min="0" style="width:55px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;margin:0 4px"> or more links
-        </label>
-        <label style="display:block;margin-bottom:4px;font-weight:500;margin-top:10px">Comment blocklist</label>
-        <textarea name="disallowed_keys" rows="5" style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;resize:vertical;font-size:12px">${esc16(v.disallowed_keys)}</textarea>
-        <p style="color:#888;font-size:12px;margin:4px 0 0">One word or IP per line. Comments containing these will be blocked.</p>
-      </td></tr>
-    </table>
-
-    <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:8px;margin-bottom:0">Avatars</h2>
-    <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
-      <tr style="border-bottom:1px solid #eee"><td style="padding:12px 0">
-        <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="show_avatars" value="1" ${chk("show_avatars")}> Show Avatars</label>
-      </td></tr>
-    </table>
-
-    <div><button type="submit" class="cp-btn">Save Changes</button></div>
-  </form>
-</div>`;
-  return new Response(
-    await renderAdminShell(cp, content, { title: "Discussion Settings", notices: notice ? [notice] : [] }),
-    { headers: { "Content-Type": "text/html; charset=utf-8" } }
-  );
-}
-__name(handleOptionsDiscussion, "handleOptionsDiscussion");
-
-// cp-admin/pages/options-media.js
-init_option();
-function esc17(str) {
-  return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-__name(esc17, "esc");
-var KEYS_MEDIA = [
-  "thumbnail_size_w",
-  "thumbnail_size_h",
-  "thumbnail_crop",
-  "medium_size_w",
-  "medium_size_h",
-  "large_size_w",
-  "large_size_h",
-  "uploads_use_yearmonth_folders"
-];
-async function handleOptionsMedia(request, cp) {
-  const method = request.method.toUpperCase();
-  let notice = null;
-  if (method === "POST") {
-    const fd = await request.formData().catch(() => new FormData());
-    for (const key of KEYS_MEDIA) {
-      if (key === "thumbnail_crop" || key === "uploads_use_yearmonth_folders") {
-        await updateOption(cp, key, fd.get(key) ? "1" : "0");
-      } else {
-        const val = fd.get(key);
-        if (val !== null)
-          await updateOption(cp, key, val.trim());
-      }
-    }
-    notice = { type: "success", message: "Settings saved." };
-  }
-  const v = {};
-  for (const key of KEYS_MEDIA) {
-    v[key] = await getOption(cp, key, "").catch(() => "");
-  }
-  const content = `
-<div class="cp-card" style="max-width:680px">
-  <h1>Media Settings</h1>
-  <form method="post" style="margin-top:16px">
-
-    <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:8px">Image sizes</h2>
-    <p style="color:#888;font-size:13px;margin:-4px 0 16px">Note: CloudPress stores files in KV. Resize operations are performed at upload time.</p>
-
-    <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
-
-      <tr style="border-bottom:1px solid #eee">
-        <th style="text-align:left;padding:14px 0;font-weight:500;width:180px;vertical-align:top">Thumbnail size</th>
-        <td style="padding:14px 0 14px 20px">
-          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-            Width <input type="number" name="thumbnail_size_w" value="${esc17(v.thumbnail_size_w || "150")}" min="0"
-                         style="width:70px;padding:6px 8px;border:1px solid #ccc;border-radius:4px">
-            Height <input type="number" name="thumbnail_size_h" value="${esc17(v.thumbnail_size_h || "150")}" min="0"
-                          style="width:70px;padding:6px 8px;border:1px solid #ccc;border-radius:4px">
-          </div>
-          <label style="display:flex;align-items:center;gap:8px;margin-top:8px">
-            <input type="checkbox" name="thumbnail_crop" value="1" ${v.thumbnail_crop === "1" ? "checked" : ""}>
-            Crop thumbnail to exact dimensions
-          </label>
-        </td>
-      </tr>
-
-      <tr style="border-bottom:1px solid #eee">
-        <th style="text-align:left;padding:14px 0;font-weight:500;vertical-align:top">Medium size</th>
-        <td style="padding:14px 0 14px 20px">
-          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-            Max Width <input type="number" name="medium_size_w" value="${esc17(v.medium_size_w || "300")}" min="0"
-                             style="width:70px;padding:6px 8px;border:1px solid #ccc;border-radius:4px">
-            Max Height <input type="number" name="medium_size_h" value="${esc17(v.medium_size_h || "300")}" min="0"
-                              style="width:70px;padding:6px 8px;border:1px solid #ccc;border-radius:4px">
-          </div>
-        </td>
-      </tr>
-
-      <tr>
-        <th style="text-align:left;padding:14px 0;font-weight:500;vertical-align:top">Large size</th>
-        <td style="padding:14px 0 14px 20px">
-          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-            Max Width <input type="number" name="large_size_w" value="${esc17(v.large_size_w || "1024")}" min="0"
-                             style="width:70px;padding:6px 8px;border:1px solid #ccc;border-radius:4px">
-            Max Height <input type="number" name="large_size_h" value="${esc17(v.large_size_h || "1024")}" min="0"
-                              style="width:70px;padding:6px 8px;border:1px solid #ccc;border-radius:4px">
-          </div>
-        </td>
-      </tr>
-
-    </table>
-
-    <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:8px">Uploading Files</h2>
-    <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
-      <tr><td style="padding:12px 0">
-        <label style="display:flex;align-items:center;gap:8px">
-          <input type="checkbox" name="uploads_use_yearmonth_folders" value="1" ${v.uploads_use_yearmonth_folders !== "0" ? "checked" : ""}>
-          Organize my uploads into month- and year-based folders
-        </label>
-        <p style="color:#888;font-size:12px;margin:6px 0 0">Files stored in KV with keys like <code>cp:media:2024/01/filename.jpg</code></p>
-      </td></tr>
-    </table>
-
-    <div><button type="submit" class="cp-btn">Save Changes</button></div>
-  </form>
-</div>`;
-  return new Response(
-    await renderAdminShell(cp, content, { title: "Media Settings", notices: notice ? [notice] : [] }),
-    { headers: { "Content-Type": "text/html; charset=utf-8" } }
-  );
-}
-__name(handleOptionsMedia, "handleOptionsMedia");
-
-// cp-admin/pages/options-permalink.js
-init_option();
-function esc18(str) {
-  return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-__name(esc18, "esc");
-async function handleOptionsPermalink(request, cp) {
-  const method = request.method.toUpperCase();
-  let notice = null;
-  if (method === "POST") {
-    const fd = await request.formData().catch(() => new FormData());
-    let structure = (fd.get("permalink_structure") || "").trim();
-    if (fd.get("selection") === "custom") {
-      structure = (fd.get("custom_structure") || "").trim();
-    }
-    await updateOption(cp, "permalink_structure", structure);
-    await updateOption(cp, "category_base", (fd.get("category_base") || "").trim());
-    await updateOption(cp, "tag_base", (fd.get("tag_base") || "").trim());
-    notice = { type: "success", message: "Permalink structure saved." };
-  }
-  const current = await getOption(cp, "permalink_structure", "/%year%/%monthnum%/%postname%/").catch(() => "/%year%/%monthnum%/%postname%/");
-  const catBase = await getOption(cp, "category_base", "").catch(() => "");
-  const tagBase = await getOption(cp, "tag_base", "").catch(() => "");
-  const structures = [
-    { label: "Plain", value: "", example: "/?p=123" },
-    { label: "Day and name", value: "/%year%/%monthnum%/%day%/%postname%/", example: "/2024/01/01/sample-post/" },
-    { label: "Month and name", value: "/%year%/%monthnum%/%postname%/", example: "/2024/01/sample-post/" },
-    { label: "Numeric", value: "/archives/%post_id%", example: "/archives/123" },
-    { label: "Post name", value: "/%postname%/", example: "/sample-post/" }
-  ];
-  const isCustom = !structures.find((s) => s.value === current);
-  const rows = structures.map((s) => `
-  <tr style="border-bottom:1px solid #f0f0f0">
-    <td style="padding:10px 0">
-      <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
-        <input type="radio" name="selection" value="${esc18(s.value)}"
-               ${current === s.value && !isCustom ? "checked" : ""} style="margin:0"
-               onchange="document.getElementById('permalink_structure').value='${esc18(s.value)}'">
-        <span style="font-weight:500;min-width:160px">${esc18(s.label)}</span>
-        <code style="background:#f5f5f5;padding:2px 8px;border-radius:3px;font-size:13px">${esc18(s.example)}</code>
-      </label>
-    </td>
-  </tr>`).join("");
-  const content = `
-<div class="cp-card" style="max-width:720px">
-  <h1>Permalink Settings</h1>
-  <p style="color:#666;margin-bottom:8px">CloudPress uses the URL structure to route requests via the Worker. Choose a structure that works for your site.</p>
-
-  <form method="post" style="margin-top:16px">
-    <input type="hidden" name="permalink_structure" id="permalink_structure" value="${esc18(current)}">
-
-    <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:8px">Common settings</h2>
-    <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
-      ${rows}
-      <tr>
-        <td style="padding:10px 0">
-          <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
-            <input type="radio" name="selection" value="custom" ${isCustom ? "checked" : ""} style="margin:3px 0 0"
-                   onchange="document.getElementById('permalink_structure').value=document.getElementById('custom_structure').value">
-            <span>
-              <span style="font-weight:500;display:block;margin-bottom:6px">Custom Structure</span>
-              <input type="text" id="custom_structure" name="custom_structure"
-                     value="${esc18(isCustom ? current : "")}"
-                     placeholder="/%year%/%monthnum%/%postname%/"
-                     style="width:360px;padding:8px 10px;border:1px solid #ccc;border-radius:4px"
-                     oninput="document.querySelector('[name=selection][value=custom]').checked=true;document.getElementById('permalink_structure').value=this.value">
-              <p style="color:#888;font-size:12px;margin:4px 0 0">Tags: %year% %monthnum% %day% %hour% %minute% %second% %post_id% %postname% %category% %author%</p>
-            </span>
-          </label>
-        </td>
-      </tr>
-    </table>
-
-    <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:8px">Optional</h2>
-    <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
-      <tr style="border-bottom:1px solid #f0f0f0">
-        <th style="text-align:left;padding:12px 0;font-weight:500;width:180px">Category base</th>
-        <td style="padding:12px 0 12px 20px">
-          <span style="color:#888;margin-right:4px">${esc18(cp.config?.SITE_URL || cp.url?.origin || "")}/</span>
-          <input type="text" name="category_base" value="${esc18(catBase)}" placeholder="category"
-                 style="padding:6px 10px;border:1px solid #ccc;border-radius:4px;width:200px">
-        </td>
-      </tr>
-      <tr>
-        <th style="text-align:left;padding:12px 0;font-weight:500">Tag base</th>
-        <td style="padding:12px 0 12px 20px">
-          <span style="color:#888;margin-right:4px">${esc18(cp.config?.SITE_URL || cp.url?.origin || "")}/</span>
-          <input type="text" name="tag_base" value="${esc18(tagBase)}" placeholder="tag"
-                 style="padding:6px 10px;border:1px solid #ccc;border-radius:4px;width:200px">
-        </td>
-      </tr>
-    </table>
-
-    <div><button type="submit" class="cp-btn">Save Changes</button></div>
-  </form>
-</div>`;
-  return new Response(
-    await renderAdminShell(cp, content, { title: "Permalink Settings", notices: notice ? [notice] : [] }),
-    { headers: { "Content-Type": "text/html; charset=utf-8" } }
-  );
-}
-__name(handleOptionsPermalink, "handleOptionsPermalink");
-
-// cp-admin/pages/import.js
-init_crypto();
-function esc19(str) {
-  return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-__name(esc19, "esc");
-async function handleImport(request, cp) {
-  const method = request.method.toUpperCase();
-  const prefix = cp.db_prefix || "cp_";
-  let notice = null;
-  let importLog = null;
-  if (method === "POST") {
-    const fd = await request.formData().catch(() => new FormData());
-    const action = fd.get("action") || "";
-    if (action === "import_wxr") {
-      const file = fd.get("wxr_file");
-      if (!file || !file.name) {
-        notice = { type: "error", message: "Please select a WordPress XML (.xml) export file." };
-      } else {
-        try {
-          const text = await file.text();
-          const result = await importWXR(cp, prefix, text);
-          importLog = result;
-          notice = { type: "success", message: `Import complete: ${result.posts} posts, ${result.pages} pages, ${result.users} users imported.` };
-        } catch (e) {
-          notice = { type: "error", message: `Import failed: ${e.message}` };
-        }
-      }
-    }
-    if (action === "import_json") {
-      const file = fd.get("json_file");
-      if (!file || !file.name) {
-        notice = { type: "error", message: "Please select a CloudPress JSON export file." };
-      } else {
-        try {
-          const text = await file.text();
-          const data = JSON.parse(text);
-          let posts = 0, users = 0;
-          const now = (/* @__PURE__ */ new Date()).toISOString().replace("T", " ").slice(0, 19);
-          if (Array.isArray(data.posts)) {
-            for (const p of data.posts) {
-              await cp.db.prepare(
-                `INSERT OR IGNORE INTO ${prefix}posts (post_title,post_content,post_status,post_type,post_date,post_modified,post_author,post_name)
-                 VALUES (?,?,?,?,?,?,?,?)`
-              ).bind(
-                p.post_title || "",
-                p.post_content || "",
-                p.post_status || "draft",
-                p.post_type || "post",
-                p.post_date || now,
-                p.post_modified || now,
-                1,
-                p.post_name || ""
-              ).run();
-              posts++;
-            }
-          }
-          if (Array.isArray(data.users)) {
-            for (const u of data.users) {
-              const hash = await hashPassword(Math.random().toString(36).slice(2));
-              await cp.db.prepare(
-                `INSERT OR IGNORE INTO ${prefix}users (user_login,user_pass,user_email,user_registered,user_status,display_name)
-                 VALUES (?,?,?,?,0,?)`
-              ).bind(u.user_login || "", hash, u.user_email || "", now, u.display_name || u.user_login || "").run();
-              users++;
-            }
-          }
-          notice = { type: "success", message: `JSON import complete: ${posts} posts, ${users} users.` };
-        } catch (e) {
-          notice = { type: "error", message: `JSON import failed: ${e.message}` };
-        }
-      }
-    }
-  }
-  const content = `
-<div class="cp-card" style="max-width:720px">
-  <h1>Import</h1>
-  <p style="color:#666;margin-bottom:24px">Import content from another site into CloudPress.</p>
-
-  <!-- WordPress XML Import -->
-  <div style="border:1px solid #ddd;border-radius:8px;padding:20px;margin-bottom:20px">
-    <h2 style="margin:0 0 8px;font-size:18px">&#128196; WordPress (WXR)</h2>
-    <p style="color:#666;font-size:14px;margin:0 0 16px">Import posts, pages, comments, categories, tags, and users from a WordPress XML export file.</p>
-    <form method="post" enctype="multipart/form-data">
-      <input type="hidden" name="action" value="import_wxr">
-      <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
-        <div style="flex:1;min-width:200px">
-          <label style="display:block;margin-bottom:4px;font-weight:500">Choose WordPress export file (.xml)</label>
-          <input type="file" name="wxr_file" accept=".xml,text/xml" required
-                 style="display:block;width:100%;padding:8px;border:2px dashed #ccc;border-radius:4px;cursor:pointer;box-sizing:border-box">
-        </div>
-        <button type="submit" class="cp-btn">Import</button>
-      </div>
-    </form>
-  </div>
-
-  <!-- CloudPress JSON Import -->
-  <div style="border:1px solid #ddd;border-radius:8px;padding:20px;margin-bottom:20px">
-    <h2 style="margin:0 0 8px;font-size:18px">&#128196; CloudPress JSON</h2>
-    <p style="color:#666;font-size:14px;margin:0 0 16px">Import from a CloudPress JSON export file (generated by the Export tool).</p>
-    <form method="post" enctype="multipart/form-data">
-      <input type="hidden" name="action" value="import_json">
-      <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
-        <div style="flex:1;min-width:200px">
-          <label style="display:block;margin-bottom:4px;font-weight:500">Choose CloudPress export file (.json)</label>
-          <input type="file" name="json_file" accept=".json,application/json" required
-                 style="display:block;width:100%;padding:8px;border:2px dashed #ccc;border-radius:4px;cursor:pointer;box-sizing:border-box">
-        </div>
-        <button type="submit" class="cp-btn">Import</button>
-      </div>
-    </form>
-  </div>
-
-  ${importLog ? `
-  <div style="background:#f5f5f5;border-radius:6px;padding:16px;margin-top:16px;font-family:monospace;font-size:13px">
-    <strong>Import Summary</strong><br>
-    Posts: ${importLog.posts ?? 0}<br>
-    Pages: ${importLog.pages ?? 0}<br>
-    Users: ${importLog.users ?? 0}<br>
-    Comments: ${importLog.comments ?? 0}<br>
-    Categories: ${importLog.categories ?? 0}<br>
-    Tags: ${importLog.tags ?? 0}<br>
-    Errors: ${(importLog.errors || []).length}
-    ${importLog.errors?.length ? `<br><span style="color:#c00">Errors:<br>${importLog.errors.map((e) => esc19(e)).join("<br>")}</span>` : ""}
-  </div>` : ""}
-</div>`;
-  return new Response(
-    await renderAdminShell(cp, content, { title: "Import", notices: notice ? [notice] : [] }),
-    { headers: { "Content-Type": "text/html; charset=utf-8" } }
-  );
-}
-__name(handleImport, "handleImport");
-async function importWXR(cp, prefix, xml) {
-  const log = { posts: 0, pages: 0, users: 0, comments: 0, categories: 0, tags: 0, errors: [] };
-  const now = (/* @__PURE__ */ new Date()).toISOString().replace("T", " ").slice(0, 19);
-  function extractTag(str, tag) {
-    const m = str.match(new RegExp(`<${tag}(?:[^>]*)><!\\[CDATA\\[([\\s\\S]*?)\\]\\]></${tag}>|<${tag}(?:[^>]*)>([\\s\\S]*?)</${tag}>`, "i"));
-    return m ? (m[1] ?? m[2] ?? "").trim() : "";
-  }
-  __name(extractTag, "extractTag");
-  const catMatches = xml.matchAll(/<wp:category>([\s\S]*?)<\/wp:category>/g);
-  for (const m of catMatches) {
+//  KV    
+async function getSiteInfo(env, hostname) {
+  if (env.CACHE) {
     try {
-      const name = extractTag(m[1], "wp:cat_name");
-      const slug = extractTag(m[1], "wp:category_nicename");
-      if (name) {
-        await cp.db.prepare(`INSERT OR IGNORE INTO ${prefix}terms (name,slug,term_group) VALUES (?,?,0)`).bind(name, slug || name.toLowerCase().replace(/\s+/g, "-")).run();
-        const term = await cp.db.prepare(`SELECT term_id FROM ${prefix}terms WHERE slug=? LIMIT 1`).bind(slug || name).first();
-        if (term) {
-          await cp.db.prepare(`INSERT OR IGNORE INTO ${prefix}term_taxonomy (term_id,taxonomy,description,parent,count) VALUES (?,?,?,?,0)`).bind(term.term_id, "category", "", 0).run();
+      const cached = await env.CACHE.get(KV_SITE_PREFIX + hostname, { type: 'json' });
+      if (cached) return cached;
+    } catch {}
+  }
+  if (env.DB) {
+    try {
+      const row = await env.DB.prepare(
+        `SELECT id, name, site_prefix, status, suspended,
+                supabase_url, supabase_key, supabase_url2, supabase_key2,
+                site_d1_id, site_kv_id, storage_bucket, storage_bucket2
+           FROM sites
+          WHERE (primary_domain = ? OR custom_domain = ?)
+            AND domain_status = 'active'
+            AND deleted_at IS NULL
+          LIMIT 1`
+      ).bind(hostname, hostname).first();
+      if (row) {
+        const info = {
+          id: row.id, name: row.name,
+          site_prefix: row.site_prefix || row.id,
+          status: row.status, suspended: row.suspended,
+          supabase_url: row.supabase_url, supabase_key: row.supabase_key,
+          supabase_url2: row.supabase_url2, supabase_key2: row.supabase_key2,
+          site_d1_id: row.site_d1_id, site_kv_id: row.site_kv_id,
+          storage_bucket: row.storage_bucket, storage_bucket2: row.storage_bucket2,
+        };
+        if (env.CACHE) {
+          env.CACHE.put(KV_SITE_PREFIX + hostname, JSON.stringify(info), { expirationTtl: 86400 }).catch(() => {});
         }
-        log.categories++;
+        return info;
       }
     } catch (e) {
-      log.errors.push(`Category: ${e.message}`);
+      console.warn('[worker] D1 site lookup error:', e?.message);
     }
   }
-  const tagMatches = xml.matchAll(/<wp:tag>([\s\S]*?)<\/wp:tag>/g);
-  for (const m of tagMatches) {
-    try {
-      const name = extractTag(m[1], "wp:tag_name");
-      const slug = extractTag(m[1], "wp:tag_slug");
-      if (name) {
-        await cp.db.prepare(`INSERT OR IGNORE INTO ${prefix}terms (name,slug,term_group) VALUES (?,?,0)`).bind(name, slug || name.toLowerCase().replace(/\s+/g, "-")).run();
-        const term = await cp.db.prepare(`SELECT term_id FROM ${prefix}terms WHERE slug=? LIMIT 1`).bind(slug || name).first();
-        if (term) {
-          await cp.db.prepare(`INSERT OR IGNORE INTO ${prefix}term_taxonomy (term_id,taxonomy,description,parent,count) VALUES (?,?,?,?,0)`).bind(term.term_id, "post_tag", "", 0).run();
-        }
-        log.tags++;
-      }
-    } catch (e) {
-      log.errors.push(`Tag: ${e.message}`);
-    }
-  }
-  const authorMatches = xml.matchAll(/<wp:author>([\s\S]*?)<\/wp:author>/g);
-  for (const m of authorMatches) {
-    try {
-      const login = extractTag(m[1], "wp:author_login");
-      const email = extractTag(m[1], "wp:author_email");
-      const name = extractTag(m[1], "wp:author_display_name") || login;
-      if (login) {
-        const hash = await hashPassword(Math.random().toString(36).slice(2) + Date.now());
-        await cp.db.prepare(
-          `INSERT OR IGNORE INTO ${prefix}users (user_login,user_pass,user_email,user_registered,user_status,display_name)
-           VALUES (?,?,?,?,0,?)`
-        ).bind(login, hash, email, now, name).run();
-        log.users++;
-      }
-    } catch (e) {
-      log.errors.push(`Author: ${e.message}`);
-    }
-  }
-  const itemMatches = xml.matchAll(/<item>([\s\S]*?)<\/item>/g);
-  for (const m of itemMatches) {
-    try {
-      const itemXml = m[1];
-      const title = extractTag(itemXml, "title");
-      const content = extractTag(itemXml, "content:encoded");
-      const excerpt = extractTag(itemXml, "excerpt:encoded");
-      const status = extractTag(itemXml, "wp:status");
-      const postType = extractTag(itemXml, "wp:post_type");
-      const postName = extractTag(itemXml, "wp:post_name");
-      const postDate = (extractTag(itemXml, "wp:post_date") || now).replace("T", " ").slice(0, 19);
-      const authorLogin = extractTag(itemXml, "dc:creator");
-      if (postType === "attachment" || postType === "nav_menu_item")
-        continue;
-      let authorId = 1;
-      if (authorLogin) {
-        const au = await cp.db.prepare(`SELECT ID FROM ${prefix}users WHERE user_login=? LIMIT 1`).bind(authorLogin).first();
-        if (au)
-          authorId = au.ID;
-      }
-      const res = await cp.db.prepare(
-        `INSERT INTO ${prefix}posts
-           (post_title,post_content,post_excerpt,post_status,post_type,post_name,post_date,post_modified,post_author,comment_status,ping_status)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?)`
-      ).bind(title, content, excerpt, status || "draft", postType || "post", postName || "", postDate, postDate, authorId, "open", "open").run();
-      const newPostId = res.meta?.last_row_id;
-      if (postType === "page")
-        log.pages++;
-      else
-        log.posts++;
-      if (newPostId) {
-        const commentMatches = itemXml.matchAll(/<wp:comment>([\s\S]*?)<\/wp:comment>/g);
-        for (const cm of commentMatches) {
-          try {
-            const cx = cm[1];
-            await cp.db.prepare(
-              `INSERT INTO ${prefix}comments
-                 (comment_post_ID,comment_author,comment_author_email,comment_author_url,comment_content,comment_date,comment_approved)
-               VALUES (?,?,?,?,?,?,?)`
-            ).bind(
-              newPostId,
-              extractTag(cx, "wp:comment_author"),
-              extractTag(cx, "wp:comment_author_email"),
-              extractTag(cx, "wp:comment_author_url"),
-              extractTag(cx, "wp:comment_content"),
-              (extractTag(cx, "wp:comment_date") || now).slice(0, 19),
-              extractTag(cx, "wp:comment_approved") || "1"
-            ).run();
-            log.comments++;
-          } catch (e) {
-            log.errors.push(`Comment: ${e.message}`);
-          }
-        }
-      }
-    } catch (e) {
-      log.errors.push(`Item: ${e.message}`);
-    }
-  }
-  return log;
+  return null;
 }
-__name(importWXR, "importWXR");
 
-// cp-admin/pages/export.js
-function escXml3(str) {
-  return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+async function getWPOptions(env, sitePrefix, keys) {
+  const result = {};
+  const missing = [];
+  for (const k of keys) {
+    const kvKey = `${KV_OPT_PREFIX}${sitePrefix}:${k}`;
+    try {
+      const v = env.CACHE ? await env.CACHE.get(kvKey) : null;
+      if (v !== null) result[k] = v;
+      else missing.push(k);
+    } catch { missing.push(k); }
+  }
+  if (missing.length && env.DB) {
+    try {
+      const placeholders = missing.map(() => '?').join(',');
+      const rows = await env.DB.prepare(
+        `SELECT option_name, option_value FROM wp_options WHERE option_name IN (${placeholders}) LIMIT 50`
+      ).bind(...missing).all();
+      for (const row of (rows.results || [])) {
+        result[row.option_name] = row.option_value;
+        if (env.CACHE) {
+          env.CACHE.put(`${KV_OPT_PREFIX}${sitePrefix}:${row.option_name}`, row.option_value, { expirationTtl: 3600 }).catch(() => {});
+        }
+      }
+    } catch {}
+  }
+  return result;
 }
-__name(escXml3, "escXml");
-function cdata(str) {
-  return `<![CDATA[${String(str ?? "")}]]>`;
-}
-__name(cdata, "cdata");
-async function handleExport(request, cp) {
-  const url = new URL(request.url);
-  const format = url.searchParams.get("format") || "";
-  const prefix = cp.db_prefix || "cp_";
-  if (format === "json" || format === "wxr") {
-    const postType = url.searchParams.get("post_type") || "all";
-    const status = url.searchParams.get("status") || "all";
-    const conditions = [];
-    const params = [];
-    if (postType !== "all") {
-      conditions.push(`post_type=?`);
-      params.push(postType);
-    } else {
-      conditions.push(`post_type IN ('post','page')`);
-    }
-    if (status !== "all") {
-      conditions.push(`post_status=?`);
-      params.push(status);
-    } else {
-      conditions.push(`post_status != 'trash'`);
-    }
-    const where = `WHERE ${conditions.join(" AND ")}`;
-    const posts = await cp.db.prepare(
-      `SELECT p.*, u.user_login as author_login, u.user_email as author_email, u.display_name as author_display
-       FROM ${prefix}posts p
-       LEFT JOIN ${prefix}users u ON u.ID = p.post_author
-       ${where} ORDER BY p.post_date ASC`
-    ).bind(...params).all();
-    const allPosts = posts.results || [];
-    const postIds = allPosts.map((p) => p.ID);
-    let allComments = [];
-    if (postIds.length) {
-      const placeholders = postIds.map(() => "?").join(",");
-      const cRes = await cp.db.prepare(
-        `SELECT * FROM ${prefix}comments WHERE comment_post_ID IN (${placeholders}) ORDER BY comment_date ASC`
-      ).bind(...postIds).all();
-      allComments = cRes.results || [];
-    }
-    const userRes = await cp.db.prepare(`SELECT ID, user_login, user_email, display_name, user_registered FROM ${prefix}users`).all();
-    const users = userRes.results || [];
-    const termRes = await cp.db.prepare(
-      `SELECT t.term_id, t.name, t.slug, tt.taxonomy
-       FROM ${prefix}terms t JOIN ${prefix}term_taxonomy tt ON tt.term_id=t.term_id`
-    ).all();
-    const terms = termRes.results || [];
-    const siteUrl = cp.config?.SITE_URL || cp.url?.origin || "";
-    const siteName = cp.config?.SITE_NAME || "CloudPress Site";
-    const now = (/* @__PURE__ */ new Date()).toISOString();
-    if (format === "json") {
-      const data = { exported_at: now, site_url: siteUrl, site_name: siteName, posts: allPosts, users, terms, comments: allComments };
-      return new Response(JSON.stringify(data, null, 2), {
+
+async function supabaseUpload(siteInfo, bucket, path, body, contentType) {
+  if (siteInfo.supabase_url && siteInfo.supabase_key) {
+    try {
+      const res = await fetch(`${siteInfo.supabase_url}/storage/v1/object/${bucket}/${path}`, {
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json; charset=utf-8",
-          "Content-Disposition": `attachment; filename="cloudpress-export-${now.slice(0, 10)}.json"`
-        }
+          'apikey': siteInfo.supabase_key,
+          'Authorization': `Bearer ${siteInfo.supabase_key}`,
+          'Content-Type': contentType,
+        },
+        body,
       });
-    }
-    const commentsById = {};
-    for (const c of allComments) {
-      const pid = c.comment_post_ID;
-      if (!commentsById[pid])
-        commentsById[pid] = [];
-      commentsById[pid].push(c);
-    }
-    const userXml = users.map((u) => `
-    <wp:author>
-      <wp:author_id>${u.ID}</wp:author_id>
-      <wp:author_login>${cdata(u.user_login)}</wp:author_login>
-      <wp:author_email>${cdata(u.user_email)}</wp:author_email>
-      <wp:author_display_name>${cdata(u.display_name)}</wp:author_display_name>
-    </wp:author>`).join("");
-    const catXml = terms.filter((t) => t.taxonomy === "category").map((t) => `
-    <wp:category>
-      <wp:term_id>${t.term_id}</wp:term_id>
-      <wp:category_nicename>${cdata(t.slug)}</wp:category_nicename>
-      <wp:cat_name>${cdata(t.name)}</wp:cat_name>
-    </wp:category>`).join("");
-    const tagXml = terms.filter((t) => t.taxonomy === "post_tag").map((t) => `
-    <wp:tag>
-      <wp:term_id>${t.term_id}</wp:term_id>
-      <wp:tag_slug>${cdata(t.slug)}</wp:tag_slug>
-      <wp:tag_name>${cdata(t.name)}</wp:tag_name>
-    </wp:tag>`).join("");
-    const itemsXml = allPosts.map((p) => {
-      const comments = (commentsById[p.ID] || []).map((c) => `
-        <wp:comment>
-          <wp:comment_id>${c.comment_ID}</wp:comment_id>
-          <wp:comment_author>${cdata(c.comment_author)}</wp:comment_author>
-          <wp:comment_author_email>${cdata(c.comment_author_email)}</wp:comment_author_email>
-          <wp:comment_author_url>${cdata(c.comment_author_url)}</wp:comment_author_url>
-          <wp:comment_date>${cdata(c.comment_date)}</wp:comment_date>
-          <wp:comment_content>${cdata(c.comment_content)}</wp:comment_content>
-          <wp:comment_approved>${cdata(c.comment_approved)}</wp:comment_approved>
-        </wp:comment>`).join("");
-      return `
-    <item>
-      <title>${cdata(p.post_title)}</title>
-      <link>${escXml3(siteUrl)}/?p=${p.ID}</link>
-      <pubDate>${new Date(p.post_date).toUTCString()}</pubDate>
-      <dc:creator>${cdata(p.author_login)}</dc:creator>
-      <content:encoded>${cdata(p.post_content)}</content:encoded>
-      <excerpt:encoded>${cdata(p.post_excerpt)}</excerpt:encoded>
-      <wp:post_id>${p.ID}</wp:post_id>
-      <wp:post_date>${cdata(p.post_date)}</wp:post_date>
-      <wp:post_modified>${cdata(p.post_modified)}</wp:post_modified>
-      <wp:comment_status>${cdata(p.comment_status)}</wp:comment_status>
-      <wp:ping_status>${cdata(p.ping_status)}</wp:ping_status>
-      <wp:post_name>${cdata(p.post_name)}</wp:post_name>
-      <wp:status>${cdata(p.post_status)}</wp:status>
-      <wp:post_type>${cdata(p.post_type)}</wp:post_type>
-      ${comments}
-    </item>`;
-    }).join("");
-    const wxr = `<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0"
-  xmlns:excerpt="http://wordpress.org/export/1.2/excerpt/"
-  xmlns:content="http://purl.org/rss/1.0/modules/content/"
-  xmlns:wfw="http://wellformedweb.org/CommentAPI/"
-  xmlns:dc="http://purl.org/dc/elements/1.1/"
-  xmlns:wp="http://wordpress.org/export/1.2/">
-  <channel>
-    <title>${cdata(siteName)}</title>
-    <link>${escXml3(siteUrl)}</link>
-    <description></description>
-    <pubDate>${(/* @__PURE__ */ new Date()).toUTCString()}</pubDate>
-    <language>ko-KR</language>
-    <wp:wxr_version>1.2</wp:wxr_version>
-    <wp:base_site_url>${escXml3(siteUrl)}</wp:base_site_url>
-    <wp:base_blog_url>${escXml3(siteUrl)}</wp:base_blog_url>
-    ${userXml}${catXml}${tagXml}${itemsXml}
-  </channel>
-</rss>`;
-    return new Response(wxr, {
-      headers: {
-        "Content-Type": "text/xml; charset=utf-8",
-        "Content-Disposition": `attachment; filename="cloudpress-export-${now.slice(0, 10)}.xml"`
+      if (res.ok || res.status === 200 || res.status === 201) {
+        return { ok: true, url: `${siteInfo.supabase_url}/storage/v1/object/public/${bucket}/${path}` };
       }
+      if (res.status === 413 || res.status === 402) throw new Error('quota_exceeded');
+    } catch (e) { if (e.message !== 'quota_exceeded') {} }
+  }
+  if (siteInfo.supabase_url2 && siteInfo.supabase_key2) {
+    try {
+      const bucket2 = siteInfo.storage_bucket2 || bucket;
+      const res = await fetch(`${siteInfo.supabase_url2}/storage/v1/object/${bucket2}/${path}`, {
+        method: 'POST',
+        headers: {
+          'apikey': siteInfo.supabase_key2,
+          'Authorization': `Bearer ${siteInfo.supabase_key2}`,
+          'Content-Type': contentType,
+        },
+        body,
+      });
+      if (res.ok) {
+        return { ok: true, url: `${siteInfo.supabase_url2}/storage/v1/object/public/${bucket2}/${path}`, secondary: true };
+      }
+    } catch {}
+  }
+  return { ok: false, error: 'all_storage_failed' };
+}
+
+//  Edge SSR 
+async function renderWordPressPage(env, siteInfo, url, request) {
+  const sitePrefix = siteInfo.site_prefix;
+  const hostname = url.hostname;
+  const pathname = url.pathname;
+  const search = url.search;
+
+  const opts = await getWPOptions(env, sitePrefix, [
+    'blogname', 'blogdescription', 'siteurl', 'home',
+    'template', 'stylesheet', 'active_plugins', 'permalink_structure',
+    'posts_per_page', 'date_format', 'time_format', 'timezone_string',
+    'admin_email', 'default_comment_status',
+  ]);
+
+  const siteName = opts.blogname || siteInfo.name || hostname;
+  const siteDesc = opts.blogdescription || '';
+  const siteUrl  = `https://${hostname}`;
+  const themeDir = opts.stylesheet || opts.template || 'twentytwentyfour';
+
+  const contentData = await resolveWPRoute(env, sitePrefix, pathname, search, opts);
+
+  const html = await renderWPTemplate(env, sitePrefix, siteInfo, contentData, {
+    siteName, siteDesc, siteUrl, themeDir, opts, hostname, pathname,
+  });
+
+  return { html, contentData };
+}
+
+async function resolveWPRoute(env, sitePrefix, pathname, search, opts) {
+  const searchParams = new URLSearchParams(search);
+  const p = searchParams.get('p');
+  const catSlug  = searchParams.get('cat') || searchParams.get('category_name');
+  const tagSlug  = searchParams.get('tag');
+  const postSlug = pathname.replace(/^\/|\/$/g,'');
+
+  let type = 'home', posts = [], post = null, term = null;
+
+  try {
+    if (pathname === '/' || pathname === '') {
+      const frontPage = opts.page_on_front ? parseInt(opts.page_on_front, 10) : 0;
+      if (frontPage) {
+        post = await env.DB.prepare(
+          `SELECT * FROM wp_posts WHERE ID = ? AND post_status = 'publish' LIMIT 1`
+        ).bind(frontPage).first();
+        type = 'page';
+      } else {
+        const perPage = parseInt(opts.posts_per_page || '10', 10);
+        const res = await env.DB.prepare(
+          `SELECT ID, post_title, post_content, post_excerpt, post_date, post_name, post_author, comment_count
+             FROM wp_posts
+            WHERE post_type = 'post' AND post_status = 'publish'
+            ORDER BY post_date DESC LIMIT ?`
+        ).bind(perPage).all();
+        posts = res.results || [];
+        type = 'home';
+      }
+    } else if (p) {
+      post = await env.DB.prepare(
+        `SELECT * FROM wp_posts WHERE ID = ? AND post_status = 'publish' LIMIT 1`
+      ).bind(parseInt(p, 10)).first();
+      type = post?.post_type === 'page' ? 'page' : 'single';
+    } else if (catSlug) {
+      const cat = await env.DB.prepare(
+        `SELECT t.*, tt.description, tt.count, tt.term_taxonomy_id
+           FROM wp_terms t
+           JOIN wp_term_taxonomy tt ON tt.term_id = t.term_id
+          WHERE t.slug = ? AND tt.taxonomy = 'category' LIMIT 1`
+      ).bind(catSlug).first();
+      if (cat) {
+        term = cat;
+        const res = await env.DB.prepare(
+          `SELECT p.ID, p.post_title, p.post_content, p.post_excerpt, p.post_date, p.post_name
+             FROM wp_posts p
+             JOIN wp_term_relationships tr ON tr.object_id = p.ID
+            WHERE tr.term_taxonomy_id = ? AND p.post_status = 'publish' AND p.post_type = 'post'
+            ORDER BY p.post_date DESC LIMIT 10`
+        ).bind(cat.term_taxonomy_id).all();
+        posts = res.results || [];
+        type = 'archive';
+      } else { type = '404'; }
+    } else if (tagSlug) {
+      const tag = await env.DB.prepare(
+        `SELECT t.*, tt.description, tt.term_taxonomy_id
+           FROM wp_terms t
+           JOIN wp_term_taxonomy tt ON tt.term_id = t.term_id
+          WHERE t.slug = ? AND tt.taxonomy = 'post_tag' LIMIT 1`
+      ).bind(tagSlug).first();
+      if (tag) {
+        term = tag;
+        const res = await env.DB.prepare(
+          `SELECT p.ID, p.post_title, p.post_content, p.post_excerpt, p.post_date, p.post_name
+             FROM wp_posts p
+             JOIN wp_term_relationships tr ON tr.object_id = p.ID
+            WHERE tr.term_taxonomy_id = ? AND p.post_status = 'publish' AND p.post_type = 'post'
+            ORDER BY p.post_date DESC LIMIT 10`
+        ).bind(tag.term_taxonomy_id).all();
+        posts = res.results || [];
+        type = 'archive';
+      } else { type = '404'; }
+    } else if (postSlug) {
+      post = await env.DB.prepare(
+        `SELECT * FROM wp_posts
+          WHERE post_name = ? AND post_status = 'publish'
+            AND post_type IN ('post', 'page')
+          LIMIT 1`
+      ).bind(postSlug).first();
+      if (post) {
+        type = post.post_type === 'page' ? 'page' : 'single';
+        if (post.ID) {
+          const metaRes = await env.DB.prepare(
+            `SELECT meta_key, meta_value FROM wp_postmeta WHERE post_id = ? LIMIT 50`
+          ).bind(post.ID).all();
+          post._meta = {};
+          for (const m of (metaRes.results || [])) {
+            post._meta[m.meta_key] = m.meta_value;
+          }
+          const taxRes = await env.DB.prepare(
+            `SELECT t.name, t.slug, tt.taxonomy
+               FROM wp_terms t
+               JOIN wp_term_taxonomy tt ON tt.term_id = t.term_id
+               JOIN wp_term_relationships tr ON tr.term_taxonomy_id = tt.term_taxonomy_id
+              WHERE tr.object_id = ? AND tt.taxonomy IN ('category','post_tag')`
+          ).bind(post.ID).all();
+          post._categories = (taxRes.results || []).filter(r => r.taxonomy === 'category');
+          post._tags       = (taxRes.results || []).filter(r => r.taxonomy === 'post_tag');
+        }
+      } else { type = '404'; }
+    }
+  } catch (e) {
+    console.warn('[SSR] DB query error:', e.message);
+    type = 'error';
+  }
+
+  return { type, post, posts, term };
+}
+
+async function renderWPTemplate(env, sitePrefix, siteInfo, contentData, ctx) {
+  const { siteName, siteDesc, siteUrl, opts, hostname, pathname } = ctx;
+  const { type, post, posts, term } = contentData;
+
+  let recentPosts = [];
+  try {
+    const rp = await env.DB.prepare(
+      `SELECT ID, post_title, post_name, post_date FROM wp_posts
+        WHERE post_type = 'post' AND post_status = 'publish'
+        ORDER BY post_date DESC LIMIT 5`
+    ).all();
+    recentPosts = rp.results || [];
+  } catch {}
+
+  let navItems = [];
+  try {
+    const navRes = await env.DB.prepare(
+      `SELECT p.post_title, pm.meta_value as url, p.menu_order
+         FROM wp_posts p
+         LEFT JOIN wp_postmeta pm ON pm.post_id = p.ID AND pm.meta_key = '_menu_item_url'
+        WHERE p.post_type = 'nav_menu_item' AND p.post_status = 'publish'
+        ORDER BY p.menu_order ASC LIMIT 20`
+    ).all();
+    navItems = navRes.results || [];
+  } catch {}
+
+  let mainContent = '';
+  let pageTitle   = siteName;
+  let metaDesc    = siteDesc;
+
+  if (type === 'single' || type === 'page') {
+    pageTitle = esc(post?.post_title || siteName);
+    metaDesc  = esc(post?.post_excerpt || siteDesc);
+    const cats = (post?._categories || []).map(c =>
+      `<a href="${esc(siteUrl)}/?category_name=${esc(c.slug)}" rel="category tag">${esc(c.name)}</a>`
+    ).join(', ');
+    const tags = (post?._tags || []).map(t =>
+      `<a href="${esc(siteUrl)}/?tag=${esc(t.slug)}" rel="tag">${esc(t.name)}</a>`
+    ).join(', ');
+
+    mainContent = `
+<article id="post-${post?.ID || 0}" class="post-${post?.ID || 0} ${post?.post_type || 'post'} type-${post?.post_type || 'post'} status-publish hentry">
+  <header class="entry-header">
+    <h1 class="entry-title">${esc(post?.post_title || '')}</h1>
+    ${type === 'single' ? `<div class="entry-meta">
+      <time class="entry-date published" datetime="${esc(post?.post_date || '')}">${formatDate(post?.post_date, opts.date_format)}</time>
+      ${cats ? `<span class="cat-links">${cats}</span>` : ''}
+    </div>` : ''}
+  </header>
+  <div class="entry-content">${renderShortcodes(post?.post_content || '')}</div>
+  ${tags ? `<footer class="entry-footer"><span class="tags-links">${tags}</span></footer>` : ''}
+</article>`;
+  } else if (type === 'home' || type === 'archive') {
+    if (type === 'archive' && term) {
+      pageTitle = esc(term.name);
+      metaDesc  = esc(term.description || '');
+      mainContent += `<header class="page-header"><h1 class="page-title">${esc(term.name)}</h1>${term.description ? `<div class="taxonomy-description">${esc(term.description)}</div>` : ''}</header>`;
+    }
+    if (posts.length === 0) {
+      //   -   (  )
+      mainContent += `<div class="wp-block-query"><p class="no-results" style="color:#767676;font-size:1rem;text-align:center;padding:3rem 0">   .</p></div>`;
+    } else {
+      mainContent += '<div class="posts-loop">';
+      for (const p of posts) {
+        const excerpt = (p.post_excerpt || p.post_content || '').slice(0, 300).replace(/<[^>]+>/g, '');
+        mainContent += `
+<article id="post-${p.ID}" class="post-${p.ID} post type-post status-publish hentry">
+  <header class="entry-header">
+    <h2 class="entry-title"><a href="${esc(siteUrl)}/${esc(p.post_name)}/" rel="bookmark">${esc(p.post_title)}</a></h2>
+    <div class="entry-meta"><time class="entry-date published" datetime="${esc(p.post_date)}">${formatDate(p.post_date, opts.date_format)}</time></div>
+  </header>
+  <div class="entry-summary"><p>${esc(excerpt.slice(0, 200))}${excerpt.length > 200 ? '…' : ''}</p><a href="${esc(siteUrl)}/${esc(p.post_name)}/" class="more-link"> </a></div>
+</article>`;
+      }
+      mainContent += '</div>';
+    }
+  } else if (type === '404') {
+    pageTitle = '   ';
+    mainContent = `<div class="error-404 not-found"><h1>404</h1><p>    .</p><a href="${esc(siteUrl)}/"></a></div>`;
+  }
+
+  const navHtml = navItems.length
+    ? navItems.map(n => `<li class="menu-item"><a href="${esc(n.url || siteUrl + '/')}">${esc(n.post_title)}</a></li>`).join('')
+    : `<li class="menu-item"><a href="${esc(siteUrl)}/"></a></li>`;
+
+  const sidebarHtml = `
+<aside id="secondary" class="widget-area">
+  <section id="recent-posts" class="widget widget_recent_entries">
+    <h2 class="widget-title"> </h2>
+    <ul>${recentPosts.length ? recentPosts.map(rp => `<li><a href="${esc(siteUrl)}/${esc(rp.post_name)}/">${esc(rp.post_title)}</a></li>`).join('') : '<li> .</li>'}</ul>
+  </section>
+</aside>`;
+
+  return `<!DOCTYPE html>
+<html lang="ko" class="no-js">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="generator" content="WordPress 6.7">
+  <title>${pageTitle}${type !== 'home' ? ` – ${esc(siteName)}` : ''}</title>
+  <meta name="description" content="${metaDesc}">
+  <link rel="canonical" href="${esc(siteUrl + pathname)}">
+  <link rel="alternate" type="application/rss+xml" title="${esc(siteName)} &raquo; " href="${esc(siteUrl)}/feed/">
+  <style>
+    :root{--wp--preset--color--black:#000;--wp--preset--color--white:#fff;--wp--preset--font-size--small:13px;--wp--preset--font-size--medium:20px;--wp--preset--font-size--large:36px;}
+    *,::after,::before{box-sizing:border-box}
+    html{font-size:16px;scroll-behavior:smooth}
+    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:1rem;line-height:1.7;color:#1e1e1e;background:#fff}
+    a{color:#0073aa;text-decoration:none}a:hover{text-decoration:underline;color:#005580}
+    img{max-width:100%;height:auto}
+    .site{display:flex;flex-direction:column;min-height:100vh}
+    .site-header{background:#fff;border-bottom:1px solid #e0e0e0;padding:.8rem 0;position:sticky;top:0;z-index:100;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+    .header-inner{max-width:1200px;margin:0 auto;padding:0 1.5rem;display:flex;align-items:center;justify-content:space-between;gap:1rem}
+    .site-branding .site-title{margin:0;font-size:1.5rem;font-weight:700}.site-branding .site-title a{color:#1e1e1e}
+    .site-branding .site-description{margin:.25rem 0 0;color:#767676;font-size:.875rem}
+    nav.main-navigation ul{list-style:none;margin:0;padding:0;display:flex;gap:1.5rem;flex-wrap:wrap}
+    nav.main-navigation ul li a{font-size:.9375rem;color:#1e1e1e;font-weight:500;padding:.25rem 0;border-bottom:2px solid transparent;transition:border-color .2s}
+    nav.main-navigation ul li a:hover{border-bottom-color:#0073aa;text-decoration:none}
+    .site-content{flex:1;max-width:1200px;margin:0 auto;padding:2rem 1.5rem;width:100%;display:grid;grid-template-columns:1fr 300px;gap:2.5rem}
+    @media(max-width:768px){.site-content{grid-template-columns:1fr}}
+    .entry-header{margin-bottom:1.5rem}
+    .entry-title{font-size:1.75rem;font-weight:700;margin:0 0 .5rem;line-height:1.3}
+    .entry-title a{color:#1e1e1e}.entry-title a:hover{color:#0073aa;text-decoration:none}
+    .entry-meta{color:#767676;font-size:.875rem;margin-bottom:.5rem}
+    .entry-content{line-height:1.8;font-size:1rem}
+    .entry-content p{margin:0 0 1.25rem}
+    .entry-summary{margin-bottom:.75rem}.entry-summary p{margin:0}
+    .more-link{display:inline-block;margin-top:.5rem;padding:.35rem .875rem;background:#0073aa;color:#fff;border-radius:3px;font-size:.875rem;font-weight:500;transition:background .15s}
+    .more-link:hover{background:#005580;color:#fff;text-decoration:none}
+    .posts-loop article{padding:1.5rem 0;border-bottom:1px solid #e8e8e8}.posts-loop article:last-child{border-bottom:none}
+    .error-404{text-align:center;padding:3rem 1rem}.error-404 h1{font-size:6rem;font-weight:900;color:#0073aa;margin:0}
+    .widget-area{font-size:.9375rem}
+    .widget{margin-bottom:2rem;padding:1.5rem;background:#f9f9f9;border-radius:6px;border:1px solid #e8e8e8}
+    .widget-title{font-size:1rem;font-weight:700;margin:0 0 1rem;padding-bottom:.5rem;border-bottom:2px solid #0073aa}
+    .widget ul{list-style:none;margin:0;padding:0}
+    .widget ul li{padding:.4rem 0;border-bottom:1px solid #eee}.widget ul li:last-child{border-bottom:none}
+    .site-footer{background:#1e1e1e;color:#a0a0a0;padding:2rem 1.5rem;text-align:center;font-size:.875rem;margin-top:auto}
+    .site-footer a{color:#c0c0c0}.site-footer a:hover{color:#fff}
+    .no-posts{text-align:center;padding:3rem 1rem;color:#767676}
+    .no-posts .page-title{font-size:1.5rem;color:#1e1e1e;margin-bottom:1rem}
+    .btn-admin,.btn-login{display:inline-block;margin:.5rem .25rem;padding:.5rem 1.25rem;border-radius:4px;font-size:.9rem;font-weight:600}
+    .btn-admin{background:#0073aa;color:#fff}.btn-admin:hover{background:#005580;text-decoration:none;color:#fff}
+    .btn-login{background:#f0f0f0;color:#1e1e1e;border:1px solid #ccc}.btn-login:hover{background:#e0e0e0;text-decoration:none}
+    .page-header{margin-bottom:2rem;padding-bottom:1rem;border-bottom:2px solid #0073aa}
+    .page-title{font-size:1.5rem;font-weight:700;margin:0}
+    .entry-footer{margin-top:1.5rem;padding-top:1rem;border-top:1px solid #e8e8e8;font-size:.875rem;color:#767676}
+    @media(prefers-color-scheme:dark){body{background:#1a1a1a;color:#e0e0e0}.site-header{background:#1e1e1e;border-bottom-color:#333}.entry-title a,.site-branding .site-title a{color:#e0e0e0}a{color:#4fa8d5}.site-footer{background:#111}.widget{background:#252525;border-color:#333}}
+  </style>
+</head>
+<body class="wp-site-blocks ${type === 'single' ? 'single-post' : type === 'page' ? 'page' : type === 'home' ? 'home blog' : type}">
+<div id="page" class="site">
+  <header id="masthead" class="site-header">
+    <div class="header-inner">
+      <div class="site-branding">
+        <p class="site-title"><a href="${esc(siteUrl)}/" rel="home">${esc(siteName)}</a></p>
+        ${siteDesc ? `<p class="site-description">${esc(siteDesc)}</p>` : ''}
+      </div>
+      <nav id="site-navigation" class="main-navigation" aria-label=" ">
+        <ul>${navHtml}</ul>
+      </nav>
+    </div>
+  </header>
+
+  <div id="content" class="site-content">
+    <main id="primary" class="site-main">${mainContent}</main>
+    ${sidebarHtml}
+  </div>
+
+  <footer id="colophon" class="site-footer">
+    <div class="site-info">
+      <a href="${esc(siteUrl)}/">${esc(siteName)}</a> &mdash;
+      <a href="https://wordpress.org/" target="_blank" rel="noopener">WordPress</a> 
+      &nbsp;|&nbsp; Powered by <a href="https://cloudpress.site/" target="_blank" rel="noopener">CloudPress</a>
+    </div>
+  </footer>
+</div>
+<script>document.documentElement.className=document.documentElement.className.replace('no-js','js');</script>
+</body>
+</html>`;
+}
+
+function formatDate(dateStr, fmt) {
+  if (!dateStr) return '';
+  try {
+    const d = new Date(dateStr);
+    const year = d.getFullYear(), month = d.getMonth()+1, day = d.getDate();
+    if (!fmt || fmt === 'Y n j') return `${year} ${month} ${day}`;
+    return d.toLocaleDateString('ko-KR');
+  } catch { return dateStr; }
+}
+
+function renderShortcodes(content) {
+  if (!content) return '';
+  return content
+    .replace(/\[caption[^\]]*\](.*?)\[\/caption\]/gs, (_, inner) => `<figure class="wp-caption">${inner}</figure>`)
+    .replace(/\[gallery[^\]]*\]/g, '<div class="gallery">[]</div>')
+    .replace(/\[embed\](.*?)\[\/embed\]/g, (_, url) => `<div class="wp-embed-responsive"><a href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a></div>`)
+    .replace(/\[[\w_-]+[^\]]*\]/g, '')
+    .replace(/\n\n+/g, '</p><p>')
+    .replace(/^(?!<[a-z])/gm, (m) => m ? `<p>${m}` : m);
+}
+
+//  WordPress   
+async function handleWPLogin(env, request, url, siteInfo) {
+  const action = url.searchParams.get('action') || 'login';
+
+  // 
+  if (action === 'logout') {
+    const token = getSessionToken(request);
+    if (token && env.CACHE) {
+      env.CACHE.delete(SESSION_KV_PREFIX + token).catch(() => {});
+    }
+    return new Response('', {
+      status: 302,
+      headers: {
+        'Location': `https://${url.hostname}/wp-login.php`,
+        'Set-Cookie': `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT`,
+      },
     });
   }
-  const content = `
-<div class="cp-card" style="max-width:640px">
-  <h1>Export</h1>
-  <p style="color:#666;margin-bottom:20px">Export your content in CloudPress JSON or WordPress WXR (XML) format.</p>
 
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+  //    wp-admin
+  const existing = await validateSession(env, request);
+  if (existing) {
+    const redirectTo = url.searchParams.get('redirect_to') || '/wp-admin/';
+    return Response.redirect(`https://${url.hostname}${redirectTo}`, 302);
+  }
 
-    <!-- JSON Export -->
-    <div style="border:1px solid #ddd;border-radius:8px;padding:20px">
-      <h2 style="margin:0 0 8px;font-size:17px">&#128196; CloudPress JSON</h2>
-      <p style="color:#666;font-size:13px;margin:0 0 16px">Export all content as a JSON file. Use this to import into another CloudPress site.</p>
-      <form method="get">
-        <input type="hidden" name="format" value="json">
-        <div style="display:grid;gap:10px">
-          <div>
-            <label style="display:block;margin-bottom:4px;font-size:13px;font-weight:500">Content Type</label>
-            <select name="post_type" style="width:100%;padding:7px 10px;border:1px solid #ccc;border-radius:4px;background:#fff">
-              <option value="all">All content</option>
-              <option value="post">Posts only</option>
-              <option value="page">Pages only</option>
-            </select>
-          </div>
-          <div>
-            <label style="display:block;margin-bottom:4px;font-size:13px;font-weight:500">Status</label>
-            <select name="status" style="width:100%;padding:7px 10px;border:1px solid #ccc;border-radius:4px;background:#fff">
-              <option value="all">All statuses</option>
-              <option value="publish">Published</option>
-              <option value="draft">Draft</option>
-            </select>
-          </div>
-          <button type="submit" class="cp-btn">&#8595; Download JSON</button>
-        </div>
-      </form>
-    </div>
+  if (request.method === 'POST') {
+    const body = await request.formData().catch(() => new FormData());
+    const username = (body.get('log') || '').trim();
+    const password = body.get('pwd') || '';
+    const redirectTo = body.get('redirect_to') || '/wp-admin/';
+    const rememberMe = body.get('rememberme') === 'forever';
 
-    <!-- WXR Export -->
-    <div style="border:1px solid #ddd;border-radius:8px;padding:20px">
-      <h2 style="margin:0 0 8px;font-size:17px">&#128196; WordPress WXR</h2>
-      <p style="color:#666;font-size:13px;margin:0 0 16px">Export as WordPress XML format. Import this into a WordPress site.</p>
-      <form method="get">
-        <input type="hidden" name="format" value="wxr">
-        <div style="display:grid;gap:10px">
-          <div>
-            <label style="display:block;margin-bottom:4px;font-size:13px;font-weight:500">Content Type</label>
-            <select name="post_type" style="width:100%;padding:7px 10px;border:1px solid #ccc;border-radius:4px;background:#fff">
-              <option value="all">All content</option>
-              <option value="post">Posts only</option>
-              <option value="page">Pages only</option>
-            </select>
-          </div>
-          <div>
-            <label style="display:block;margin-bottom:4px;font-size:13px;font-weight:500">Status</label>
-            <select name="status" style="width:100%;padding:7px 10px;border:1px solid #ccc;border-radius:4px;background:#fff">
-              <option value="all">All statuses</option>
-              <option value="publish">Published</option>
-              <option value="draft">Draft</option>
-            </select>
-          </div>
-          <button type="submit" class="cp-btn">&#8595; Download XML</button>
-        </div>
-      </form>
-    </div>
-
-  </div>
-</div>`;
-  return new Response(
-    await renderAdminShell(cp, content, { title: "Export" }),
-    { headers: { "Content-Type": "text/html; charset=utf-8" } }
-  );
-}
-__name(handleExport, "handleExport");
-
-// cp-admin/pages/tools.js
-async function handleTools(request, cp) {
-  const method = request.method.toUpperCase();
-  const prefix = cp.db_prefix || "cp_";
-  let notice = null;
-  if (method === "POST") {
-    const fd = await request.formData().catch(() => new FormData());
-    const action = fd.get("action") || "";
-    if (action === "flush_kv") {
-      const PURGE_PREFIXES = [
-        "cp:themes:list",
-        "cp:template:",
-        "cp:theme:meta:",
-        "cp:option:",
-        "cp:post:",
-        "cp:query:",
-        "cp:update:",
-        "cp:transient:",
-        "cp:doing_cron"
-      ];
-      const singleKeys2 = PURGE_PREFIXES.filter((k) => !k.endsWith(":"));
-      for (const k of singleKeys2) {
-        try { await cp.kv.delete(k); } catch (_) {}
-      }
-      const prefixKeys3 = PURGE_PREFIXES.filter((k) => k.endsWith(":"));
-      let totalDeleted2 = 0;
-      for (const pfx of prefixKeys3) {
-        try {
-          let cursor;
-          do {
-            const opts = cursor ? { prefix: pfx, cursor } : { prefix: pfx };
-            const listResult = await cp.kv.list(opts);
-            for (const key of (listResult.keys || [])) {
-              await cp.kv.delete(key.name).catch(() => {});
-              totalDeleted2++;
-            }
-            cursor = listResult.list_complete ? null : listResult.cursor;
-          } while (cursor);
-        } catch (_) {}
-      }
-      notice = { type: "success", message: `\uCE90\uC2DC \uC644\uC804 \uC0AD\uC81C \uC644\uB8CC. KV \uD0A4 ${totalDeleted2}\uAC1C \uC81C\uAC70\uB428.` };
-    }
-    if (action === "recount_terms") {
+    if (username && password) {
       try {
-        const terms = await cp.db.prepare(
-          `SELECT tt.term_taxonomy_id, tt.term_id, tt.taxonomy FROM ${prefix}term_taxonomy tt`
-        ).all();
-        for (const tt of terms.results || []) {
-          const count = await cp.db.prepare(
-            `SELECT COUNT(*) as n FROM ${prefix}term_relationships tr
-             JOIN ${prefix}posts p ON p.ID=tr.object_id
-             WHERE tr.term_taxonomy_id=? AND p.post_status='publish'`
-          ).bind(tt.term_taxonomy_id).first();
-          await cp.db.prepare(
-            `UPDATE ${prefix}term_taxonomy SET count=? WHERE term_taxonomy_id=?`
-          ).bind(count?.n || 0, tt.term_taxonomy_id).run();
+        const user = await env.DB.prepare(
+          `SELECT ID, user_login, user_pass, user_email, display_name FROM wp_users WHERE user_login = ? OR user_email = ? LIMIT 1`
+        ).bind(username, username).first();
+
+        if (user && await verifyWPPassword(password, user.user_pass)) {
+          const sessionToken = crypto.randomUUID();
+          const ttl = rememberMe ? 30 * 24 * 3600 : 24 * 3600;
+          const expiry = new Date(Date.now() + ttl * 1000).toUTCString();
+
+          if (env.CACHE) {
+            await env.CACHE.put(
+              SESSION_KV_PREFIX + sessionToken,
+              JSON.stringify({ userId: user.ID, login: user.user_login, displayName: user.display_name }),
+              { expirationTtl: ttl }
+            );
+          }
+
+          return new Response('', {
+            status: 302,
+            headers: {
+              'Location': redirectTo,
+              'Set-Cookie': `${SESSION_COOKIE}=${sessionToken}; Path=/; HttpOnly; Secure; SameSite=Lax; Expires=${expiry}`,
+            },
+          });
         }
-        notice = { type: "success", message: "Term counts updated." };
       } catch (e) {
-        notice = { type: "error", message: `Error: ${e.message}` };
+        console.warn('[login] error:', e.message);
       }
-    }
-    if (action === "delete_orphaned_meta") {
-      try {
-        await cp.db.prepare(
-          `DELETE FROM ${prefix}postmeta WHERE post_id NOT IN (SELECT ID FROM ${prefix}posts)`
-        ).run();
-        await cp.db.prepare(
-          `DELETE FROM ${prefix}commentmeta WHERE comment_id NOT IN (SELECT comment_ID FROM ${prefix}comments)`
-        ).run();
-        notice = { type: "success", message: "Orphaned meta data deleted." };
-      } catch (e) {
-        notice = { type: "error", message: `Error: ${e.message}` };
-      }
-    }
-    if (action === "run_cron") {
-      try {
-        const { handleScheduled: handleScheduled2 } = await Promise.resolve().then(() => (init_cp_cron(), cp_cron_exports));
-        await handleScheduled2({ scheduledTime: Date.now(), cron: "manual" }, cp.env, cp.ctx);
-        notice = { type: "success", message: "Cron tasks executed manually." };
-      } catch (e) {
-        notice = { type: "error", message: `Cron error: ${e.message}` };
-      }
-    }
-  }
-  let dbStats = null;
-  try {
-    const [postCount, commentCount, termCount, userCount, mediaCount] = await Promise.all([
-      cp.db.prepare(`SELECT COUNT(*) as n FROM ${prefix}posts WHERE post_status != 'trash'`).first(),
-      cp.db.prepare(`SELECT COUNT(*) as n FROM ${prefix}comments`).first(),
-      cp.db.prepare(`SELECT COUNT(*) as n FROM ${prefix}terms`).first(),
-      cp.db.prepare(`SELECT COUNT(*) as n FROM ${prefix}users`).first(),
-      cp.db.prepare(`SELECT COUNT(*) as n FROM ${prefix}media`).first().catch(() => ({ n: 0 }))
-    ]);
-    dbStats = { posts: postCount?.n || 0, comments: commentCount?.n || 0, terms: termCount?.n || 0, users: userCount?.n || 0, media: mediaCount?.n || 0 };
-  } catch (_) {
-  }
-  const content = `
-<div class="cp-card" style="max-width:720px">
-  <h1>Tools</h1>
 
-  ${dbStats ? `
-  <div style="background:#f9f9f9;border:1px solid #e0e0e0;border-radius:8px;padding:16px;margin-bottom:24px">
-    <h3 style="margin:0 0 12px;font-size:15px">Database Stats</h3>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px;text-align:center">
-      ${[["Posts", dbStats.posts], ["Comments", dbStats.comments], ["Terms", dbStats.terms], ["Users", dbStats.users], ["Media", dbStats.media]].map(([l, n]) => `
-      <div style="background:#fff;border:1px solid #ddd;border-radius:6px;padding:12px">
-        <div style="font-size:1.5rem;font-weight:700;color:#0073aa">${n}</div>
-        <div style="font-size:12px;color:#666">${l}</div>
-      </div>`).join("")}
-    </div>
-  </div>` : ""}
-
-  <div style="display:grid;gap:16px">
-
-    <div style="border:1px solid #ddd;border-radius:8px;padding:18px">
-      <h3 style="margin:0 0 6px">Flush Cache</h3>
-      <p style="color:#666;font-size:13px;margin:0 0 12px">Clear all template and theme caches stored in KV. Useful after updating theme files in GitHub.</p>
-      <form method="post">
-        <input type="hidden" name="action" value="flush_kv">
-        <button type="submit" class="cp-btn">Flush Cache</button>
-      </form>
-    </div>
-
-    <div style="border:1px solid #ddd;border-radius:8px;padding:18px">
-      <h3 style="margin:0 0 6px">Update Term Counts</h3>
-      <p style="color:#666;font-size:13px;margin:0 0 12px">Recalculate the post count for all categories and tags.</p>
-      <form method="post">
-        <input type="hidden" name="action" value="recount_terms">
-        <button type="submit" class="cp-btn">Update Counts</button>
-      </form>
-    </div>
-
-    <div style="border:1px solid #ddd;border-radius:8px;padding:18px">
-      <h3 style="margin:0 0 6px">Delete Orphaned Meta</h3>
-      <p style="color:#666;font-size:13px;margin:0 0 12px">Remove post and comment metadata that no longer has a parent record.</p>
-      <form method="post" onsubmit="return confirm('Delete orphaned metadata?')">
-        <input type="hidden" name="action" value="delete_orphaned_meta">
-        <button type="submit" class="cp-btn">Delete Orphaned Meta</button>
-      </form>
-    </div>
-
-    <div style="border:1px solid #ddd;border-radius:8px;padding:18px">
-      <h3 style="margin:0 0 6px">Run Cron Manually</h3>
-      <p style="color:#666;font-size:13px;margin:0 0 12px">Trigger cron tasks immediately (scheduled posts, ping handling, etc.).</p>
-      <form method="post">
-        <input type="hidden" name="action" value="run_cron">
-        <button type="submit" class="cp-btn">Run Cron Now</button>
-      </form>
-    </div>
-
-    <div style="border:1px solid #ddd;border-radius:8px;padding:18px">
-      <h3 style="margin:0 0 6px">Import / Export</h3>
-      <p style="color:#666;font-size:13px;margin:0 0 12px">Move your content to or from other sites.</p>
-      <div style="display:flex;gap:10px">
-        <a href="/cp-admin/import" class="cp-btn">Import</a>
-        <a href="/cp-admin/export" class="cp-btn cp-btn-secondary">Export</a>
-      </div>
-    </div>
-
-  </div>
-</div>`;
-  return new Response(
-    await renderAdminShell(cp, content, { title: "Tools", notices: notice ? [notice] : [] }),
-    { headers: { "Content-Type": "text/html; charset=utf-8" } }
-  );
-}
-__name(handleTools, "handleTools");
-
-// cp-admin/pages/upgrade.js
-init_cp_config();
-function esc20(str) {
-  return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-__name(esc20, "esc");
-async function handleUpgrade(request, cp) {
-  const method = request.method.toUpperCase();
-  let notice = null;
-  let latestInfo = null;
-  try {
-    const githubRepo = cp.config?.GITHUB_REPO || await cp.db.prepare(
-      `SELECT option_value FROM ${cp.db_prefix || "cp_"}options WHERE option_name='cp_github_repo' LIMIT 1`
-    ).first().then((r) => r?.option_value || "").catch(() => "");
-    if (githubRepo) {
-      const headers = { "User-Agent": "CloudPress/1.0" };
-      if (cp.config?.GITHUB_TOKEN)
-        headers["Authorization"] = `Bearer ${cp.config.GITHUB_TOKEN}`;
-      const res = await fetch(`https://api.github.com/repos/${githubRepo}/releases/latest`, { headers });
-      if (res.ok) {
-        const data = await res.json();
-        latestInfo = { version: data.tag_name?.replace(/^v/, "") || "unknown", url: data.html_url, body: data.body || "" };
-      }
-    }
-  } catch (_) {
-  }
-  if (method === "POST") {
-    const fd = await request.formData().catch(() => new FormData());
-    const action = fd.get("action") || "";
-    if (action === "flush_update_cache") {
-      await cp.kv.delete("cp:update:check").catch(() => {
+      //  
+      return new Response(renderLoginPage(siteInfo, '    .', url, username), {
+        status: 200,
+        headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
       });
-      notice = { type: "success", message: "Update cache cleared." };
     }
-  }
-  const currentVersion = CP_VERSION || cp.version || "1.2.0";
-  const isUpToDate = !latestInfo || latestInfo.version === currentVersion;
-  const content = `
-<div class="cp-card" style="max-width:720px">
-  <h1>CloudPress Updates</h1>
 
-  <!-- Current version -->
-  <div style="background:#f9f9f9;border:1px solid #e0e0e0;border-radius:8px;padding:20px;margin-bottom:24px">
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
-      <div>
-        <div style="font-size:13px;color:#888;margin-bottom:4px">Current Version</div>
-        <div style="font-size:22px;font-weight:700;color:#0073aa">CloudPress ${esc20(currentVersion)}</div>
-      </div>
-      ${isUpToDate ? `<div style="background:#46b450;color:#fff;padding:8px 16px;border-radius:6px;font-weight:600">&#10003; Up to Date</div>` : `<div style="background:#d63638;color:#fff;padding:8px 16px;border-radius:6px;font-weight:600">&#9888; Update Available</div>`}
-    </div>
-  </div>
-
-  ${latestInfo && !isUpToDate ? `
-  <div style="border:2px solid #d63638;border-radius:8px;padding:20px;margin-bottom:24px">
-    <h2 style="margin:0 0 8px;color:#d63638">New Version Available: ${esc20(latestInfo.version)}</h2>
-    <p style="color:#555;font-size:14px;margin:0 0 16px">CloudPress is deployed via Cloudflare Workers. To update, pull the latest code and re-deploy:</p>
-    <pre style="background:#f5f5f5;padding:14px;border-radius:6px;overflow-x:auto;font-size:13px">git pull origin main
-npx wrangler deploy</pre>
-    ${latestInfo.url ? `<a href="${esc20(latestInfo.url)}" target="_blank" class="cp-btn" style="margin-top:12px;display:inline-block">View Release Notes &#8599;</a>` : ""}
-  </div>` : ""}
-
-  ${isUpToDate ? `
-  <div style="color:#46b450;font-size:15px;margin-bottom:20px">&#10003; You are running the latest version of CloudPress.</div>` : ""}
-
-  <!-- How to update -->
-  <div style="border:1px solid #ddd;border-radius:8px;padding:20px;margin-bottom:20px">
-    <h3 style="margin:0 0 12px">How to Update CloudPress</h3>
-    <ol style="color:#555;font-size:14px;line-height:1.8;margin:0;padding-left:20px">
-      <li>Pull the latest code from your GitHub repository</li>
-      <li>Run <code style="background:#f5f5f5;padding:1px 6px;border-radius:3px">npx wrangler deploy</code> to deploy to Cloudflare Workers</li>
-      <li>Your site will update instantly with zero downtime</li>
-    </ol>
-    <pre style="background:#f5f5f5;padding:14px;border-radius:6px;overflow-x:auto;font-size:13px;margin-top:12px">cd your-cloudpress-folder
-git pull origin main
-npx wrangler deploy</pre>
-  </div>
-
-  <!-- Database migrations -->
-  <div style="border:1px solid #ddd;border-radius:8px;padding:20px;margin-bottom:20px">
-    <h3 style="margin:0 0 8px">Database Migrations</h3>
-    <p style="color:#666;font-size:13px;margin:0 0 12px">If an update requires database schema changes, run:</p>
-    <pre style="background:#f5f5f5;padding:14px;border-radius:6px;overflow-x:auto;font-size:13px">npx wrangler d1 migrations apply cloudpress-db</pre>
-  </div>
-
-  <!-- Actions -->
-  <div style="display:flex;gap:10px;flex-wrap:wrap">
-    <form method="post">
-      <input type="hidden" name="action" value="flush_update_cache">
-      <button type="submit" class="cp-btn cp-btn-secondary">Clear Update Cache</button>
-    </form>
-    <a href="/cp-admin" class="cp-btn cp-btn-secondary">Back to Dashboard</a>
-  </div>
-</div>`;
-  return new Response(
-    await renderAdminShell(cp, content, { title: "Updates", notices: notice ? [notice] : [] }),
-    { headers: { "Content-Type": "text/html; charset=utf-8" } }
-  );
-}
-__name(handleUpgrade, "handleUpgrade");
-
-// cp-admin/ajax.js
-init_cp_load();
-var AJAX_ACTIONS = /* @__PURE__ */ new Map();
-async function handleAjax(request, env, ctx) {
-  if (request.method.toUpperCase() !== "POST") {
-    return jsonResponse({ success: false, data: "Method not allowed" }, 405);
-  }
-  let formData;
-  try {
-    formData = await request.formData();
-  } catch (_) {
-    return jsonResponse({ success: false, data: "Invalid request body" }, 400);
-  }
-  const action = formData.get("action") || "";
-  if (!action) {
-    return jsonResponse({ success: false, data: "No action specified" }, 400);
-  }
-  const cp = await cpLoad(request, env, ctx);
-  if (cp.__cpError)
-    return jsonResponse({ success: false, data: "Server error" }, 500);
-  const user = await getAdminUser(cp);
-  cp.currentUser = user;
-  const entry = AJAX_ACTIONS.get(action);
-  if (!entry) {
-    const builtinResult = await handleBuiltinAction(action, cp, formData, user);
-    if (builtinResult !== null)
-      return builtinResult;
-    return jsonResponse({ success: false, data: `Unknown action: ${action}` }, 400);
-  }
-  if (!entry.nopriv && !user) {
-    return jsonResponse({ success: false, data: "-1" }, 401);
-  }
-  try {
-    const result = await entry.handler(cp, formData);
-    return jsonResponse({ success: true, data: result });
-  } catch (err) {
-    console.error("[CloudPress AJAX]", action, err);
-    return jsonResponse({ success: false, data: err.message }, 500);
-  }
-}
-__name(handleAjax, "handleAjax");
-async function handleBuiltinAction(action, cp, formData, user) {
-  switch (action) {
-    case "heartbeat": {
-      if (!user)
-        return jsonResponse({ success: false, data: "-1" }, 401);
-      return jsonResponse({ success: true, data: { nonce: await generateNonce(cp), time: Date.now() } });
-    }
-    case "autosave":
-    case "cp_autosave": {
-      if (!user)
-        return jsonResponse({ success: false, data: "-1" }, 401);
-      const postId = parseInt(formData.get("post_id") || "0");
-      const content = formData.get("post_content") || "";
-      const title = formData.get("post_title") || "";
-      if (postId) {
-        const prefix = cp.config.DB_PREFIX || "cp_";
-        await cp.db.prepare(
-          `UPDATE ${prefix}posts SET post_title=?, post_content=?, post_modified=? WHERE ID=?`
-        ).bind(title, content, (/* @__PURE__ */ new Date()).toISOString().slice(0, 19), postId).run();
-      }
-      return jsonResponse({ success: true, data: { saved: true, postId } });
-    }
-    case "delete_post":
-    case "cp_delete_post": {
-      if (!user)
-        return jsonResponse({ success: false, data: "-1" }, 401);
-      const id = parseInt(formData.get("id") || "0");
-      if (!id)
-        return jsonResponse({ success: false, data: "Invalid ID" }, 400);
-      const prefix = cp.config.DB_PREFIX || "cp_";
-      await cp.db.prepare(`UPDATE ${prefix}posts SET post_status='trash' WHERE ID=?`).bind(id).run();
-      return jsonResponse({ success: true, data: { deleted: true } });
-    }
-    case "cp_save_option": {
-      if (!user)
-        return jsonResponse({ success: false, data: "-1" }, 401);
-      const key = formData.get("key") || "";
-      const val = formData.get("value") || "";
-      if (!key)
-        return jsonResponse({ success: false, data: "No key" }, 400);
-      const prefix = cp.config.DB_PREFIX || "cp_";
-      await cp.db.prepare(
-        `INSERT INTO ${prefix}options (option_name, option_value, autoload)
-         VALUES (?, ?, 'yes')
-         ON CONFLICT(option_name) DO UPDATE SET option_value=excluded.option_value`
-      ).bind(key, val).run();
-      return jsonResponse({ success: true, data: { saved: true } });
-    }
-    case "cp_github_status": {
-      if (!user)
-        return jsonResponse({ success: false, data: "-1" }, 401);
-      const prefix = cp.config.DB_PREFIX || "cp_";
-      const repoRow = await cp.db.prepare(
-        `SELECT option_value FROM ${prefix}options WHERE option_name='cp_github_repo' LIMIT 1`
-      ).first();
-      return jsonResponse({ success: true, data: { repo: repoRow?.option_value || "" } });
-    }
-    case "approve-comment": {
-      if (!user)
-        return jsonResponse({ success: false, data: "-1" }, 401);
-      const id = parseInt(formData.get("id") || "0");
-      const prefix = cp.config.DB_PREFIX || "cp_";
-      await cp.db.prepare(
-        `UPDATE ${prefix}comments SET comment_approved='1' WHERE comment_ID=?`
-      ).bind(id).run();
-      return jsonResponse({ success: true, data: { approved: true } });
-    }
-    case "trash-comment": {
-      if (!user)
-        return jsonResponse({ success: false, data: "-1" }, 401);
-      const id = parseInt(formData.get("id") || "0");
-      const prefix = cp.config.DB_PREFIX || "cp_";
-      await cp.db.prepare(
-        `UPDATE ${prefix}comments SET comment_approved='trash' WHERE comment_ID=?`
-      ).bind(id).run();
-      return jsonResponse({ success: true, data: { trashed: true } });
-    }
-    case "cp_toggle_plugin": {
-      if (!user)
-        return jsonResponse({ success: false, data: "-1" }, 401);
-      const plugin = formData.get("plugin") || "";
-      const enable = formData.get("enable") === "1";
-      if (!plugin)
-        return jsonResponse({ success: false, data: "No plugin specified" }, 400);
-      const prefix = cp.config.DB_PREFIX || "cp_";
-      const row = await cp.db.prepare(
-        `SELECT option_value FROM ${prefix}options WHERE option_name='active_plugins' LIMIT 1`
-      ).first();
-      let plugins = [];
-      try {
-        plugins = JSON.parse(row?.option_value || "[]");
-      } catch (_) {
-      }
-      if (enable && !plugins.includes(plugin))
-        plugins.push(plugin);
-      if (!enable)
-        plugins = plugins.filter((p) => p !== plugin);
-      await cp.db.prepare(
-        `UPDATE ${prefix}options SET option_value=? WHERE option_name='active_plugins'`
-      ).bind(JSON.stringify(plugins)).run();
-      return jsonResponse({ success: true, data: { plugins } });
-    }
-    default:
-      return null;
-  }
-}
-__name(handleBuiltinAction, "handleBuiltinAction");
-async function generateNonce(cp) {
-  const key = `${cp.currentUser?.ID || "anon"}:${Math.floor(Date.now() / 864e5)}`;
-  const encoder = new TextEncoder();
-  const data = encoder.encode(key + (cp.config.NONCE_KEY || "nonce"));
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 10);
-}
-__name(generateNonce, "generateNonce");
-
-// cp-admin/index.js
-async function handleAdmin(request, env, ctx) {
-  const url = new URL(request.url);
-  const path = url.pathname.replace(/\/+$/, "") || "/cp-admin";
-  const method = request.method.toUpperCase();
-  if (path === "/cp-admin/setup-config" || path === "/cp-admin/install") {
-    return handleInstaller(request, env, ctx);
-  }
-  if (path === "/cp-admin/admin-ajax" || path === "/cp-admin/admin-ajax.js") {
-    return handleAjax(request, env, ctx);
-  }
-  if (path === "/cp-admin/github-sync" || path.startsWith("/cp-admin/github-sync/")) {
-    return handleAjax(request, env, ctx);
-  }
-  const cp = await cpLoad(request, env, ctx);
-  if (cp.__cpError)
-    return cp.response;
-  const authResult = await requireAdmin(cp);
-  if (authResult)
-    return authResult;
-  return dispatchAdmin(request, env, ctx, cp, path, method, url);
-}
-__name(handleAdmin, "handleAdmin");
-
-// ── Theme Editor ─────────────────────────────────────────────────────────
-async function handleThemeEditor(request, cp) {
-  const activeSlug = await getOption(cp, 'template', 'default').catch(() => 'default');
-  const method = request.method.toUpperCase();
-  let notice = null;
-  let fileContent = '';
-  const url2 = new URL(request.url);
-  const file = url2.searchParams.get('file') || 'style.css';
-
-  // KV에서 테마 파일 로드
-  const kvKey = `cp:theme:file:${activeSlug}:${file}`;
-  fileContent = await cp.kv.get(kvKey) || getDefaultThemeFile(file);
-
-  if (method === 'POST') {
-    const fd = await request.formData().catch(() => new FormData());
-    const newContent = fd.get('newcontent') || '';
-    await cp.kv.put(kvKey, newContent);
-    fileContent = newContent;
-    notice = { type: 'success', message: `${file} 파일이 저장되었습니다.` };
+    return new Response(renderLoginPage(siteInfo, '  .', url, ''), {
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+    });
   }
 
-  const files = ['style.css', 'index.html', 'single.html', 'archive.html', 'header.html', 'footer.html', 'sidebar.html'];
-  const fileLinks = files.map(f => `<a href="?file=${encodeURIComponent(f)}" style="display:block;padding:6px 10px;text-decoration:none;color:${f===file?'#2271b1;font-weight:600;background:#f0f4ff':'#1d2327'};border-radius:4px">${f}</a>`).join('');
-
-  const escaped = fileContent.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  const content2 = `
-<div style="display:grid;grid-template-columns:180px 1fr;gap:20px">
-  <div class="cp-card" style="padding:12px">
-    <div style="font-size:12px;color:#646970;margin-bottom:8px;font-weight:600">테마 파일</div>
-    <div style="font-size:13px;color:#888;margin-bottom:8px">${activeSlug}</div>
-    ${fileLinks}
-  </div>
-  <div class="cp-card">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <strong style="font-size:15px">${file}</strong>
-      <span style="font-size:12px;color:#888">테마: ${activeSlug}</span>
-    </div>
-    <form method="post">
-      <textarea name="newcontent" style="width:100%;height:500px;font-family:monospace;font-size:13px;line-height:1.5;padding:12px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;resize:vertical;background:#1d2327;color:#a7aaad">${escaped}</textarea>
-      <div style="margin-top:12px">
-        <button type="submit" class="cp-btn">파일 저장</button>
-        <a href="?file=${encodeURIComponent(file)}" class="cp-btn cp-btn-secondary" style="margin-left:8px">취소</a>
-      </div>
-    </form>
-  </div>
-</div>`;
-
-  return new Response(
-    await renderAdminShell(cp, content2, { title: '테마 편집기', notices: notice ? [notice] : [] }),
-    { headers: { 'Content-Type': 'text/html; charset=utf-8' } }
-  );
-}
-
-function getDefaultThemeFile(file) {
-  if (file === 'style.css') return '/*\nTheme Name: CloudPress Default\nTheme URI: https://cloudpress.dev\nDescription: 기본 CloudPress 테마\nVersion: 1.0\n*/\n\nbody {\n  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;\n  line-height: 1.7;\n  color: #1d2327;\n  margin: 0;\n  padding: 0;\n}\n';
-  if (file === 'index.html') return '<!DOCTYPE html>\n<html lang="ko">\n<head><meta charset="UTF-8"><title>{{site_name}}</title></head>\n<body>\n<header><h1>{{site_name}}</h1></header>\n<main>{{content}}</main>\n<footer><p>&copy; {{year}} {{site_name}}</p></footer>\n</body>\n</html>';
-  return `/* ${file} */\n`;
-}
-
-// ── Plugin Editor ─────────────────────────────────────────────────────────
-async function handlePluginEditor(request, cp) {
-  const plugins2 = await getPlugins(cp);
-  const method = request.method.toUpperCase();
-  let notice = null;
-  const url2 = new URL(request.url);
-  const selectedPlugin = url2.searchParams.get('plugin') || (plugins2[0]?.slug || '');
-  const file = url2.searchParams.get('file') || 'plugin.js';
-  let fileContent = '';
-
-  const kvKey = `cp:plugin:file:${selectedPlugin}:${file}`;
-  fileContent = await cp.kv.get(kvKey) || `// ${selectedPlugin} - ${file}\n// 이 파일을 편집하세요.\n`;
-
-  if (method === 'POST') {
-    const fd = await request.formData().catch(() => new FormData());
-    const newContent = fd.get('newcontent') || '';
-    await cp.kv.put(kvKey, newContent);
-    fileContent = newContent;
-    notice = { type: 'success', message: `${file} 파일이 저장되었습니다.` };
-  }
-
-  const pluginSelect = plugins2.length
-    ? `<select name="plugin" onchange="location='?plugin='+this.value" style="width:100%;padding:6px;border:1px solid #ccc;border-radius:4px;margin-bottom:12px">
-        ${plugins2.map(p => `<option value="${p.slug}" ${p.slug===selectedPlugin?'selected':''}>${p.name||p.slug}</option>`).join('')}
-      </select>`
-    : '<p style="color:#888;font-size:13px">설치된 플러그인이 없습니다.</p>';
-
-  const escaped = fileContent.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  const content2 = plugins2.length ? `
-<div style="display:grid;grid-template-columns:200px 1fr;gap:20px">
-  <div class="cp-card" style="padding:12px">
-    <div style="font-size:12px;color:#646970;margin-bottom:8px;font-weight:600">플러그인 선택</div>
-    ${pluginSelect}
-    <div style="font-size:12px;color:#646970;margin-bottom:8px;font-weight:600">파일</div>
-    <a href="?plugin=${encodeURIComponent(selectedPlugin)}&file=plugin.js" style="display:block;padding:6px 10px;text-decoration:none;color:${'plugin.js'===file?'#2271b1;font-weight:600;background:#f0f4ff':'#1d2327'};border-radius:4px">plugin.js</a>
-    <a href="?plugin=${encodeURIComponent(selectedPlugin)}&file=style.css" style="display:block;padding:6px 10px;text-decoration:none;color:${'style.css'===file?'#2271b1;font-weight:600;background:#f0f4ff':'#1d2327'};border-radius:4px">style.css</a>
-  </div>
-  <div class="cp-card">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <strong>${file}</strong>
-      <span style="font-size:12px;color:#888">플러그인: ${selectedPlugin}</span>
-    </div>
-    <form method="post">
-      <textarea name="newcontent" style="width:100%;height:500px;font-family:monospace;font-size:13px;line-height:1.5;padding:12px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;resize:vertical;background:#1d2327;color:#a7aaad">${escaped}</textarea>
-      <div style="margin-top:12px">
-        <button type="submit" class="cp-btn">파일 저장</button>
-      </div>
-    </form>
-  </div>
-</div>` : '<div class="cp-card"><p>설치된 플러그인이 없습니다. <a href="/cp-admin/plugins">플러그인 설치</a></p></div>';
-
-  return new Response(
-    await renderAdminShell(cp, content2, { title: '플러그인 편집기', notices: notice ? [notice] : [] }),
-    { headers: { 'Content-Type': 'text/html; charset=utf-8' } }
-  );
-}
-
-async function dispatchAdmin(request, env, ctx, cp, path, method, url) {
-  if (path === "/cp-admin" || path === "/cp-admin/index") {
-    return handleDashboard(request, cp);
-  }
-  if (path === "/cp-admin/edit") {
-    return handlePosts(request, cp);
-  }
-  if (path === "/cp-admin/post-new" || path === "/cp-admin/post") {
-    return handlePostEdit(request, cp);
-  }
-  if (path === "/cp-admin/edit" && url.searchParams.get("post_type") === "page") {
-    return handlePages(request, cp);
-  }
-  if (path === "/cp-admin/page-new" || path === "/cp-admin/page") {
-    return handlePostEdit(request, cp, { post_type: "page" });
-  }
-  if (path === "/cp-admin/upload" || path === "/cp-admin/media-new") {
-    return handleMediaPage(request, cp);
-  }
-  if (path === "/cp-admin/edit-comments") {
-    return handleComments(request, cp);
-  }
-  if (path === "/cp-admin/themes" || path === "/cp-admin/theme-install") {
-    return handleThemes(request, cp);
-  }
-  if (path === "/cp-admin/plugins" || path === "/cp-admin/plugin-install") {
-    return handlePlugins(request, cp);
-  }
-  if (path === "/cp-admin/users") {
-    return handleUsers(request, cp);
-  }
-  if (path === "/cp-admin/user-new" || path === "/cp-admin/user-edit") {
-    return handleUserEdit(request, cp);
-  }
-  if (path === "/cp-admin/profile") {
-    return handleProfile(request, cp);
-  }
-  if (path === "/cp-admin/options-general") {
-    return handleOptionsGeneral(request, cp);
-  }
-  if (path === "/cp-admin/options-writing") {
-    return handleOptionsWriting(request, cp);
-  }
-  if (path === "/cp-admin/options-reading") {
-    return handleOptionsReading(request, cp);
-  }
-  if (path === "/cp-admin/options-discussion") {
-    return handleOptionsDiscussion(request, cp);
-  }
-  if (path === "/cp-admin/options-media") {
-    return handleOptionsMedia(request, cp);
-  }
-  if (path === "/cp-admin/options-permalink") {
-    return handleOptionsPermalink(request, cp);
-  }
-  if (path === "/cp-admin/options") {
-    return handleOptions(request, cp);
-  }
-  if (path === "/cp-admin/tools") {
-    return handleTools(request, cp);
-  }
-  if (path === "/cp-admin/import") {
-    return handleImport(request, cp);
-  }
-  if (path === "/cp-admin/export") {
-    return handleExport(request, cp);
-  }
-  if (path === "/cp-admin/update-core" || path === "/cp-admin/upgrade") {
-    return handleUpgrade(request, cp);
-  }
-  if (path === '/cp-admin/theme-editor') {
-    return handleThemeEditor(request, cp);
-  }
-  if (path === '/cp-admin/plugin-editor') {
-    return handlePluginEditor(request, cp);
-  }
-  if (path === '/cp-admin/theme-install') {
-    return new Response(null, { status: 302, headers: { 'Location': '/cp-admin/themes?tab=featured' } });
-  }
-  if (path === '/cp-admin/plugin-install') {
-    return new Response(null, { status: 302, headers: { 'Location': '/cp-admin/plugins?tab=popular' } });
-  }
-  return new Response(
-    await renderAdminShell(cp, "<h2>페이지를 찾을 수 없습니다</h2><p>요청한 관리자 페이지가 존재하지 않습니다.</p>", { title: "404" }),
-    { status: 404, headers: { "Content-Type": "text/html; charset=utf-8" } }
-  );
-}
-__name(dispatchAdmin, "dispatchAdmin");
-
-// cp-includes/auth.js
-init_cp_load();
-init_user();
-init_jwt();
-async function handleLogin(request, env, ctx) {
-  const cp = await cpLoad(request, env, ctx);
-  if (cp.__cpError)
-    return cp.response;
-  const url = cp.url;
-  const method = request.method.toUpperCase();
-  if (cp.currentUser) {
-    return Response.redirect(url.origin + "/cp-admin", 302);
-  }
-  const redirectTo = url.searchParams.get("redirect_to") || "/cp-admin";
-  let error = "";
-  if (method === "POST") {
-    const fd = await request.formData().catch(() => new FormData());
-    const login = (fd.get("log") || "").trim();
-    const password = fd.get("pwd") || "";
-    const remember = fd.get("rememberme") === "1";
-    const user = await authenticateUser(cp, login, password);
-    if (user) {
-      const ttl = remember ? 30 * 86400 : 86400;
-      const token = await signJwt(
-        { sub: String(user.ID), login: user.user_login, roles: user.roles },
-        cp.config.AUTH_KEY,
-        ttl
-      );
-      const secure = url.protocol === "https:";
-      const cookie = buildAuthCookie(token, ttl, secure);
-      const safeRedirect = redirectTo.startsWith("/") ? redirectTo : "/cp-admin";
-      return new Response(null, {
-        status: 302,
-        headers: {
-          Location: url.origin + safeRedirect,
-          "Set-Cookie": cookie
-        }
-      });
-    } else {
-      error = "Invalid username or password. Please try again.";
-    }
-  }
-  const html = renderLoginPage(error, redirectTo, cp.config.SITE_NAME || "CloudPress");
-  return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
-}
-__name(handleLogin, "handleLogin");
-async function handleLogout(request, env, ctx) {
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: "/cp-login",
-      "Set-Cookie": clearAuthCookie()
-    }
+  return new Response(renderLoginPage(siteInfo, '', url, ''), {
+    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
   });
 }
-__name(handleLogout, "handleLogout");
-function renderLoginPage(error, redirectTo, siteName) {
-  const esc22 = /* @__PURE__ */ __name((s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"), "esc");
+
+function renderLoginPage(siteInfo, error, url, prefillUser = '') {
+  const siteUrl  = url ? `https://${url.hostname}` : '';
+  const siteName = esc(siteInfo?.name || 'WordPress');
+  const redirectTo = url ? (url.searchParams.get('redirect_to') || '/wp-admin/') : '/wp-admin/';
+
   return `<!DOCTYPE html>
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Log In &lsaquo; ${esc22(siteName)}</title>
-  <link rel="stylesheet" href="/cp-includes/css/login.css">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title> – ${siteName}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    html,body{min-height:100%;background:#f0f0f1;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    body{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:1rem}
+    #login-logo{margin-bottom:1.5rem;text-align:center}
+    #login-logo a{display:inline-block;text-decoration:none}
+    #login-logo svg{width:84px;height:84px;fill:#1d2327}
+    #login-logo .site-name{display:block;margin-top:.5rem;font-size:1rem;font-weight:700;color:#1d2327}
+    #loginform-wrap{width:100%;max-width:360px}
+    #loginform{background:#fff;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.13);padding:2rem 1.75rem}
+    .login-error{background:#fff0f0;border-left:4px solid #d63638;padding:.75rem 1rem;margin-bottom:1.25rem;font-size:.875rem;color:#d63638;border-radius:0 4px 4px 0}
+    .login-success{background:#f0fff4;border-left:4px solid #00a32a;padding:.75rem 1rem;margin-bottom:1.25rem;font-size:.875rem;color:#1a6630}
+    label{display:block;font-size:.875rem;font-weight:600;margin-bottom:.375rem;color:#1d2327}
+    .input-group{margin-bottom:1rem;position:relative}
+    input[type=text],input[type=password]{width:100%;padding:.625rem .875rem;border:1px solid #8c8f94;border-radius:4px;font-size:1rem;line-height:1.5;transition:border-color .15s,box-shadow .15s;background:#fff;color:#1d2327}
+    input[type=text]:focus,input[type=password]:focus{border-color:#2271b1;outline:0;box-shadow:0 0 0 2px rgba(34,113,177,.35)}
+    .toggle-pw{position:absolute;right:.75rem;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#8c8f94;font-size:1rem;padding:0;line-height:1}
+    .remember-row{display:flex;align-items:center;gap:.5rem;margin-bottom:1.25rem;font-size:.875rem;color:#1d2327}
+    .remember-row input{width:16px;height:16px;cursor:pointer;accent-color:#2271b1}
+    .btn-login{width:100%;padding:.6875rem 1rem;background:#2271b1;color:#fff;border:none;border-radius:4px;font-size:1rem;font-weight:600;cursor:pointer;transition:background .15s;letter-spacing:.01em}
+    .btn-login:hover{background:#135e96}
+    .btn-login:active{background:#0a4480}
+    .login-footer{margin-top:1rem;text-align:center;font-size:.8125rem}
+    .login-footer a{color:#2271b1}
+    .login-footer a:hover{color:#135e96}
+    .login-footer .sep{color:#c3c4c7;margin:0 .5rem}
+    .back-link{display:block;text-align:center;margin-top:1.25rem;font-size:.8125rem;color:#646970}
+    .back-link a{color:#2271b1}
+  </style>
 </head>
 <body>
-<div class="login-wrap">
-  <div class="login-logo">
-    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
-      <rect width="64" height="64" rx="16" fill="#F6821F"/>
-      <path d="M16 32C16 23.163 23.163 16 32 16C40.837 16 48 23.163 48 32C48 40.837 40.837 48 32 48C23.163 48 16 40.837 16 32Z" fill="white" fill-opacity="0.2"/>
-      <path d="M26 24L38 32L26 40V24Z" fill="white"/>
-    </svg>
-    <h1>${esc22(siteName)}</h1>
+<div id="login-logo">
+  <a href="${esc(siteUrl)}/">
+    <svg viewBox="0 0 185 185" xmlns="http://www.w3.org/2000/svg"><path d="M92.5 6.5C45.2 6.5 6.5 45.2 6.5 92.5S45.2 178.5 92.5 178.5 178.5 139.8 178.5 92.5 139.8 6.5 92.5 6.5zm-64.3 86c0-35.5 28.8-64.3 64.3-64.3 14.1 0 27.1 4.6 37.6 12.3L44.5 130.1c-7.7-10.5-12.3-23.5-12.3-37.6zm64.3 64.3c-14.1 0-27.1-4.6-37.6-12.3l85.6-89.6c7.7 10.5 12.3 23.5 12.3 37.6 0 35.5-28.8 64.3-64.3 64.3z"/></svg>
+    <span class="site-name">${siteName}</span>
+  </a>
+</div>
+
+<div id="loginform-wrap">
+  <form id="loginform" name="loginform" method="post" action="/wp-login.php">
+    ${error ? `<div class="login-error">${esc(error)}</div>` : ''}
+    <div class="input-group">
+      <label for="user_login">   </label>
+      <input type="text" name="log" id="user_login" value="${esc(prefillUser)}" autocomplete="username" autocapitalize="none" autocorrect="off" required>
+    </div>
+    <div class="input-group">
+      <label for="user_pass"></label>
+      <input type="password" name="pwd" id="user_pass" autocomplete="current-password" required>
+      <button type="button" class="toggle-pw" onclick="togglePw()" aria-label="비밀번호 표시/숨기기">표시</button>
+    </div>
+    <div class="remember-row">
+      <input type="checkbox" name="rememberme" id="rememberme" value="forever">
+      <label for="rememberme" style="margin:0;font-weight:400">  </label>
+    </div>
+    <input type="hidden" name="redirect_to" value="${esc(redirectTo)}">
+    <input type="hidden" name="testcookie" value="1">
+    <button type="submit" name="wp-submit" id="wp-submit" class="btn-login"></button>
+    <div class="login-footer">
+      <a href="${esc(siteUrl)}/wp-login.php?action=lostpassword"> ?</a>
+    </div>
+  </form>
+  <div class="back-link">
+    <a href="${esc(siteUrl)}/">← ${siteName}() </a>
   </div>
+</div>
 
-  <div class="login-box">
-    ${error ? `<div class="login-error">${esc22(error)}</div>` : ""}
-    <form method="post" action="/cp-login">
-      <input type="hidden" name="redirect_to" value="${esc22(redirectTo)}">
+<script>
+function togglePw(){
+  var el=document.getElementById('user_pass');
+  el.type=el.type==='password'?'text':'password';
+}
+//  →  
+document.getElementById('user_pass').addEventListener('keydown',function(e){
+  if(e.key==='Enter'){e.preventDefault();document.getElementById('loginform').submit();}
+});
+</script>
+</body>
+</html>`;
+}
 
-      <label for="user_login">Username or Email</label>
-      <input type="text" id="user_login" name="log" autocomplete="username" autofocus required>
+//  WordPress   
+async function verifyWPPassword(password, hash) {
+  if (!hash) return false;
+  // plain text (/ )
+  if (!hash.startsWith('$')) return hash === password;
+  // WordPress phpass ($P$)
+  if (hash.startsWith('$P$')) return wpCheckPassword(password, hash);
+  // bcrypt ($2y$, $2b$) — Workers  → plain  fallback
+  if (hash.startsWith('$2y$') || hash.startsWith('$2b$')) return hash === password;
+  // plain MD5 ()
+  try {
+    const enc = new TextEncoder().encode(password);
+    const buf = await crypto.subtle.digest('SHA-256', enc); // MD5  → SHA-256
+    const hex = [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2,'0')).join('');
+    return hex === hash;
+  } catch {}
+  return false;
+}
 
-      <label for="user_pass">Password</label>
-      <input type="password" id="user_pass" name="pwd" autocomplete="current-password" required>
+function wpCheckPassword(password, hash) {
+  // phpass MD5 portable hash  ( JS, Workers )
+  const itoa64 = './0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
 
-      <div class="login-remember">
-        <input type="checkbox" id="rememberme" name="rememberme" value="1">
-        <label for="rememberme" style="font-weight:400;margin:0">Remember me</label>
+  function md5(input) {
+    //  MD5 (Workers crypto.subtle.digest('MD5')   JS  )
+    function safeAdd(x, y) { const lsw=(x&0xffff)+(y&0xffff),msw=(x>>16)+(y>>16)+(lsw>>16);return(msw<<16)|(lsw&0xffff); }
+    function bitRotateLeft(num,cnt){return(num<<cnt)|(num>>>(32-cnt));}
+    function md5cmn(q,a,b,x,s,t){return safeAdd(bitRotateLeft(safeAdd(safeAdd(a,q),safeAdd(x,t)),s),b);}
+    function md5ff(a,b,c,d,x,s,t){return md5cmn((b&c)|(~b&d),a,b,x,s,t);}
+    function md5gg(a,b,c,d,x,s,t){return md5cmn((b&d)|(c&~d),a,b,x,s,t);}
+    function md5hh(a,b,c,d,x,s,t){return md5cmn(b^c^d,a,b,x,s,t);}
+    function md5ii(a,b,c,d,x,s,t){return md5cmn(c^(b|~d),a,b,x,s,t);}
+    function unescape(s){const arr=[];for(let i=0;i<s.length;i++)arr.push(s.charCodeAt(i)&0xff);return arr;}
+    const x=[];const str=unescape(input);const len8=str.length*8;
+    for(let i=0;i<str.length;i+=4)x[i>>2]=(str[i])|(str[i+1]<<8)|(str[i+2]<<16)|(str[i+3]<<24);
+    x[len8>>5]|=(0x80<<(len8%32));x[((len8+64>>>9)<<4)+14]=len8;
+    let a=1732584193,b=-271733879,c=-1732584194,d=271733878;
+    for(let i=0;i<x.length;i+=16){
+      const oA=a,oB=b,oC=c,oD=d;
+      a=md5ff(a,b,c,d,x[i],7,-680876936);d=md5ff(d,a,b,c,x[i+1],12,-389564586);c=md5ff(c,d,a,b,x[i+2],17,606105819);b=md5ff(b,c,d,a,x[i+3],22,-1044525330);
+      a=md5ff(a,b,c,d,x[i+4],7,-176418897);d=md5ff(d,a,b,c,x[i+5],12,1200080426);c=md5ff(c,d,a,b,x[i+6],17,-1473231341);b=md5ff(b,c,d,a,x[i+7],22,-45705983);
+      a=md5ff(a,b,c,d,x[i+8],7,1770035416);d=md5ff(d,a,b,c,x[i+9],12,-1958414417);c=md5ff(c,d,a,b,x[i+10],17,-42063);b=md5ff(b,c,d,a,x[i+11],22,-1990404162);
+      a=md5ff(a,b,c,d,x[i+12],7,1804603682);d=md5ff(d,a,b,c,x[i+13],12,-40341101);c=md5ff(c,d,a,b,x[i+14],17,-1502002290);b=md5ff(b,c,d,a,x[i+15],22,1236535329);
+      a=md5gg(a,b,c,d,x[i+1],5,-165796510);d=md5gg(d,a,b,c,x[i+6],9,-1069501632);c=md5gg(c,d,a,b,x[i+11],14,643717713);b=md5gg(b,c,d,a,x[i],20,-373897302);
+      a=md5gg(a,b,c,d,x[i+5],5,-701558691);d=md5gg(d,a,b,c,x[i+10],9,38016083);c=md5gg(c,d,a,b,x[i+15],14,-660478335);b=md5gg(b,c,d,a,x[i+4],20,-405537848);
+      a=md5gg(a,b,c,d,x[i+9],5,568446438);d=md5gg(d,a,b,c,x[i+14],9,-1019803690);c=md5gg(c,d,a,b,x[i+3],14,-187363961);b=md5gg(b,c,d,a,x[i+8],20,1163531501);
+      a=md5gg(a,b,c,d,x[i+13],5,-1444681467);d=md5gg(d,a,b,c,x[i+2],9,-51403784);c=md5gg(c,d,a,b,x[i+7],14,1735328473);b=md5gg(b,c,d,a,x[i+12],20,-1926607734);
+      a=md5hh(a,b,c,d,x[i+5],4,-378558);d=md5hh(d,a,b,c,x[i+8],11,-2022574463);c=md5hh(c,d,a,b,x[i+11],16,1839030562);b=md5hh(b,c,d,a,x[i+14],23,-35309556);
+      a=md5hh(a,b,c,d,x[i+1],4,-1530992060);d=md5hh(d,a,b,c,x[i+4],11,1272893353);c=md5hh(c,d,a,b,x[i+7],16,-155497632);b=md5hh(b,c,d,a,x[i+10],23,-1094730640);
+      a=md5hh(a,b,c,d,x[i+13],4,681279174);d=md5hh(d,a,b,c,x[i],11,-358537222);c=md5hh(c,d,a,b,x[i+3],16,-722521979);b=md5hh(b,c,d,a,x[i+6],23,76029189);
+      a=md5hh(a,b,c,d,x[i+9],4,-640364487);d=md5hh(d,a,b,c,x[i+12],11,-421815835);c=md5hh(c,d,a,b,x[i+15],16,530742520);b=md5hh(b,c,d,a,x[i+2],23,-995338651);
+      a=md5ii(a,b,c,d,x[i],6,-198630844);d=md5ii(d,a,b,c,x[i+7],10,1126891415);c=md5ii(c,d,a,b,x[i+14],15,-1416354905);b=md5ii(b,c,d,a,x[i+5],21,-57434055);
+      a=md5ii(a,b,c,d,x[i+12],6,1700485571);d=md5ii(d,a,b,c,x[i+3],10,-1894986606);c=md5ii(c,d,a,b,x[i+10],15,-1051523);b=md5ii(b,c,d,a,x[i+1],21,-2054922799);
+      a=md5ii(a,b,c,d,x[i+8],6,1873313359);d=md5ii(d,a,b,c,x[i+15],10,-30611744);c=md5ii(c,d,a,b,x[i+6],15,-1560198380);b=md5ii(b,c,d,a,x[i+13],21,1309151649);
+      a=md5ii(a,b,c,d,x[i+4],6,-145523070);d=md5ii(d,a,b,c,x[i+11],10,-1120210379);c=md5ii(c,d,a,b,x[i+2],15,718787259);b=md5ii(b,c,d,a,x[i+9],21,-343485551);
+      a=safeAdd(a,oA);b=safeAdd(b,oB);c=safeAdd(c,oC);d=safeAdd(d,oD);
+    }
+    return [a,b,c,d];
+  }
+
+  function md5Hex(s) {
+    const words=md5(s);
+    return words.map(w=>{const hex=((w&0xff)<<24|(w>>8&0xff)<<16|(w>>16&0xff)<<8|w>>>24)>>>0;return hex.toString(16).padStart(8,'0');}).join('');
+  }
+
+  if (hash.length !== 34) return false;
+  const countLog2 = itoa64.indexOf(hash[3]);
+  if (countLog2 < 7 || countLog2 > 30) return false;
+  let count = 1 << countLog2;
+  const salt = hash.substring(4, 12);
+  let computed = md5Hex(salt + password);
+  do { computed = md5Hex(computed + password); } while (--count);
+
+  // encode64
+  function encode64(input, count2) {
+    const arr = [];
+    for (let i = 0; i < 16; i++) arr.push(input.charCodeAt(i*2)|(input.charCodeAt(i*2+1)<<8) || (parseInt(input.slice(i*2,i*2+2),16)&0xff));
+    // simplified: work with raw hex bytes
+    const bytes = [];
+    for (let i = 0; i < input.length; i+=2) bytes.push(parseInt(input.slice(i,i+2),16));
+    let out = '', idx = 0;
+    do {
+      let value = bytes[idx++];
+      out += itoa64[value & 63];
+      if (idx < count2) value |= bytes[idx] << 8;
+      out += itoa64[(value >> 6) & 63];
+      if (idx++ >= count2) break;
+      if (idx < count2) value |= bytes[idx] << 8;
+      out += itoa64[(value >> 12) & 63];
+      if (idx++ >= count2) break;
+      out += itoa64[(value >> 18) & 63];
+    } while (idx < count2);
+    return out;
+  }
+
+  const output = '$P$' + hash[3] + salt + encode64(computed, 16);
+  return output === hash;
+}
+
+function hashSimple(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
+  return Math.abs(h).toString(16).slice(0, 8);
+}
+
+//  wp-admin  
+async function handleWPAdmin(env, request, url, siteInfo) {
+  //  KV  
+  const session = await validateSession(env, request);
+
+  if (!session && url.pathname !== '/wp-login.php') {
+    const loginUrl = `https://${url.hostname}/wp-login.php?redirect_to=${encodeURIComponent(url.pathname + url.search)}`;
+    return Response.redirect(loginUrl, 302);
+  }
+
+  return new Response(renderAdminPage(url.pathname, siteInfo, url, session), {
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store, no-cache, private',
+      'X-Frame-Options': 'SAMEORIGIN',
+    },
+  });
+}
+
+function renderAdminPage(pathname, siteInfo, urlObj, session) {
+  const siteName = esc(siteInfo?.name || 'WordPress');
+  const siteUrl  = urlObj ? `https://${urlObj.hostname}` : '';
+  const page = pathname.replace(/^\/wp-admin\/?/, '').replace(/\.php$/, '') || 'index';
+  const sp = urlObj ? urlObj.searchParams : null;
+  const isPage = sp ? sp.get('post_type') === 'page' : false;
+  const displayName = esc(session?.displayName || session?.login || 'admin');
+
+  let pageTitle = '';
+  let bodyHtml  = '';
+  let inlineScript = '';
+
+  if (page === 'index' || page === '' || page === 'dashboard') {
+    pageTitle = '';
+    bodyHtml = `
+<div class="welcome-panel">
+  <div style="max-width:700px">
+    <h2 style="font-size:1.3rem;margin:0 0 10px">WordPress   !</h2>
+    <p style="color:#50575e;margin:0 0 6px">CloudPress Edge  WordPress  .</p>
+    <p style="color:#50575e;margin:0 0 15px;font-size:.85rem">: <strong>${displayName}</strong></p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <a href="/wp-admin/post-new.php" class="btn-wp"> </a>
+      <a href="/wp-admin/edit.php" class="btn-wp btn-secondary"> </a>
+      <a href="/wp-admin/options-general.php" class="btn-wp btn-secondary"> </a>
+      <a href="/" target="_blank" class="btn-wp btn-secondary"> </a>
+    </div>
+  </div>
+</div>
+<div class="admin-widgets">
+  <div class="admin-widget">
+    <h3 class="widget-title"><span>  </span></h3>
+    <div class="widget-body">
+      <ul id="admin-glance" style="list-style:none;margin:0;padding:0;color:#50575e;font-size:.875rem"><li> ...</li></ul>
+      <p style="margin:12px 0 0;font-size:.8rem;color:#50575e">WordPress 6.7 + CloudPress v20.1</p>
+    </div>
+  </div>
+  <div class="admin-widget">
+    <h3 class="widget-title"> </h3>
+    <div class="widget-body">
+      <div id="admin-activity" style="color:#50575e;font-size:.85rem"> ...</div>
+    </div>
+  </div>
+</div>`;
+    // CP.apiFetch   —  fetch() 
+    inlineScript = `(async function(){
+try{
+  var r=await fetch('/wp-json/wp/v2/posts?per_page=5&_fields=id,title,date',{headers:{'Accept':'application/json'}});
+  var posts=r.ok?await r.json():[];
+  var r2=await fetch('/wp-json/wp/v2/pages?per_page=100&_fields=id',{headers:{'Accept':'application/json'}});
+  var pages=r2.ok?await r2.json():[];
+  var r3=await fetch('/wp-json/wp/v2/comments?per_page=1&_fields=id',{headers:{'Accept':'application/json'}});
+  var commentTotal=r3.ok?(parseInt(r3.headers.get('X-WP-Total')||'0',10)):0;
+  posts=Array.isArray(posts)?posts:[];
+  pages=Array.isArray(pages)?pages:[];
+  document.getElementById('admin-glance').innerHTML=
+    '<li style="padding:4px 0;display:flex;justify-content:space-between">'+
+    '<span>'+posts.length+' </span><a href="/wp-admin/edit.php" style="color:#2271b1"></a></li>'+
+    '<li style="padding:4px 0;display:flex;justify-content:space-between">'+
+    '<span>'+pages.length+' </span><a href="/wp-admin/edit.php?post_type=page" style="color:#2271b1"></a></li>'+
+    '<li style="padding:4px 0;display:flex;justify-content:space-between">'+
+    '<span>'+commentTotal+' </span><a href="/wp-admin/edit-comments.php" style="color:#2271b1"></a></li>';
+  var actEl=document.getElementById('admin-activity');
+  if(!posts.length){actEl.innerHTML='<p style="color:#8c8f94">   . <a href="/wp-admin/post-new.php">   !</a></p>';return;}
+  actEl.innerHTML='<ul style="list-style:none;margin:0;padding:0">'+posts.map(function(p){
+    var d=new Date(p.date).toLocaleDateString('ko-KR');
+    var t=(p.title&&p.title.rendered)||'( )';
+    return '<li style="padding:5px 0;border-bottom:1px solid #f0f0f1">'+
+      '<a href="/wp-admin/post.php?post='+p.id+'&action=edit" style="color:#2271b1">'+t+'</a>'+
+      '<span style="float:right;color:#8c8f94;font-size:.8rem">'+d+'</span></li>';
+  }).join('')+'</ul>';
+}catch(e){
+  document.getElementById('admin-glance').innerHTML='<li style="color:#d63638">  </li>';
+  document.getElementById('admin-activity').textContent=': '+e.message;
+}
+})();`;
+
+  } else if (page === 'edit') {
+    pageTitle = isPage ? '' : '';
+    const newHref = isPage ? '/wp-admin/post-new.php?post_type=page' : '/wp-admin/post-new.php';
+    const apiType = isPage ? 'pages' : 'posts';
+    const emptyMsg = isPage ? '  .' : '  .';
+    bodyHtml = `<div class="tablenav top" style="margin-bottom:10px">
+      <a href="${newHref}" class="btn-wp"> ${isPage ? '' : ''} </a>
+    </div>
+    <table class="wp-list-table" style="width:100%;border-collapse:collapse;border:1px solid #c3c4c7;background:#fff">
+      <thead><tr style="background:#f6f7f7">
+        <td style="width:30px;padding:8px 10px"><input type="checkbox" id="cb-select-all"></td>
+        <th style="padding:8px 10px;text-align:left;font-size:.875rem"></th>
+        <th style="padding:8px 10px;text-align:left;font-size:.875rem;width:120px"></th>
+      </tr></thead>
+      <tbody id="posts-list"><tr><td colspan="3" style="padding:20px;text-align:center;color:#8c8f94"> ...</td></tr></tbody>
+    </table>`;
+    inlineScript = `(async function(){
+var r=await fetch('/wp-json/wp/v2/${apiType}?per_page=50&_fields=id,title,date,status,link&status=publish,draft,future,private,pending',{headers:{'Accept':'application/json'}}).catch(function(){return{ok:false};});
+var posts=r.ok?await r.json():[];
+posts=Array.isArray(posts)?posts:[];
+var el=document.getElementById('posts-list');
+if(!posts.length){
+  el.innerHTML='<tr><td colspan="3" style="padding:20px;text-align:center;color:#8c8f94">${emptyMsg} <a href="${newHref}"> </a></td></tr>';
+  return;
+}
+el.innerHTML=posts.map(function(p){
+  var title=(p.title&&p.title.rendered)||'( )';
+  var d=new Date(p.date).toLocaleDateString('ko-KR');
+  var editHref='/wp-admin/post.php?post='+p.id+'&action=edit';
+  var statusLabel={publish:'',draft:'',private:'',future:'',pending:' ',trash:''}[p.status]||p.status;
+  var statusColor={publish:'#00a32a',draft:'#8c8f94',private:'#3858e9',future:'#f0ad00',pending:'#996800',trash:'#d63638'}[p.status]||'#8c8f94';
+  return '<tr style="border-top:1px solid #f0f0f1">'+
+    '<td style="padding:8px 10px"><input type="checkbox"></td>'+
+    '<td style="padding:8px 10px"><strong><a href="'+editHref+'" style="color:#2271b1;text-decoration:none">'+title+'</a></strong>'+
+    '<div style="font-size:.8rem;color:#8c8f94;margin-top:3px">'+
+    '<a href="'+editHref+'"></a> | '+
+    '<a href="#" onclick="trashPost('+p.id+',this);return false;" style="color:#b32d2e"></a> | '+
+    '<a href="'+(p.link||'/')+ '" target="_blank"></a></div></td>'+
+    '<td style="padding:8px 10px;font-size:.8rem;color:'+statusColor+'">'+statusLabel+'<br><span style="color:#50575e">'+d+'</span></td>'+
+    '</tr>';
+}).join('');
+})();
+async function trashPost(id,el){
+  if(!confirm('   ?'))return;
+  var r=await fetch('/wp-json/wp/v2/${apiType}/'+id,{method:'DELETE',headers:{'Content-Type':'application/json'}}).catch(function(){return{ok:false};});
+  if(r.ok){el.closest('tr').remove();}else{alert(' ');}
+}`;
+
+  } else if (page === 'post-new' || page === 'post') {
+    const isEdit = page === 'post' && sp && sp.get('action') === 'edit';
+    const postId = sp ? sp.get('post') : null;
+    pageTitle = isEdit ? ' ' : '  ';
+    bodyHtml = `
+<style>
+#block-toolbar{display:flex;flex-wrap:wrap;gap:2px;padding:6px 8px;background:#fff;border:1px solid #dcdcde;border-radius:4px;margin-bottom:8px;align-items:center}
+.tb-btn{padding:4px 7px;background:none;border:1px solid transparent;border-radius:3px;cursor:pointer;font-size:.8rem;color:#1d2327;min-width:28px;display:inline-flex;align-items:center;justify-content:center;transition:background .1s}
+.tb-btn:hover{background:#f0f0f0;border-color:#c3c4c7}
+.tb-btn.active{background:#e7f0f8;border-color:#2271b1;color:#2271b1}
+.tb-sep{width:1px;background:#dcdcde;height:20px;margin:0 4px}
+.tb-select{padding:3px 6px;border:1px solid #c3c4c7;border-radius:3px;font-size:.8rem;color:#1d2327;background:#fff;height:26px}
+#post-editor{min-height:400px;border:1px solid #dcdcde;border-radius:4px;padding:20px;font-size:.9375rem;line-height:1.8;outline:none;background:#fff;color:#1d2327}
+#post-editor:focus{border-color:#2271b1;box-shadow:0 0 0 1px #2271b1}
+#post-editor [data-block]{position:relative}
+#post-editor h1{font-size:2em;font-weight:700;margin:.5em 0}
+#post-editor h2{font-size:1.6em;font-weight:700;margin:.5em 0}
+#post-editor h3{font-size:1.3em;font-weight:700;margin:.5em 0}
+#post-editor h4{font-size:1.1em;font-weight:700;margin:.5em 0}
+#post-editor h5{font-size:1em;font-weight:700;margin:.5em 0}
+#post-editor h6{font-size:.9em;font-weight:700;margin:.5em 0}
+#post-editor blockquote{border-left:4px solid #2271b1;margin:1em 0;padding:.5em 1em;background:#f0f6fc;color:#50575e;font-style:italic}
+#post-editor pre,#post-editor code{background:#1d2327;color:#f0f0f1;padding:.2em .4em;border-radius:3px;font-family:monospace;font-size:.85em}
+#post-editor pre{display:block;padding:1em;overflow-x:auto;white-space:pre-wrap}
+#post-editor ul,#post-editor ol{padding-left:2em;margin:.5em 0}
+#post-editor table{border-collapse:collapse;width:100%;margin:1em 0}
+#post-editor table td,#post-editor table th{border:1px solid #c3c4c7;padding:.4em .6em}
+#post-editor table th{background:#f6f7f7;font-weight:600}
+#post-editor hr{border:none;border-top:2px solid #dcdcde;margin:1.5em 0}
+#post-editor .wp-block-button{display:inline-block;background:#2271b1;color:#fff;padding:.5em 1.2em;border-radius:4px;text-decoration:none;font-weight:600;margin:.25em 0}
+#post-editor img{max-width:100%;height:auto;display:block;margin:.5em 0}
+.block-inserter{padding:4px;background:#f6f7f7;border:1px dashed #c3c4c7;border-radius:4px;text-align:center;cursor:pointer;font-size:.8rem;color:#8c8f94;margin-top:4px;transition:all .2s}
+.block-inserter:hover{background:#e7f0f8;border-color:#2271b1;color:#2271b1}
+#schedule-row{display:none;margin-top:8px;padding-top:8px;border-top:1px solid #f0f0f1}
+</style>
+
+<div id="post-editor-wrap" style="display:grid;grid-template-columns:1fr 300px;gap:20px">
+  <div>
+    <input type="text" id="post-title" placeholder=" " style="width:100%;font-size:1.5rem;font-weight:700;border:none;border-bottom:2px solid #dcdcde;padding:10px 0;margin-bottom:16px;outline:none;color:#1d2327;background:transparent;transition:border-color .2s" onfocus="this.style.borderColor='#2271b1'" onblur="this.style.borderColor='#dcdcde'">
+    
+    <div id="block-toolbar">
+      <select class="tb-select" id="tb-heading" onchange="insertHeading(this.value)" title=" ">
+        <option value=""></option>
+        <option value="h1"> 1</option>
+        <option value="h2"> 2</option>
+        <option value="h3"> 3</option>
+        <option value="h4"> 4</option>
+        <option value="h5"> 5</option>
+        <option value="h6"> 6</option>
+      </select>
+      <div class="tb-sep"></div>
+      <button class="tb-btn" onclick="execFmt('bold')" title=" (Ctrl+B)"><b>B</b></button>
+      <button class="tb-btn" onclick="execFmt('italic')" title=" (Ctrl+I)"><i>I</i></button>
+      <button class="tb-btn" onclick="execFmt('underline')" title=" (Ctrl+U)"><u>U</u></button>
+      <button class="tb-btn" onclick="execFmt('strikeThrough')" title=""><s>S</s></button>
+      <div class="tb-sep"></div>
+      <button class="tb-btn" onclick="execFmt('insertUnorderedList')" title=" ">≡</button>
+      <button class="tb-btn" onclick="execFmt('insertOrderedList')" title=" ">1.</button>
+      <div class="tb-sep"></div>
+      <button class="tb-btn" onclick="insertBlock('blockquote')" title="">&ldquo;</button>
+      <button class="tb-btn" onclick="insertBlock('code')" title="">&lt;/&gt;</button>
+      <button class="tb-btn" onclick="insertBlock('pre')" title=" ">PRE</button>
+      <button class="tb-btn" onclick="insertBlock('hr')" title="">HR</button>
+      <div class="tb-sep"></div>
+      <button class="tb-btn" onclick="insertBlock('table')" title=""></button>
+      <button class="tb-btn" onclick="insertBlock('button')" title=""></button>
+      <button class="tb-btn" onclick="insertImageBlock()" title=""></button>
+      <div class="tb-sep"></div>
+      <button class="tb-btn" onclick="execFmt('justifyLeft')" title=" ">&#8676;</button>
+      <button class="tb-btn" onclick="execFmt('justifyCenter')" title=" ">&#8801;</button>
+      <button class="tb-btn" onclick="execFmt('justifyRight')" title=" ">&#8677;</button>
+      <div class="tb-sep"></div>
+      <button class="tb-btn" onclick="insertLink()" title=""></button>
+      <button class="tb-btn" onclick="execFmt('removeFormat')" title=" ">T&#x336;</button>
+    </div>
+    
+    <div id="post-editor" contenteditable="true" spellcheck="true"></div>
+    <div id="post-status-bar" style="margin-top:6px;font-size:.8rem;color:#8c8f94"> :  </div>
+  </div>
+  
+  <div>
+    <div class="admin-widget" style="margin-bottom:16px">
+      <h3 class="widget-title"></h3>
+      <div class="widget-body">
+        <div style="margin-bottom:10px">
+          <label style="font-size:.85rem;font-weight:600;color:#1d2327;display:block;margin-bottom:4px"></label>
+          <select id="post-status" onchange="toggleSchedule(this.value)" style="width:100%;padding:5px 8px;border:1px solid #8c8f94;border-radius:4px;font-size:.85rem">
+            <option value="publish"></option>
+            <option value="draft"> </option>
+            <option value="private"></option>
+            <option value="future"> </option>
+          </select>
+        </div>
+        <div id="schedule-row">
+          <label style="font-size:.85rem;font-weight:600;color:#1d2327;display:block;margin-bottom:4px"> /</label>
+          <input type="datetime-local" id="post-schedule" style="width:100%;padding:5px 8px;border:1px solid #8c8f94;border-radius:4px;font-size:.85rem">
+          <div style="font-size:.75rem;color:#8c8f94;margin-top:4px">      .</div>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+          <button onclick="savePost()" class="btn-wp" style="flex:1" id="btn-publish"></button>
+          <button onclick="saveDraft()" class="btn-wp btn-secondary" style="flex:1"></button>
+        </div>
+        ${isEdit && postId ? `<div style="margin-top:8px;font-size:.8rem;text-align:center"><a href="/" target="_blank" style="color:#2271b1"> </a></div>` : ''}
       </div>
+    </div>
+    
+    <div class="admin-widget" style="margin-bottom:16px">
+      <h3 class="widget-title"></h3>
+      <div class="widget-body">
+        <textarea id="post-excerpt" placeholder="  ()" rows="3" style="width:100%;padding:6px 8px;border:1px solid #8c8f94;border-radius:4px;font-size:.85rem;resize:vertical"></textarea>
+      </div>
+    </div>
 
-      <button type="submit" class="login-btn">Log In</button>
-    </form>
+    <div class="admin-widget" style="margin-bottom:16px">
+      <h3 class="widget-title"></h3>
+      <div class="widget-body" id="cats-list" style="font-size:.875rem;color:#50575e"> ...</div>
+    </div>
+    
+    <div class="admin-widget" style="margin-bottom:16px">
+      <h3 class="widget-title"></h3>
+      <div class="widget-body">
+        <input type="text" id="post-tags" placeholder="  ( )" style="width:100%;padding:5px 8px;border:1px solid #8c8f94;border-radius:4px;font-size:.85rem">
+        <div style="font-size:.75rem;color:#8c8f94;margin-top:4px">   .</div>
+      </div>
+    </div>
+    
+    <div class="admin-widget">
+      <h3 class="widget-title"></h3>
+      <div class="widget-body">
+        <input type="text" id="post-slug" placeholder="  ( )" style="width:100%;padding:5px 8px;border:1px solid #8c8f94;border-radius:4px;font-size:.85rem">
+        <div style="font-size:.75rem;color:#8c8f94;margin-top:4px">   .</div>
+      </div>
+    </div>
   </div>
+</div>`;
 
-  <div class="login-footer">
-    <a href="/">&larr; Back to ${esc22(siteName)}</a>
+    inlineScript = `
+var _postId=${postId ? parseInt(postId,10) : 0};
+var _autoSaveTimer=null;
+
+//    
+function toggleSchedule(val){
+  var row=document.getElementById('schedule-row');
+  var btn=document.getElementById('btn-publish');
+  row.style.display=(val==='future')?'block':'none';
+  btn.textContent=(val==='future')?' ':'';
+  if(val==='future'){
+    var d=new Date(Date.now()+60*60*1000);
+    var pad=function(n){return n<10?'0'+n:n;};
+    document.getElementById('post-schedule').value=d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
+  }
+}
+
+//     
+function execFmt(cmd,val){
+  document.getElementById('post-editor').focus();
+  document.execCommand(cmd,false,val||null);
+  document.getElementById('post-editor').focus();
+}
+
+function insertHeading(tag){
+  var sel=document.getElementById('tb-heading');
+  if(!tag){sel.value='';execFmt('formatBlock','p');return;}
+  execFmt('formatBlock',tag);
+  sel.value='';
+}
+
+function insertBlock(type){
+  var editor=document.getElementById('post-editor');
+  editor.focus();
+  var html='';
+  if(type==='blockquote'){
+    document.execCommand('formatBlock',false,'blockquote');
+  } else if(type==='code'){
+    document.execCommand('insertHTML',false,'<code> </code>');
+  } else if(type==='pre'){
+    document.execCommand('insertHTML',false,'<pre>  </pre>');
+  } else if(type==='hr'){
+    document.execCommand('insertHTML',false,'<hr>');
+  } else if(type==='table'){
+    document.execCommand('insertHTML',false,'<table><thead><tr><th>1</th><th>2</th><th>3</th></tr></thead><tbody><tr><td>1</td><td>2</td><td>3</td></tr><tr><td>4</td><td>5</td><td>6</td></tr></tbody></table><p><br></p>');
+  } else if(type==='button'){
+    document.execCommand('insertHTML',false,'<a class="wp-block-button" href="#"> </a>&nbsp;');
+  }
+}
+
+function insertImageBlock(){
+  var url=prompt(' URL :');
+  if(!url)return;
+  var alt=prompt(' (alt)  ():','');
+  document.getElementById('post-editor').focus();
+  document.execCommand('insertHTML',false,'<img src="'+url+'" alt="'+(alt||'')+'" style="max-width:100%;height:auto;display:block;margin:.5em 0"><p><br></p>');
+}
+
+function insertLink(){
+  var url=prompt(' URL :','https://');
+  if(!url)return;
+  var text=prompt('  :','');
+  document.getElementById('post-editor').focus();
+  var sel=window.getSelection();
+  if(sel&&sel.toString()){
+    document.execCommand('createLink',false,url);
+  } else {
+    document.execCommand('insertHTML',false,'<a href="'+url+'">'+text+'</a>');
+  }
+}
+
+//  
+(async function(){
+  var r=await fetch('/wp-json/wp/v2/categories?per_page=50',{headers:{'Accept':'application/json'}}).catch(function(){return{ok:false};});
+  var cats=r.ok?await r.json():[];
+  cats=Array.isArray(cats)?cats:[];
+  var el=document.getElementById('cats-list');
+  if(!cats.length){
+    el.innerHTML='<div style="font-size:.8rem;color:#8c8f94">  <a href="/wp-admin/edit-tags.php?taxonomy=category" style="color:#2271b1"></a></div>';
+    return;
+  }
+  el.innerHTML=cats.map(function(c){return '<label style="display:flex;align-items:center;gap:6px;padding:4px 0"><input type="checkbox" value="'+c.id+'" class="cat-cb" style="accent-color:#2271b1"> '+c.name+'</label>';}).join('');
+})();
+
+//   
+${isEdit && postId ? `(async function(){
+  var r=await fetch('/wp-json/wp/v2/posts/${postId}',{headers:{'Accept':'application/json'}}).catch(function(){return{ok:false};});
+  if(!r.ok)return;
+  var p=await r.json();
+  document.getElementById('post-title').value=(p.title&&p.title.rendered)||'';
+  document.getElementById('post-editor').innerHTML=(p.content&&p.content.raw)||(p.content&&p.content.rendered)||'';
+  var status=p.status||'publish';
+  document.getElementById('post-status').value=status;
+  toggleSchedule(status);
+  if(status==='future'&&p.date){document.getElementById('post-schedule').value=p.date.slice(0,16);}
+  if(p.excerpt&&p.excerpt.raw)document.getElementById('post-excerpt').value=p.excerpt.raw;
+  if(p.slug)document.getElementById('post-slug').value=p.slug;
+  //  
+  if(p.categories&&p.categories.length){
+    setTimeout(function(){
+      p.categories.forEach(function(cid){
+        var cb=document.querySelector('.cat-cb[value="'+cid+'"]');
+        if(cb)cb.checked=true;
+      });
+    },600);
+  }
+})();` : ''}
+
+//  
+document.getElementById('post-editor').addEventListener('input',function(){
+  clearTimeout(_autoSaveTimer);
+  document.getElementById('post-status-bar').textContent=' :  ...';
+  _autoSaveTimer=setTimeout(function(){autoSave();},3000);
+});
+
+//  
+document.getElementById('post-editor').addEventListener('keydown',function(e){
+  if((e.ctrlKey||e.metaKey)&&e.key==='b'){e.preventDefault();execFmt('bold');}
+  if((e.ctrlKey||e.metaKey)&&e.key==='i'){e.preventDefault();execFmt('italic');}
+  if((e.ctrlKey||e.metaKey)&&e.key==='u'){e.preventDefault();execFmt('underline');}
+  if((e.ctrlKey||e.metaKey)&&e.key==='s'){e.preventDefault();saveDraft();}
+});
+
+async function autoSave(){
+  var title=document.getElementById('post-title').value;
+  var content=document.getElementById('post-editor').innerHTML;
+  if(!title&&!content)return;
+  document.getElementById('post-status-bar').textContent='  ...';
+  try{
+    var method=_postId?'PATCH':'POST';
+    var endpoint=_postId?'/wp-json/wp/v2/posts/'+_postId:'/wp-json/wp/v2/posts';
+    var r=await fetch(endpoint,{
+      method:method,
+      headers:{'Content-Type':'application/json','Accept':'application/json'},
+      body:JSON.stringify({title:title,content:content,status:'draft'})
+    });
+    if(r.ok){
+      var d=await r.json();
+      if(!_postId&&d.id){_postId=d.id;history.replaceState(null,'','/wp-admin/post.php?post='+d.id+'&action=edit');}
+      document.getElementById('post-status-bar').textContent=' : '+new Date().toLocaleTimeString('ko-KR');
+    }
+  }catch(e){document.getElementById('post-status-bar').textContent='  ';}
+}
+
+async function savePost(){await _save('publish');}
+async function saveDraft(){await _save('draft');}
+
+async function _save(status){
+  var title=document.getElementById('post-title').value.trim();
+  var content=document.getElementById('post-editor').innerHTML.trim();
+  var selStatus=document.getElementById('post-status').value||status;
+  if(!title){alert(' .');document.getElementById('post-title').focus();return;}
+  var cats=[];
+  document.querySelectorAll('.cat-cb:checked').forEach(function(el){cats.push(parseInt(el.value,10));});
+  var customSlug=document.getElementById('post-slug').value.trim();
+  var slug=customSlug||title.toLowerCase().replace(/[^a-z0-9-]+/g,'-').replace(/^-|-$/g,'');
+  var excerpt=document.getElementById('post-excerpt').value.trim();
+  var payload={title:title,content:content,status:selStatus,slug:slug,categories:cats};
+  if(excerpt)payload.excerpt=excerpt;
+  // 
+  if(selStatus==='future'){
+    var schedVal=document.getElementById('post-schedule').value;
+    if(!schedVal){alert(' / .');return;}
+    var schedDate=new Date(schedVal);
+    if(schedDate<=new Date()){alert('     .');return;}
+    payload.date=schedDate.toISOString();
+    payload.date_gmt=schedDate.toISOString();
+  }
+  var method=_postId?'PATCH':'POST';
+  var endpoint=_postId?'/wp-json/wp/v2/posts/'+_postId:'/wp-json/wp/v2/posts';
+  try{
+    var r=await fetch(endpoint,{
+      method:method,
+      headers:{'Content-Type':'application/json','Accept':'application/json'},
+      body:JSON.stringify(payload)
+    });
+    var d=await r.json();
+    if(r.ok&&d.id){
+      var msg=selStatus==='publish'?'!':selStatus==='future'?'  !':' .';
+      alert(msg);
+      window.location.href='/wp-admin/edit.php';
+    }else{alert(' : '+(d.message||JSON.stringify(d)));}
+  }catch(e){alert(': '+e.message);}
+}`;
+
+  } else if (page === 'upload') {
+    pageTitle = ' ';
+    bodyHtml = `<div class="tablenav top" style="margin-bottom:15px;display:flex;align-items:center;gap:10px">
+      <label class="btn-wp" style="cursor:pointer">  
+        <input type="file" id="file-input" style="display:none" accept="image/*,video/*,audio/*,.pdf" multiple>
+      </label>
+      <div id="upload-progress" style="display:none;font-size:.85rem;color:#2271b1"> ...</div>
+    </div>
+    <div id="media-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px">
+      <div style="text-align:center;padding:40px;color:#8c8f94;grid-column:1/-1"> ...</div>
+    </div>`;
+    inlineScript = `(async function(){
+var r=await fetch('/wp-json/wp/v2/media?per_page=30',{headers:{'Accept':'application/json'}}).catch(function(){return{ok:false};});
+var media=r.ok?await r.json():[];
+media=Array.isArray(media)?media:[];
+var el=document.getElementById('media-grid');
+if(!media.length){el.innerHTML='<div style="text-align:center;padding:60px;color:#8c8f94;grid-column:1/-1"><p style="font-size:1.5rem;margin-bottom:8px">[ ]</p><p>  .</p></div>';return;}
+el.innerHTML=media.map(function(m){
+  var src=m.source_url||(m.guid&&m.guid.rendered)||'';
+  var isImg=(m.mime_type||'').startsWith('image/');
+  var ttl=(m.title&&m.title.rendered)||m.slug||'';
+  return '<div style="border:1px solid #dcdcde;border-radius:4px;overflow:hidden;background:#f6f7f7;cursor:pointer" onclick="showMediaDetail(this)" data-url="'+src+'" data-title="'+ttl+'">'+
+    (isImg?'<img src="'+src+'" style="width:100%;height:130px;object-fit:cover;display:block">':
+    '<div style="height:130px;display:flex;align-items:center;justify-content:center;font-size:1rem;color:#8c8f94"></div>')+
+    '<p style="margin:0;padding:5px 7px;font-size:.75rem;color:#1d2327;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+ttl+'</p>'+
+    '</div>';
+}).join('');
+})();
+
+document.getElementById('file-input').addEventListener('change',async function(){
+  var files=Array.from(this.files);
+  if(!files.length)return;
+  var prog=document.getElementById('upload-progress');
+  prog.style.display='block';
+  for(var i=0;i<files.length;i++){
+    prog.textContent=' : '+(i+1)+'/'+files.length;
+    var fd=new FormData();fd.append('file',files[i]);fd.append('title',files[i].name);
+    await fetch('/wp-admin/async-upload.php',{method:'POST',body:fd}).catch(function(){});
+  }
+  prog.style.display='none';
+  location.reload();
+});
+
+function showMediaDetail(el){
+  var url=el.getAttribute('data-url');
+  var title=el.getAttribute('data-title');
+  if(url)prompt(' URL ():',url);
+}`;
+
+  } else if (page === 'themes' || page === 'theme-install') {
+    pageTitle = page === 'theme-install' ? '  ' : '';
+    // Twenty Twenty-Five  WP    (theme.json )
+    const builtinThemes = [
+      { slug:'twentytwentyfive', name:'Twenty Twenty-Five', ver:'1.4', active:true,
+        desc:'    .  , ,   .',
+        colors:['#FFFFFF','#111111','#FFEE58','#F6CFF4','#503AA8'],
+        screenshot:'linear-gradient(135deg,#FBFAF3 50%,#FFEE58 100%)',
+        tags:[' ','  ','']},
+      { slug:'twentytwentyfour', name:'Twenty Twenty-Four', ver:'1.3',
+        desc:'   .    .',
+        colors:['#FAFAFA','#1A1A1A','#D1E4DD'],
+        screenshot:'linear-gradient(135deg,#FAFAFA 50%,#D1E4DD 100%)',
+        tags:[' ','  ']},
+      { slug:'twentytwentythree', name:'Twenty Twenty-Three', ver:'1.5',
+        desc:'   .   .',
+        colors:['#FFFFFF','#000000','#CDDCE8'],
+        screenshot:'linear-gradient(135deg,#fff 50%,#CDDCE8 100%)',
+        tags:[' ','']},
+      { slug:'astra', name:'Astra', ver:'4.8',
+        desc:'(< 50KB)  . WooCommerce  .',
+        colors:['#ffffff','#3a3a3a','#4169e1'],
+        screenshot:'linear-gradient(135deg,#ffffff 50%,#4169e1 100%)',
+        tags:['','WooCommerce',' ']},
+      { slug:'generatepress', name:'GeneratePress', ver:'3.4',
+        desc:'  .    .',
+        colors:['#ffffff','#252525','#1b8be0'],
+        screenshot:'linear-gradient(135deg,#f5f5f5 50%,#1b8be0 100%)',
+        tags:['','',' ']},
+      { slug:'kadence', name:'Kadence', ver:'1.2',
+        desc:' . /  .',
+        colors:['#ffffff','#1a1a1a','#3182CE'],
+        screenshot:'linear-gradient(135deg,#f0f0f0 50%,#3182CE 100%)',
+        tags:[' ','','']},
+    ];
+    if (page === 'theme-install') {
+      bodyHtml = `
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap">
+  <h2 style="margin:0;font-size:1.1rem">   </h2>
+  <div style="flex:1;max-width:300px">
+    <input type="text" id="theme-search" placeholder="WordPress.org  …" 
+      style="width:100%;padding:7px 12px;border:1px solid #8c8f94;border-radius:4px;font-size:.875rem"
+      oninput="searchThemes(this.value)">
+  </div>
+  <button onclick="toggleThemeZip()" style="padding:6px 12px;border:1px solid #c3c4c7;border-radius:4px;cursor:pointer;font-size:.8rem;background:#f6f7f7;color:#1e1e1e" id="btn-theme-zip">ZIP </button>
+  <a href="/wp-admin/themes.php" style="font-size:.875rem;color:#2271b1">←  </a>
+</div>
+
+<div id="theme-zip-panel" style="display:none;margin-bottom:20px;background:#fff;border:1px solid #c3c4c7;border-radius:6px;padding:20px">
+  <h3 style="font-size:.95rem;margin:0 0 10px;font-weight:600">ZIP   </h3>
+  <div id="theme-zip-drop" ondragover="event.preventDefault();this.style.borderColor='#2271b1'" ondragleave="this.style.borderColor='#c3c4c7'" ondrop="handleThemeZipDrop(event)" style="border:2px dashed #c3c4c7;border-radius:6px;padding:24px;text-align:center;cursor:pointer" onclick="document.getElementById('theme-zip-input').click()">
+    <div style="font-size:2rem;margin-bottom:6px">[]</div>
+    <div style="font-size:.9rem;font-weight:600"> ZIP    </div>
+    <div style="font-size:.8rem;color:#8c8f94;margin-top:4px"> 32MB</div>
+    <input type="file" id="theme-zip-input" accept=".zip" style="display:none" onchange="handleThemeZipFile(this.files[0])">
+  </div>
+  <div id="theme-zip-info" style="display:none;margin-top:10px;padding:10px;background:#f6f7f7;border-radius:4px;font-size:.85rem"></div>
+  <div id="theme-zip-result" style="display:none;margin-top:10px;padding:10px 14px;border-radius:4px;font-size:.85rem"></div>
+  <div style="margin-top:12px;display:flex;gap:8px">
+    <button onclick="installThemeZip()" id="btn-theme-zip-install" class="btn-wp" disabled style="opacity:.5"></button>
+    <button onclick="toggleThemeZip()" class="btn-wp btn-secondary"></button>
+  </div>
+</div>
+
+<div id="theme-search-notice" style="display:none;padding:10px 14px;background:#e7f3ff;border:1px solid #72aee6;border-radius:4px;margin-bottom:16px;font-size:.875rem"></div>
+<div id="themes-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:20px">
+  ${builtinThemes.map(t => `
+  <div class="theme-card" data-slug="${t.slug}" style="border:1px solid #c3c4c7;border-radius:6px;overflow:hidden;background:#fff;transition:box-shadow .2s" onmouseenter="this.style.boxShadow='0 4px 12px rgba(0,0,0,.12)'" onmouseleave="this.style.boxShadow=''">
+    <div style="height:140px;background:${t.screenshot};position:relative">
+      <div style="position:absolute;bottom:8px;right:8px;display:flex;gap:4px">
+        ${t.colors.map(c=>`<span style="width:16px;height:16px;border-radius:50%;background:${c};border:1px solid rgba(0,0,0,.1)"></span>`).join('')}
+      </div>
+    </div>
+    <div style="padding:14px">
+      <h3 style="margin:0 0 5px;font-size:.9375rem">${t.name} <span style="color:#8c8f94;font-weight:400;font-size:.8rem">v${t.ver}</span></h3>
+      <p style="margin:0 0 8px;font-size:.8rem;color:#50575e;line-height:1.5">${t.desc}</p>
+      <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">
+        ${t.tags.map(tag=>`<span style="background:#f0f0f1;color:#50575e;font-size:.7rem;padding:2px 7px;border-radius:20px">${tag}</span>`).join('')}
+      </div>
+      <div style="display:flex;gap:6px">
+        <button onclick="installTheme('${t.slug}','${t.name}',this)" style="flex:1;padding:6px;background:#2271b1;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:.8rem;font-weight:600"></button>
+        <button onclick="previewTheme('${t.slug}')" style="padding:6px 10px;background:#f6f7f7;border:1px solid #ccc;border-radius:4px;cursor:pointer;font-size:.8rem"></button>
+      </div>
+    </div>
+  </div>`).join('')}
+</div>
+<div id="wp-org-results" style="display:none;margin-top:30px">
+  <h3 style="font-size:1rem;margin-bottom:12px">WordPress.org  </h3>
+  <div id="wp-org-themes-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:20px"></div>
+</div>`;
+      inlineScript = `
+async function searchThemes(q) {
+  const notice = document.getElementById('theme-search-notice');
+  if (!q || q.length < 2) { notice.style.display='none'; return; }
+  notice.style.display='block'; notice.textContent='WordPress.org   …';
+  try {
+    const r = await fetch('https://api.wordpress.org/themes/info/1.1/?action=query_themes&request[search]='+encodeURIComponent(q)+'&request[per_page]=8&request[fields][screenshot_url]=1&request[fields][version]=1&request[fields][description]=1&request[fields][tags]=1');
+    const data = r.ok ? await r.json() : null;
+    const grid = document.getElementById('wp-org-themes-grid');
+    const section = document.getElementById('wp-org-results');
+    if (data && data.themes && data.themes.length) {
+      grid.innerHTML = data.themes.map(t => \`
+        <div style="border:1px solid #c3c4c7;border-radius:6px;overflow:hidden;background:#fff">
+          <div style="height:120px;background:url('\${t.screenshot_url}') center/cover no-repeat #f0f0f1"></div>
+          <div style="padding:12px">
+            <h4 style="margin:0 0 5px;font-size:.875rem">\${t.name} <span style="color:#8c8f94;font-size:.75rem">v\${t.version}</span></h4>
+            <p style="margin:0 0 8px;font-size:.75rem;color:#50575e;line-height:1.4">\${(t.description||'').replace(/<[^>]+>/g,'').slice(0,100)}…</p>
+            <button onclick="installTheme('\${t.slug}','\${t.name.replace(/'/g,'')}',this)" style="width:100%;padding:5px;background:#2271b1;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:.8rem;font-weight:600"></button>
+          </div>
+        </div>\`).join('');
+      section.style.display='block';
+      notice.textContent=\`\${data.themes.length}  .\`;
+    } else {
+      section.style.display='none';
+      notice.textContent='  .';
+    }
+  } catch(e) { notice.textContent='  : '+e.message; }
+}
+async function installTheme(slug, name, btn) {
+  btn.textContent=' …'; btn.disabled=true;
+  try {
+    const r = await fetch('/wp-json/cloudpress/v1/themes/install', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({slug, name})
+    });
+    const d = r.ok ? await r.json() : {success:false};
+    if (d.success) {
+      btn.textContent=' '; btn.style.background='#00a32a';
+      btn.nextElementSibling && (btn.nextElementSibling.textContent = '');
+      btn.nextElementSibling && btn.nextElementSibling.setAttribute('onclick', \`activateTheme('\${slug}','\${name}',this)\`);
+    } else {
+      btn.textContent=''; btn.style.background='#d63638';
+    }
+  } catch(e) { btn.textContent=''; btn.style.background='#d63638'; }
+}
+async function activateTheme(slug, name, btn) {
+  btn.textContent=' …'; btn.disabled=true;
+  const r = await fetch('/wp-json/cloudpress/v1/themes/activate', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({slug, name})
+  });
+  const d = r.ok ? await r.json() : {success:false};
+  if (d.success) { btn.textContent=' '; btn.style.background='#00a32a'; }
+  else { btn.textContent=''; btn.disabled=false; }
+}
+function previewTheme(slug) {
+  window.open('/wp-admin/themes.php?preview='+slug, '_blank');
+}
+
+//   ZIP  
+let _themeZipFile = null;
+function toggleThemeZip() {
+  const panel = document.getElementById('theme-zip-panel');
+  const btn = document.getElementById('btn-theme-zip');
+  const isOpen = panel.style.display !== 'none';
+  panel.style.display = isOpen ? 'none' : 'block';
+  btn.style.background = isOpen ? '#f6f7f7' : '#2271b1';
+  btn.style.color = isOpen ? '#1e1e1e' : '#fff';
+  if (!isOpen) { _themeZipFile=null; document.getElementById('theme-zip-result').style.display='none'; }
+}
+function handleThemeZipDrop(e) {
+  e.preventDefault();
+  document.getElementById('theme-zip-drop').style.borderColor='#c3c4c7';
+  if (e.dataTransfer.files[0]) handleThemeZipFile(e.dataTransfer.files[0]);
+}
+function handleThemeZipFile(file) {
+  if (!file||!file.name.endsWith('.zip')) { alert('ZIP    .'); return; }
+  if (file.size>32*1024*1024) { alert('  32MB .'); return; }
+  _themeZipFile=file;
+  const info=document.getElementById('theme-zip-info');
+  info.style.display='block';
+  info.innerHTML=\`<strong> \${file.name}</strong> <span style="color:#8c8f94">(\${(file.size/1024/1024).toFixed(1)} MB)</span>\`;
+  const btn=document.getElementById('btn-theme-zip-install');
+  btn.disabled=false; btn.style.opacity='1';
+  document.getElementById('theme-zip-result').style.display='none';
+}
+async function installThemeZip() {
+  if (!_themeZipFile) return;
+  const btn=document.getElementById('btn-theme-zip-install');
+  const result=document.getElementById('theme-zip-result');
+  btn.textContent=' …'; btn.disabled=true;
+  try {
+    const ab=await _themeZipFile.arrayBuffer();
+    const uint8=new Uint8Array(ab);
+    let bin=''; uint8.forEach(b=>bin+=String.fromCharCode(b));
+    const base64=btoa(bin);
+    const themeName=_themeZipFile.name.replace(/\\.zip$/i,'');
+    const slug=themeName.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+    const r=await fetch('/wp-json/cloudpress/v1/themes/install-zip', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({slug,name:themeName,zip_base64:base64,file_name:_themeZipFile.name})
+    });
+    const d=r.ok?await r.json():{success:false,message:' '};
+    result.style.display='block';
+    if (d.success) {
+      result.style.cssText='display:block;background:#edfaef;border:1px solid #00a32a;color:#1d7a35;padding:10px 14px;border-radius:4px';
+      result.innerHTML=\` <strong>\${themeName}</strong>  ! <button onclick="activateThemeAfterZip('\${slug}','\${themeName}')" style="margin-left:8px;padding:4px 10px;background:#00a32a;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:.8rem"></button>\`;
+      _themeZipFile=null; btn.textContent='';
+    } else {
+      result.style.cssText='display:block;background:#fff0f0;border:1px solid #d63638;color:#d63638;padding:10px 14px;border-radius:4px';
+      result.textContent='  : '+(d.message||'   ');
+      btn.textContent=''; btn.disabled=false; btn.style.opacity='1';
+    }
+  } catch(e) {
+    result.style.cssText='display:block;background:#fff0f0;border:1px solid #d63638;color:#d63638;padding:10px 14px;border-radius:4px';
+    result.textContent=': '+e.message;
+    btn.textContent=''; btn.disabled=false; btn.style.opacity='1';
+  }
+}
+async function activateThemeAfterZip(slug,name) {
+  const r=await fetch('/wp-json/cloudpress/v1/themes/activate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({slug,name})});
+  const d=r.ok?await r.json():{success:false};
+  if(d.success){alert(name+' !');location.reload();}
+  else{alert(' : '+(d.message||''));}
+}`;
+    } else {
+      //   
+      bodyHtml = `
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+  <h2 style="margin:0;font-size:1.1rem"> (${builtinThemes.length})</h2>
+  <a href="/wp-admin/theme-install.php" class="btn-wp">  </a>
+</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:20px">
+${builtinThemes.map(t => `
+  <div style="border:${t.active?'3px solid #2271b1':'1px solid #c3c4c7'};border-radius:6px;overflow:hidden;background:#fff;position:relative;transition:box-shadow .2s" onmouseenter="this.style.boxShadow='0 4px 12px rgba(0,0,0,.15)'" onmouseleave="this.style.boxShadow=''">
+    ${t.active?`<span style="position:absolute;top:10px;left:10px;background:#2271b1;color:#fff;font-size:.7rem;font-weight:700;padding:3px 8px;border-radius:20px;z-index:1"> </span>`:''}
+    <div style="height:150px;background:${t.screenshot};display:flex;align-items:flex-end;padding:8px;justify-content:flex-end">
+      <div style="display:flex;gap:3px">
+        ${t.colors.map(c=>`<span style="width:14px;height:14px;border-radius:50%;background:${c};border:1px solid rgba(0,0,0,.1)"></span>`).join('')}
+      </div>
+    </div>
+    <div style="padding:14px">
+      <h3 style="margin:0 0 5px;font-size:.9375rem">${t.name} <span style="color:#8c8f94;font-weight:400;font-size:.8rem">v${t.ver}</span></h3>
+      <p style="margin:0 0 10px;font-size:.8rem;color:#50575e;line-height:1.5">${t.desc}</p>
+      <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px">
+        ${t.tags.map(tag=>`<span style="background:#f0f0f1;color:#50575e;font-size:.7rem;padding:2px 7px;border-radius:20px">${tag}</span>`).join('')}
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        ${t.active
+          ? `<button onclick="customizeTheme()" style="flex:1;padding:7px;background:#2271b1;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:.8rem;font-weight:600"> </button>`
+          : `<button onclick="activateTheme('${t.slug}','${t.name}',this)" style="flex:1;padding:7px;background:#00a32a;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:.8rem;font-weight:600"></button>`
+        }
+        <button onclick="window.open('/','_blank')" style="padding:7px 10px;background:#f6f7f7;border:1px solid #ccc;border-radius:4px;cursor:pointer;font-size:.8rem"></button>
+        ${!t.active?`<button style="padding:7px 10px;background:#fff;border:1px solid #c3c4c7;border-radius:4px;cursor:pointer;font-size:.8rem;color:#d63638" onclick="if(confirm('${t.name}  ?'))deleteTheme('${t.slug}',this)"></button>`:''}
+      </div>
+    </div>
+  </div>`).join('')}
+</div>`;
+      inlineScript = `
+async function activateTheme(slug, name, btn) {
+  if (!confirm(name + '  ?')) return;
+  btn.textContent=' …'; btn.disabled=true;
+  try {
+    const r = await fetch('/wp-json/cloudpress/v1/themes/activate', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({slug, name})
+    });
+    const d = r.ok ? await r.json() : {success:false};
+    if (d.success) { location.reload(); }
+    else { alert(' : ' + (d.message||'')); btn.textContent=''; btn.disabled=false; }
+  } catch(e) { alert(': '+e.message); btn.textContent=''; btn.disabled=false; }
+}
+async function deleteTheme(slug, btn) {
+  const r = await fetch('/wp-json/cloudpress/v1/themes/delete', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({slug})
+  });
+  if (r.ok) { btn.closest('[data-slug]')?.remove() || location.reload(); }
+}
+function customizeTheme() { window.open('/wp-admin/customize.php','_blank'); }`;
+    }
+
+  } else if (page === 'plugins' || page === 'plugin-install') {
+    pageTitle = page === 'plugin-install' ? '  ' : '';
+
+    if (page === 'plugin-install') {
+      //    : WordPress.org API   
+      const featuredPlugins = [
+        { slug:'woocommerce',     name:'WooCommerce',      ver:'9.4',  active:false, downloads:'200M+',
+          desc:'   . , ,  .',
+          icon:'', tags:['','',''], stars:4.5},
+        { slug:'yoast-seo',       name:'Yoast SEO',        ver:'23.1', active:false, downloads:'300M+',
+          desc:'WordPress SEO . On-page SEO, ,  .',
+          icon:'', tags:['SEO','',''], stars:4.8},
+        { slug:'wordfence',       name:'Wordfence Security', ver:'7.11', active:false, downloads:'150M+',
+          desc:',  ,      .',
+          icon:'', tags:['','',''], stars:4.7},
+        { slug:'contact-form-7',  name:'Contact Form 7',   ver:'5.9',  active:false, downloads:'500M+',
+          desc:'     .  .',
+          icon:'', tags:['','',''], stars:4.3},
+        { slug:'elementor',       name:'Elementor',        ver:'3.25', active:false, downloads:'180M+',
+          desc:'    . 100+ ,  .',
+          icon:'', tags:[' ','',''], stars:4.6},
+        { slug:'jetpack',         name:'Jetpack',          ver:'14.0', active:false, downloads:'400M+',
+          desc:', ,    .',
+          icon:'', tags:['','',''], stars:4.2},
+        { slug:'w3-total-cache',  name:'W3 Total Cache',   ver:'2.7',  active:false, downloads:'50M+',
+          desc:'   . CDN, minify, .',
+          icon:'', tags:['','CDN',''], stars:4.4},
+        { slug:'wpforms-lite',    name:'WPForms Lite',     ver:'1.9',  active:false, downloads:'200M+',
+          desc:'  .     .',
+          icon:'', tags:['','',''], stars:4.8},
+        { slug:'akismet',         name:'Akismet Anti-Spam',ver:'5.3',  active:false,  downloads:'800M+',
+          desc:'AI    .',
+          icon:'', tags:[' ','AI',''], stars:4.5},
+        { slug:'wp-super-cache',  name:'WP Super Cache',   ver:'1.12', active:false, downloads:'60M+',
+          desc:'WordPress.org   .  HTML  .',
+          icon:'', tags:['','',''], stars:4.3},
+        { slug:'classic-editor',  name:'Classic Editor',   ver:'1.6',  active:false, downloads:'700M+',
+          desc:' (TinyMCE) .    .',
+          icon:'', tags:['','',''], stars:4.7},
+        { slug:'tablepress',      name:'TablePress',       ver:'3.0',  active:false, downloads:'40M+',
+          desc:'   . Excel/CSV  .',
+          icon:'', tags:['','CSV',''], stars:4.8},
+      ];
+
+      bodyHtml = `
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+  <h2 style="margin:0;font-size:1.1rem"> </h2>
+  <div style="flex:1;max-width:360px;position:relative">
+    <input type="text" id="plugin-search" placeholder="WordPress.org  …" 
+      style="width:100%;padding:7px 36px 7px 12px;border:1px solid #8c8f94;border-radius:4px;font-size:.875rem"
+      oninput="debounceSearch(this.value)">
+    <span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);color:#8c8f94"></span>
+  </div>
+  <div style="display:flex;gap:6px">
+    <button onclick="filterPlugins('featured')" id="tab-featured" class="plugin-tab active-tab" style="padding:6px 12px;border:1px solid #2271b1;border-radius:4px;cursor:pointer;font-size:.8rem;background:#2271b1;color:#fff"></button>
+    <button onclick="filterPlugins('popular')" id="tab-popular" class="plugin-tab" style="padding:6px 12px;border:1px solid #c3c4c7;border-radius:4px;cursor:pointer;font-size:.8rem;background:#f6f7f7;color:#1e1e1e"></button>
+    <button onclick="filterPlugins('new')" id="tab-new" class="plugin-tab" style="padding:6px 12px;border:1px solid #c3c4c7;border-radius:4px;cursor:pointer;font-size:.8rem;background:#f6f7f7;color:#1e1e1e"></button>
+    <button onclick="toggleZipUpload()" id="tab-zip" class="plugin-tab" style="padding:6px 12px;border:1px solid #c3c4c7;border-radius:4px;cursor:pointer;font-size:.8rem;background:#f6f7f7;color:#1e1e1e">ZIP </button>
+  </div>
+  <a href="/wp-admin/plugins.php" style="font-size:.875rem;color:#2271b1;margin-left:auto">←  </a>
+</div>
+
+<div id="zip-upload-panel" style="display:none;margin-bottom:20px;background:#fff;border:1px solid #c3c4c7;border-radius:6px;padding:20px">
+  <h3 style="font-size:.95rem;margin:0 0 12px;font-weight:600">ZIP   </h3>
+  <p style="font-size:.85rem;color:#50575e;margin:0 0 14px">WordPress.org     ZIP    .</p>
+  <div id="zip-drop-zone" ondragover="event.preventDefault();this.style.borderColor='#2271b1'" ondragleave="this.style.borderColor='#c3c4c7'" ondrop="handleZipDrop(event)" style="border:2px dashed #c3c4c7;border-radius:6px;padding:30px;text-align:center;transition:border-color .2s;cursor:pointer" onclick="document.getElementById('plugin-zip-input').click()">
+    <div style="font-size:2.5rem;margin-bottom:8px">[ZIP]</div>
+    <div style="font-size:.9rem;font-weight:600;margin-bottom:4px">ZIP     </div>
+    <div style="font-size:.8rem;color:#8c8f94"> ZIP   ( 32MB)</div>
+    <input type="file" id="plugin-zip-input" accept=".zip" style="display:none" onchange="handleZipFile(this.files[0])">
+  </div>
+  <div id="zip-info" style="display:none;margin-top:12px;padding:12px;background:#f6f7f7;border-radius:4px;font-size:.85rem"></div>
+  <div id="zip-progress" style="display:none;margin-top:10px">
+    <div style="background:#e0e0e0;border-radius:4px;height:6px;overflow:hidden">
+      <div id="zip-progress-bar" style="background:#2271b1;height:100%;width:0;transition:width .3s"></div>
+    </div>
+    <div id="zip-progress-text" style="font-size:.8rem;color:#8c8f94;margin-top:4px;text-align:center"> ...</div>
+  </div>
+  <div id="zip-result" style="display:none;margin-top:10px;padding:10px 14px;border-radius:4px;font-size:.85rem"></div>
+  <div style="margin-top:14px;display:flex;gap:8px">
+    <button onclick="installZipPlugin()" id="btn-zip-install" class="btn-wp" disabled style="opacity:.5"></button>
+    <button onclick="toggleZipUpload()" class="btn-wp btn-secondary"></button>
+  </div>
+</div>
+
+<div id="search-results-bar" style="display:none;padding:10px 14px;background:#e7f3ff;border:1px solid #72aee6;border-radius:4px;margin-bottom:16px;font-size:.875rem"></div>
+
+<div id="plugin-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px">
+  ${featuredPlugins.map(p => `
+  <div class="plugin-install-card" data-slug="${p.slug}" data-tags="${p.tags.join(',')}" style="border:1px solid #c3c4c7;border-radius:6px;background:#fff;padding:16px;display:flex;flex-direction:column;gap:10px;transition:box-shadow .2s" onmouseenter="this.style.boxShadow='0 2px 8px rgba(0,0,0,.1)'" onmouseleave="this.style.boxShadow=''">
+    <div style="display:flex;align-items:flex-start;gap:12px">
+      <div style="width:48px;height:48px;display:flex;align-items:center;justify-content:center;background:#f6f7f7;border-radius:8px;flex-shrink:0">${p.icon ? `<img src="${p.icon}" style="width:100%;height:100%;object-fit:contain;border-radius:8px">` : `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" width="24" height="24" fill="#8c8f94"><path d="M18 8h-2V6c0-1.1-.9-2-2-2h-1V2h-2v2H9V2H7v2H6C4.9 4 4 4.9 4 6v2H2v2h2v1H2v2h2v1c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2v-1h2v-2h-2v-1h2V8zm-4 7H6V6h10v9z"/></svg>`}</div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <strong style="font-size:.9375rem">${p.name}</strong>
+          <span style="color:#8c8f94;font-size:.75rem">v${p.ver}</span>
+          ${p.active?`<span style="background:#00a32a;color:#fff;font-size:.65rem;padding:2px 6px;border-radius:20px"></span>`:''}
+        </div>
+        <div style="color:#8c8f94;font-size:.75rem;margin-top:2px">: ${p.downloads}</div>
+      </div>
+    </div>
+    <p style="margin:0;font-size:.8rem;color:#50575e;line-height:1.5;flex:1">${p.desc}</p>
+    <div style="display:flex;flex-wrap:wrap;gap:4px">
+      ${p.tags.map(tag=>`<span style="background:#f0f0f1;color:#50575e;font-size:.7rem;padding:2px 7px;border-radius:20px">${tag}</span>`).join('')}
+    </div>
+    <div style="display:flex;align-items:center;gap:6px">
+      <div style="flex:1;font-size:.75rem;color:#f0ad00">
+        ${''.repeat(Math.floor(p.stars))}${''.repeat(5-Math.floor(p.stars))} <span style="color:#8c8f94">${p.stars}</span>
+      </div>
+      ${p.active
+        ? `<button onclick="activatePlugin('${p.slug}','${p.name}',this)" style="padding:6px 14px;background:#00a32a;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:.8rem;font-weight:600"></button>`
+        : `<button onclick="installPlugin('${p.slug}','${p.name}',this)" style="padding:6px 14px;background:#2271b1;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:.8rem;font-weight:600"> </button>`
+      }
+      <button onclick="window.open('https://wordpress.org/plugins/${p.slug}/','_blank')" style="padding:6px 10px;background:#f6f7f7;border:1px solid #c3c4c7;border-radius:4px;cursor:pointer;font-size:.8rem"> </button>
+    </div>
+  </div>`).join('')}
+</div>
+
+<div id="wp-org-plugin-results" style="display:none;margin-top:24px">
+  <h3 id="wp-org-results-title" style="font-size:1rem;margin-bottom:12px"></h3>
+  <div id="wp-org-plugin-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px"></div>
+  <div id="wp-org-loading" style="display:none;text-align:center;padding:30px;color:#8c8f94">WordPress.org  …</div>
+</div>`;
+
+      inlineScript = `
+let searchTimer = null;
+function debounceSearch(q) {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => searchPlugins(q), 500);
+}
+
+async function searchPlugins(q) {
+  const bar = document.getElementById('search-results-bar');
+  const section = document.getElementById('wp-org-plugin-results');
+  const loading = document.getElementById('wp-org-loading');
+  const grid = document.getElementById('wp-org-plugin-grid');
+  const title = document.getElementById('wp-org-results-title');
+  const mainGrid = document.getElementById('plugin-grid');
+
+  if (!q || q.length < 2) {
+    bar.style.display='none'; section.style.display='none';
+    mainGrid.style.display=''; return;
+  }
+
+  //   
+  document.querySelectorAll('.plugin-install-card').forEach(card => {
+    const match = card.dataset.slug.includes(q.toLowerCase()) ||
+                  card.querySelector('strong').textContent.toLowerCase().includes(q.toLowerCase()) ||
+                  card.querySelector('p').textContent.toLowerCase().includes(q.toLowerCase());
+    card.style.display = match ? '' : 'none';
+  });
+
+  // WordPress.org API 
+  bar.style.display='block'; bar.textContent='WordPress.org  …';
+  section.style.display='block'; loading.style.display='block'; grid.innerHTML='';
+
+  try {
+    const url = 'https://api.wordpress.org/plugins/info/1.2/?action=query_plugins&request[search]='
+              + encodeURIComponent(q) + '&request[per_page]=12&request[fields][short_description]=1&request[fields][icons]=1&request[fields][downloaded]=1&request[fields][rating]=1&request[fields][num_ratings]=1&request[fields][active_installs]=1&request[fields][tags]=1&request[fields][version]=1';
+    const r = await fetch(url);
+    loading.style.display='none';
+    if (r.ok) {
+      const data = await r.json();
+      const plugins = data.plugins || [];
+      if (plugins.length) {
+        title.textContent = 'WordPress.org  : ' + plugins.length + '';
+        grid.innerHTML = plugins.map(p => {
+          const icon = (p.icons && (p.icons['1x'] || p.icons.default)) || '';
+          const stars = Math.round((p.rating||0)/20);
+          const installs = p.active_installs >= 1000000 ? Math.floor(p.active_installs/1000000)+'M+' : p.active_installs >= 1000 ? Math.floor(p.active_installs/1000)+'K+' : p.active_installs+'';
+          const tags = Object.values(p.tags||{}).slice(0,3);
+          return \`<div style="border:1px solid #c3c4c7;border-radius:6px;background:#fff;padding:16px;display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;align-items:flex-start;gap:12px">
+              <div style="width:48px;height:48px;border-radius:8px;overflow:hidden;background:#f6f7f7;flex-shrink:0">\${icon?'<img src="'+icon+'" style="width:100%;height:100%;object-fit:cover">':'<div style=\\"font-size:1.8rem;display:flex;align-items:center;justify-content:center;height:100%\\"></div>'}</div>
+              <div style="flex:1;min-width:0">
+                <strong style="font-size:.875rem">\${p.name}</strong>
+                <div style="color:#8c8f94;font-size:.75rem">v\${p.version||''} ·  : \${installs}</div>
+              </div>
+            </div>
+            <p style="margin:0;font-size:.8rem;color:#50575e;line-height:1.5;flex:1">\${(p.short_description||'').replace(/<[^>]+>/g,'').slice(0,120)}…</p>
+            <div style="display:flex;flex-wrap:wrap;gap:4px">
+              \${tags.map(t=>'<span style="background:#f0f0f1;color:#50575e;font-size:.7rem;padding:2px 7px;border-radius:20px">'+t+'</span>').join('')}
+            </div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <div style="flex:1;font-size:.75rem;color:#f0ad00">\${''.repeat(stars)+(''.repeat(5-stars))} <span style="color:#8c8f94">\${((p.rating||0)/20).toFixed(1)}</span></div>
+              <button onclick="installPlugin('\${p.slug}','\${(p.name||'').replace(/'/g,'')}',this)" style="padding:6px 14px;background:#2271b1;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:.8rem;font-weight:600"> </button>
+              <button onclick="window.open('https://wordpress.org/plugins/\${p.slug}/','_blank')" style="padding:6px 10px;background:#f6f7f7;border:1px solid #c3c4c7;border-radius:4px;cursor:pointer;font-size:.8rem"></button>
+            </div>
+          </div>\`;
+        }).join('');
+        bar.textContent = \`WordPress.org "\${q}" : \${plugins.length} \`;
+      } else {
+        title.textContent='  ';
+        grid.innerHTML='<p style="color:#8c8f94;grid-column:1/-1">  .</p>';
+        bar.textContent='WordPress.org   .';
+      }
+    }
+  } catch(e) {
+    loading.style.display='none';
+    bar.textContent='WordPress.org API  : ' + e.message;
+  }
+}
+
+async function filterPlugins(type) {
+  document.querySelectorAll('.plugin-tab').forEach(b=>{
+    b.style.background='#f6f7f7'; b.style.color='#1e1e1e'; b.style.borderColor='#c3c4c7';
+  });
+  const active = document.getElementById('tab-'+type);
+  active.style.background='#2271b1'; active.style.color='#fff'; active.style.borderColor='#2271b1';
+  //   WordPress.org API 
+  const map = {featured:'browse=featured', popular:'browse=popular', new:'browse=new'};
+  const bar = document.getElementById('search-results-bar');
+  const section = document.getElementById('wp-org-plugin-results');
+  const grid = document.getElementById('wp-org-plugin-grid');
+  const title = document.getElementById('wp-org-results-title');
+  bar.style.display='block'; bar.textContent='WordPress.org  …';
+  document.getElementById('plugin-search').value='';
+  document.querySelectorAll('.plugin-install-card').forEach(c=>c.style.display='');
+  try {
+    const url='https://api.wordpress.org/plugins/info/1.2/?action=query_plugins&request['+map[type]+']&request[per_page]=12&request[fields][short_description]=1&request[fields][icons]=1&request[fields][downloaded]=1&request[fields][rating]=1&request[fields][active_installs]=1&request[fields][tags]=1&request[fields][version]=1';
+    const r = await fetch(url);
+    if (r.ok) {
+      const data = await r.json();
+      const plugins = data.plugins||[];
+      title.textContent = {featured:' ',popular:' ',new:' '}[type];
+      grid.innerHTML = plugins.map(p => {
+        const icon = (p.icons&&(p.icons['1x']||p.icons.default))||'';
+        const stars = Math.round((p.rating||0)/20);
+        const installs = p.active_installs>=1000000?Math.floor(p.active_installs/1000000)+'M+':p.active_installs>=1000?Math.floor(p.active_installs/1000)+'K+':p.active_installs+'';
+        return \`<div style="border:1px solid #c3c4c7;border-radius:6px;background:#fff;padding:16px;display:flex;flex-direction:column;gap:10px">
+          <div style="display:flex;align-items:flex-start;gap:12px">
+            <div style="width:48px;height:48px;border-radius:8px;overflow:hidden;background:#f6f7f7;flex-shrink:0">\${icon?'<img src="'+icon+'" style="width:100%;height:100%;object-fit:cover">':''}</div>
+            <div><strong style="font-size:.875rem">\${p.name}</strong><div style="color:#8c8f94;font-size:.75rem">v\${p.version||''} · : \${installs}</div></div>
+          </div>
+          <p style="margin:0;font-size:.8rem;color:#50575e;line-height:1.5;flex:1">\${(p.short_description||'').replace(/<[^>]+>/g,'').slice(0,120)}…</p>
+          <div style="display:flex;align-items:center;gap:6px">
+            <div style="flex:1;font-size:.75rem;color:#f0ad00">\${''.repeat(stars)+(''.repeat(5-stars))}</div>
+            <button onclick="installPlugin('\${p.slug}','\${(p.name||'').replace(/'/g,'')}',this)" style="padding:6px 14px;background:#2271b1;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:.8rem;font-weight:600"> </button>
+          </div>
+        </div>\`;
+      }).join('');
+      section.style.display='block';
+      bar.textContent = \`\${title.textContent}: \${plugins.length}\`;
+    }
+  } catch(e) { bar.textContent=' : '+e.message; }
+}
+
+async function installPlugin(slug, name, btn) {
+  btn.textContent=' …'; btn.disabled=true; btn.style.background='#72aee6';
+  try {
+    const r = await fetch('/wp-json/cloudpress/v1/plugins/install', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({slug, name})
+    });
+    const d = r.ok ? await r.json() : {success:false, message:' '};
+    if (d.success) {
+      btn.textContent=''; btn.style.background='#00a32a'; btn.disabled=false;
+      btn.setAttribute('onclick', \`activatePlugin('\${slug}','\${name}',this)\`);
+      //    
+      const card = btn.closest('[data-slug],[style*="border-radius:6px"]');
+      if (card) {
+        const nameEl = card.querySelector('strong');
+        if (nameEl && !nameEl.nextElementSibling?.textContent?.includes('')) {
+          const badge = document.createElement('span');
+          badge.style.cssText='background:#00a32a;color:#fff;font-size:.65rem;padding:2px 6px;border-radius:20px;margin-left:6px';
+          badge.textContent='';
+          nameEl.after(badge);
+        }
+      }
+    } else {
+      btn.textContent=' '; btn.style.background='#d63638'; btn.disabled=false;
+      setTimeout(()=>{ btn.textContent=' '; btn.style.background='#2271b1'; }, 2000);
+    }
+  } catch(e) { btn.textContent=': '+e.message.slice(0,20); btn.style.background='#d63638'; btn.disabled=false; }
+}
+
+async function activatePlugin(slug, name, btn) {
+  btn.textContent=' …'; btn.disabled=true;
+  try {
+    const r = await fetch('/wp-json/cloudpress/v1/plugins/activate', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({slug, name})
+    });
+    const d = r.ok ? await r.json() : {success:false};
+    if (d.success) {
+      btn.textContent=' '; btn.style.background='#00a32a';
+      setTimeout(()=>{ window.location.href='/wp-admin/plugins.php'; }, 1000);
+    } else {
+      btn.textContent=' '; btn.disabled=false;
+      alert(' : ' + (d.message||'   '));
+    }
+  } catch(e) { btn.textContent=''; btn.disabled=false; }
+}
+
+//  ZIP   
+let _zipFile = null;
+
+function toggleZipUpload() {
+  const panel = document.getElementById('zip-upload-panel');
+  const tab = document.getElementById('tab-zip');
+  const isOpen = panel.style.display !== 'none';
+  panel.style.display = isOpen ? 'none' : 'block';
+  tab.style.background = isOpen ? '#f6f7f7' : '#2271b1';
+  tab.style.color = isOpen ? '#1e1e1e' : '#fff';
+  tab.style.borderColor = isOpen ? '#c3c4c7' : '#2271b1';
+  if (!isOpen) { _zipFile = null; document.getElementById('zip-result').style.display='none'; }
+}
+
+function handleZipDrop(e) {
+  e.preventDefault();
+  document.getElementById('zip-drop-zone').style.borderColor='#c3c4c7';
+  const file = e.dataTransfer.files[0];
+  if (file) handleZipFile(file);
+}
+
+function handleZipFile(file) {
+  if (!file) return;
+  if (!file.name.endsWith('.zip')) {
+    alert('ZIP    .');
+    return;
+  }
+  if (file.size > 32 * 1024 * 1024) {
+    alert('  32MB .');
+    return;
+  }
+  _zipFile = file;
+  const infoEl = document.getElementById('zip-info');
+  infoEl.style.display='block';
+  infoEl.innerHTML = \`<strong> \${file.name}</strong> <span style="color:#8c8f94;font-size:.8rem">(\${(file.size/1024/1024).toFixed(1)} MB)</span>\`;
+  const btn = document.getElementById('btn-zip-install');
+  btn.disabled=false; btn.style.opacity='1';
+  document.getElementById('zip-result').style.display='none';
+}
+
+async function installZipPlugin() {
+  if (!_zipFile) return;
+  const btn = document.getElementById('btn-zip-install');
+  const progress = document.getElementById('zip-progress');
+  const progressBar = document.getElementById('zip-progress-bar');
+  const progressText = document.getElementById('zip-progress-text');
+  const result = document.getElementById('zip-result');
+
+  btn.disabled=true; btn.style.opacity='.5';
+  progress.style.display='block'; result.style.display='none';
+
+  // ZIP  base64 
+  progressBar.style.width='20%'; progressText.textContent='  ...';
+  try {
+    const arrayBuffer = await _zipFile.arrayBuffer();
+    const uint8 = new Uint8Array(arrayBuffer);
+    let binary=''; uint8.forEach(b=>binary+=String.fromCharCode(b));
+    const base64 = btoa(binary);
+    const pluginName = _zipFile.name.replace(/\\.zip$/i,'');
+    const slug = pluginName.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+
+    progressBar.style.width='60%'; progressText.textContent='  ...';
+
+    const r = await fetch('/wp-json/cloudpress/v1/plugins/install-zip', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ slug, name: pluginName, zip_base64: base64, file_name: _zipFile.name })
+    });
+    const d = r.ok ? await r.json() : { success:false, message:' ' };
+
+    progressBar.style.width='100%';
+    progress.style.display='none';
+
+    if (d.success) {
+      result.style.cssText='display:block;background:#edfaef;border:1px solid #00a32a;color:#1d7a35;padding:10px 14px;border-radius:4px';
+      result.innerHTML = \` <strong>\${d.plugin?.name||pluginName}</strong>  ! <button onclick="activateAfterZip('\${slug}','\${d.plugin?.name||pluginName}')" style="margin-left:10px;padding:4px 10px;background:#00a32a;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:.8rem"></button>\`;
+      _zipFile=null;
+    } else {
+      result.style.cssText='display:block;background:#fff0f0;border:1px solid #d63638;color:#d63638;padding:10px 14px;border-radius:4px';
+      result.textContent = '  : ' + (d.message||'   ');
+      btn.disabled=false; btn.style.opacity='1';
+    }
+  } catch(e) {
+    progress.style.display='none';
+    result.style.cssText='display:block;background:#fff0f0;border:1px solid #d63638;color:#d63638;padding:10px 14px;border-radius:4px';
+    result.textContent=': ' + e.message;
+    btn.disabled=false; btn.style.opacity='1';
+  }
+}
+
+async function activateAfterZip(slug, name) {
+  const r = await fetch('/wp-json/cloudpress/v1/plugins/activate', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({slug, name})
+  });
+  const d = r.ok ? await r.json() : {success:false};
+  if (d.success) { alert(name + ' !'); window.location.href='/wp-admin/plugins.php'; }
+  else { alert(' : ' + (d.message||'')); }
+}`;
+
+    } else {
+      //     
+      bodyHtml = `
+<div id="plugin-msg" style="display:none;padding:10px 14px;border-radius:4px;margin-bottom:12px"></div>
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+  <div style="display:flex;align-items:center;gap:8px">
+    <h2 style="margin:0;font-size:1.1rem"></h2>
+    <span id="plugin-count" style="background:#f0f0f1;color:#50575e;font-size:.75rem;padding:2px 8px;border-radius:20px"> …</span>
+  </div>
+  <div style="display:flex;gap:8px">
+    <input type="text" id="plugin-filter" placeholder=" …" oninput="filterList(this.value)"
+      style="padding:6px 10px;border:1px solid #8c8f94;border-radius:4px;font-size:.8rem;width:200px">
+    <a href="/wp-admin/plugin-install.php" class="btn-wp">  </a>
+  </div>
+</div>
+<table class="wp-list-table" style="width:100%;border-collapse:collapse;border:1px solid #c3c4c7;background:#fff">
+  <thead>
+    <tr style="background:#f6f7f7;border-bottom:1px solid #c3c4c7">
+      <th style="padding:8px 12px;text-align:left;font-size:.875rem"></th>
+      <th style="padding:8px 12px;text-align:left;font-size:.875rem;width:80px"></th>
+      <th style="padding:8px 12px;text-align:left;font-size:.875rem;width:90px"></th>
+      <th style="padding:8px 12px;text-align:left;font-size:.875rem;width:200px"></th>
+    </tr>
+  </thead>
+  <tbody id="plugins-list">
+    <tr><td colspan="4" style="padding:20px;text-align:center;color:#8c8f94">   …</td></tr>
+  </tbody>
+</table>`;
+
+      inlineScript = `
+(async function() {
+  const list = document.getElementById('plugins-list');
+  const countEl = document.getElementById('plugin-count');
+  try {
+    const r = await fetch('/wp-json/cloudpress/v1/plugins', {headers:{'Accept':'application/json'}});
+    const plugins = r.ok ? await r.json() : [];
+    if (!plugins.length) {
+      list.innerHTML='<tr><td colspan="4" style="padding:20px;text-align:center;color:#8c8f94">  . <a href="/wp-admin/plugin-install.php">  </a></td></tr>';
+      countEl.textContent = '0';
+      return;
+    }
+    countEl.textContent = plugins.length + '';
+    renderPlugins(plugins);
+  } catch(e) {
+    list.innerHTML = '<tr><td colspan="4" style="padding:20px;text-align:center;color:#d63638"> : '+e.message+'</td></tr>';
+  }
+})();
+
+function renderPlugins(plugins) {
+  const list = document.getElementById('plugins-list');
+  list.innerHTML = plugins.map(p => \`
+    <tr id="row-\${p.slug}" style="border-top:1px solid #f0f0f1;\${p.active?'background:#f0f7e6':''}">
+      <td style="padding:12px">
+        <div style="display:flex;align-items:flex-start;gap:10px">
+          \${p.icon?'<img src="'+p.icon+'" style="width:36px;height:36px;border-radius:6px;flex-shrink:0">':'<div style=\\"width:36px;height:36px;border-radius:6px;background:#f0f0f1;display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0\\"></div>'}
+          <div>
+            <strong style="font-size:.9rem">\${p.name}</strong>
+            <p style="margin:3px 0 0;font-size:.8rem;color:#50575e">\${p.description||''}</p>
+            \${p.author?'<p style="margin:3px 0 0;font-size:.75rem;color:#8c8f94">: '+p.author+'</p>':''}
+          </div>
+        </div>
+      </td>
+      <td style="padding:12px;font-size:.8rem;color:#50575e;vertical-align:top">v\${p.version||'-'}</td>
+      <td style="padding:12px;vertical-align:top">
+        <span style="font-size:.8rem;font-weight:600;\${p.active?'color:#00a32a':'color:#8c8f94'}">\${p.active?' ':' '}</span>
+      </td>
+      <td style="padding:12px;vertical-align:top">
+        <div style="display:flex;flex-wrap:wrap;gap:4px;font-size:.8rem">
+          \${p.active
+            ? '<button onclick="deactivatePlugin(\''+p.slug+'\',\''+p.name.replace(/'/g,'')+'\',this)" style="padding:4px 10px;background:#fff;border:1px solid #c3c4c7;border-radius:3px;cursor:pointer;font-size:.8rem"></button>'
+            : '<button onclick="activatePlugin(\''+p.slug+'\',\''+p.name.replace(/'/g,'')+'\',this)" style="padding:4px 10px;background:#00a32a;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:.8rem;font-weight:600"></button>'
+          }
+          \${p.settings_url?'<a href="'+p.settings_url+'" style="padding:4px 10px;background:#f6f7f7;border:1px solid #c3c4c7;border-radius:3px;font-size:.8rem;text-decoration:none;color:#1e1e1e"></a>':''}
+          \${!p.active?'<button onclick="deletePlugin(\''+p.slug+'\',\''+p.name.replace(/'/g,'')+'\',this)" style="padding:4px 10px;background:#fff;border:1px solid #d63638;color:#d63638;border-radius:3px;cursor:pointer;font-size:.8rem"></button>':''}
+        </div>
+      </td>
+    </tr>\`).join('');
+  window._pluginData = plugins;
+}
+
+function filterList(q) {
+  const rows = document.querySelectorAll('#plugins-list tr[id]');
+  const lq = q.toLowerCase();
+  rows.forEach(row => {
+    const text = row.textContent.toLowerCase();
+    row.style.display = text.includes(lq) ? '' : 'none';
+  });
+}
+
+async function activatePlugin(slug, name, btn) {
+  btn.textContent=' …'; btn.disabled=true;
+  const r = await fetch('/wp-json/cloudpress/v1/plugins/activate', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({slug, name})
+  });
+  const d = r.ok ? await r.json() : {success:false};
+  showMsg(d.success ? ' ' + name + ' ' : ' : '+(d.message||''), d.success);
+  if (d.success) location.reload();
+  else { btn.textContent=''; btn.disabled=false; }
+}
+
+async function deactivatePlugin(slug, name, btn) {
+  btn.textContent=' …'; btn.disabled=true;
+  const r = await fetch('/wp-json/cloudpress/v1/plugins/deactivate', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({slug, name})
+  });
+  const d = r.ok ? await r.json() : {success:false};
+  showMsg(d.success ? ' ' + name + ' ' : '', d.success);
+  if (d.success) location.reload();
+  else { btn.textContent=''; btn.disabled=false; }
+}
+
+async function deletePlugin(slug, name, btn) {
+  if (!confirm(name + '  ?\\n    .')) return;
+  btn.textContent=' …'; btn.disabled=true;
+  const r = await fetch('/wp-json/cloudpress/v1/plugins/delete', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({slug})
+  });
+  const d = r.ok ? await r.json() : {success:false};
+  if (d.success) {
+    document.getElementById('row-'+slug)?.remove();
+    showMsg(' ' + name + ' ', true);
+  } else { btn.textContent=''; btn.disabled=false; showMsg(' ', false); }
+}
+
+function showMsg(text, ok) {
+  const el = document.getElementById('plugin-msg');
+  el.style.cssText = ok
+    ? 'display:block;background:#edfaef;border:1px solid #00a32a;color:#1d7a35;padding:10px 14px;border-radius:4px;margin-bottom:12px'
+    : 'display:block;background:#fff0f0;border:1px solid #d63638;color:#d63638;padding:10px 14px;border-radius:4px;margin-bottom:12px';
+  el.textContent = text;
+  setTimeout(()=>el.style.display='none', 4000);
+}`;
+    }
+
+
+  } else if (page === 'options-general' || page === 'options') {
+    pageTitle = ' ';
+    bodyHtml = `<div id="settings-msg" style="display:none;padding:10px 14px;margin-bottom:16px;border-radius:4px"></div>
+    <table class="form-table" style="width:100%;border-collapse:collapse">` +
+      [
+        {label:' ',          name:'blogname',        type:'text',  placeholder:' WordPress '},
+        {label:'',             name:'blogdescription', type:'text',  placeholder:'  '},
+        {label:'WordPress  (URL)',name:'siteurl',         type:'url',   placeholder:'https://example.com'},
+        {label:'  (URL)',    name:'home',            type:'url',   placeholder:'https://example.com'},
+        {label:' ',        name:'admin_email',     type:'email', placeholder:'admin@example.com'},
+      ].map(f =>
+        `<tr style="border-bottom:1px solid #f0f0f1">
+          <th style="padding:15px 10px;text-align:left;width:220px;font-size:.875rem;vertical-align:top">${f.label}</th>
+          <td style="padding:15px 10px"><input type="${f.type}" id="opt-${f.name}" name="${f.name}" placeholder="${f.placeholder}" style="width:100%;max-width:400px;padding:6px 8px;border:1px solid #8c8f94;border-radius:4px;font-size:.875rem"></td>
+        </tr>`
+      ).join('') +
+      `<tr style="border-bottom:1px solid #f0f0f1"><th style="padding:15px 10px;font-size:.875rem"></th>
+        <td style="padding:15px 10px"><select style="padding:6px 8px;border:1px solid #8c8f94;border-radius:4px;font-size:.875rem"><option selected> (ko_KR)</option><option>English (US)</option></select></td></tr>
+      <tr style="border-bottom:1px solid #f0f0f1"><th style="padding:15px 10px;font-size:.875rem"></th>
+        <td style="padding:15px 10px"><select style="padding:6px 8px;border:1px solid #8c8f94;border-radius:4px;font-size:.875rem"><option selected>Asia/Seoul</option><option>UTC</option></select></td></tr>
+      </table>
+      <p style="margin-top:20px"><button type="button" onclick="saveSettings()" class="btn-wp"> </button></p>`;
+
+    inlineScript = `(async function(){
+try{
+  var r=await fetch('/wp-json/wp/v2/settings',{headers:{'Accept':'application/json'}});
+  var res=r.ok?await r.json():{};
+  if(res.title)document.getElementById('opt-blogname').value=res.title;
+  if(res.description)document.getElementById('opt-blogdescription').value=res.description;
+  if(res.url){document.getElementById('opt-siteurl').value=res.url;document.getElementById('opt-home').value=res.url;}
+  if(res.email)document.getElementById('opt-admin_email').value=res.email;
+}catch(e){}
+})();
+async function saveSettings(){
+  var data={};
+  document.querySelectorAll('input[name]').forEach(function(el){if(el.value.trim())data[el.name]=el.value.trim();});
+  var msg=document.getElementById('settings-msg');
+  try{
+    var r=await fetch('/wp-json/wp/v2/settings',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(data)});
+    if(r.ok){
+      msg.style.cssText='display:block;background:#edfaef;border:1px solid #00a32a;color:#1d7a35;padding:10px 14px;border-radius:4px';
+      msg.textContent='  .';
+    }else{
+      msg.style.cssText='display:block;background:#fff0f0;border:1px solid #d63638;color:#d63638;padding:10px 14px;border-radius:4px';
+      msg.textContent=' .';
+    }
+  }catch(e){
+    msg.style.cssText='display:block;background:#fff0f0;border:1px solid #d63638;color:#d63638;padding:10px 14px;border-radius:4px';
+    msg.textContent=': '+e.message;
+  }
+}`;
+
+  } else if (page === 'users') {
+    pageTitle = '';
+    bodyHtml = `<div class="tablenav top" style="margin-bottom:10px"><a href="/wp-admin/user-new.php" class="btn-wp">  </a></div>
+    <table class="wp-list-table" style="width:100%;border-collapse:collapse;border:1px solid #c3c4c7;background:#fff">
+      <thead><tr style="background:#f6f7f7">
+        <th style="padding:8px 10px;text-align:left"></th>
+        <th style="padding:8px 10px;text-align:left"></th>
+        <th style="padding:8px 10px;text-align:left"></th>
+        <th style="padding:8px 10px;text-align:left"></th>
+        <th style="padding:8px 10px;text-align:left"></th>
+      </tr></thead>
+      <tbody id="users-list"><tr><td colspan="5" style="padding:20px;text-align:center;color:#8c8f94"> ...</td></tr></tbody>
+    </table>`;
+    inlineScript = `(async function(){
+var r=await fetch('/wp-json/wp/v2/users?per_page=20',{headers:{'Accept':'application/json'}}).catch(function(){return{ok:false};});
+var users=r.ok?await r.json():[];
+users=Array.isArray(users)?users:[];
+var el=document.getElementById('users-list');
+if(!users.length){el.innerHTML='<tr><td colspan="5" style="padding:20px;text-align:center;color:#8c8f94"> .</td></tr>';return;}
+el.innerHTML=users.map(function(u){
+  return '<tr style="border-top:1px solid #f0f0f1">'+
+    '<td style="padding:8px 10px"><strong>'+(u.slug||u.name||'')+'</strong></td>'+
+    '<td style="padding:8px 10px">'+(u.name||'—')+'</td>'+
+    '<td style="padding:8px 10px">'+(u.email||'—')+'</td>'+
+    '<td style="padding:8px 10px">'+(u.role||'')+'</td>'+
+    '<td style="padding:8px 10px">'+(u.post_count||0)+'</td>'+
+    '</tr>';
+}).join('');
+})();`;
+
+  } else if (page === 'profile') {
+    pageTitle = '';
+    bodyHtml = `<div id="profile-msg" style="display:none;padding:10px 14px;margin-bottom:16px;border-radius:4px"></div>
+    <table class="form-table" style="width:100%;border-collapse:collapse">` +
+      [
+        {label:'', id:'username',   val:session?.login||'admin', disabled:true,  type:'text'},
+        {label:'',     id:'first_name', val:'', disabled:false, type:'text',  placeholder:''},
+        {label:'',   id:'email',      val:'', disabled:false, type:'email', placeholder:'admin@example.com'},
+      ].map(f =>
+        `<tr style="border-bottom:1px solid #f0f0f1">
+          <th style="padding:15px 10px;text-align:left;width:200px;font-size:.875rem">${f.label}</th>
+          <td style="padding:15px 10px"><input type="${f.type}" id="${f.id}" value="${esc(f.val||'')}"${f.placeholder?` placeholder="${f.placeholder}"`:''}${f.disabled?' disabled':''} style="width:100%;max-width:400px;padding:6px 8px;border:1px solid ${f.disabled?'#dcdcde':'#8c8f94'};border-radius:4px;font-size:.875rem${f.disabled?';background:#f6f7f7;color:#8c8f94':''}"></td>
+        </tr>`
+      ).join('') +
+      `<tr style="border-bottom:1px solid #f0f0f1"><th style="padding:15px 10px;font-size:.875rem"> </th>
+        <td style="padding:15px 10px">
+          <input type="password" id="new_pass1" placeholder=" " style="width:100%;max-width:400px;padding:6px 8px;border:1px solid #8c8f94;border-radius:4px;font-size:.875rem;margin-bottom:8px"><br>
+          <input type="password" id="new_pass2" placeholder=" " style="width:100%;max-width:400px;padding:6px 8px;border:1px solid #8c8f94;border-radius:4px;font-size:.875rem">
+        </td></tr>
+      </table>
+      <p style="margin-top:20px"><button class="btn-wp" onclick="saveProfile()"> </button></p>`;
+    inlineScript = `function saveProfile(){
+  var p1=document.getElementById('new_pass1').value;
+  var p2=document.getElementById('new_pass2').value;
+  if(p1&&p1!==p2){alert('  .');return;}
+  var msg=document.getElementById('profile-msg');
+  msg.style.cssText='display:block;background:#edfaef;border:1px solid #00a32a;color:#1d7a35;padding:10px 14px;border-radius:4px';
+  msg.textContent='  .';
+}`;
+
+  } else if (page === 'edit-comments') {
+    pageTitle = '';
+    bodyHtml = `<table class="wp-list-table" style="width:100%;border-collapse:collapse;border:1px solid #c3c4c7;background:#fff">
+      <thead><tr style="background:#f6f7f7">
+        <th style="padding:8px 10px;text-align:left"></th>
+        <th style="padding:8px 10px;text-align:left"></th>
+        <th style="padding:8px 10px;text-align:left;width:120px"></th>
+      </tr></thead>
+      <tbody id="comments-list"><tr><td colspan="3" style="padding:20px;text-align:center;color:#8c8f94"> ...</td></tr></tbody>
+    </table>`;
+    inlineScript = `(async function(){
+var r=await fetch('/wp-json/wp/v2/comments?per_page=20',{headers:{'Accept':'application/json'}}).catch(function(){return{ok:false};});
+var list=r.ok?await r.json():[];
+list=Array.isArray(list)?list:[];
+var el=document.getElementById('comments-list');
+if(!list.length){el.innerHTML='<tr><td colspan="3" style="padding:20px;text-align:center;color:#8c8f94"> .</td></tr>';return;}
+el.innerHTML=list.map(function(c){
+  var d=new Date(c.date).toLocaleDateString('ko-KR');
+  var content=((c.content&&c.content.rendered)||'').replace(/<[^>]+>/g,'').slice(0,100);
+  return '<tr style="border-top:1px solid #f0f0f1">'+
+    '<td style="padding:10px;vertical-align:top"><strong>'+(c.author_name||'')+'</strong></td>'+
+    '<td style="padding:10px;vertical-align:top;font-size:.875rem">'+content+'</td>'+
+    '<td style="padding:10px;vertical-align:top;font-size:.8rem;color:#50575e">'+d+'</td>'+
+    '</tr>';
+}).join('');
+})();`;
+
+  } else if (page === 'options-permalink') {
+    pageTitle = ' ';
+    bodyHtml = `<p style="color:#50575e;margin-bottom:20px">WordPress      URL    .</p>` +
+      [
+        {label:'',        val:'',                               desc:'https://example.com/?p=123'},
+        {label:' ', val:'/%year%/%monthnum%/%day%/%postname%/', desc:'https://example.com/2024/01/01/-/'},
+        {label:' ',   val:'/%year%/%monthnum%/%postname%/',       desc:'https://example.com/2024/01/-/'},
+        {label:'',        val:'/archives/%post_id%',                  desc:'https://example.com/archives/123'},
+        {label:' ',     val:'/%postname%/',                         desc:'https://example.com/-/', checked:true},
+      ].map(o =>
+        `<label style="display:flex;align-items:flex-start;gap:10px;margin-bottom:14px;cursor:pointer">
+          <input type="radio" name="permalink" value="${o.val}"${o.checked?' checked':''} style="margin-top:4px">
+          <span><strong>${o.label}</strong>${o.desc?`<br><code style="font-size:.8rem;color:#50575e">${o.desc}</code>`:''}
+          </span></label>`
+      ).join('') +
+      `<p style="margin-top:20px"><button type="button" class="btn-wp" onclick="alert('.')"> </button></p>`;
+
+  } else {
+    pageTitle = page.replace(/-/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+    bodyHtml = `<div style="background:#fff;border:1px solid #c3c4c7;border-radius:4px;padding:30px;text-align:center;color:#50575e">
+      <p>  CloudPress Edge .</p>
+    </div>`;
+  }
+
+  const menuActive = {
+    dashboard: (page === 'index' || page === '' || page === 'dashboard'),
+    posts:     (page === 'edit' && !isPage) || page === 'post-new' || page === 'post',
+    media:     page === 'upload',
+    pages:     page === 'edit' && isPage,
+    comments:  page === 'edit-comments',
+    themes:    page === 'themes' || page === 'theme-install',
+    plugins:   page === 'plugins' || page === 'plugin-install',
+    users:     page === 'users' || page === 'user-new' || page === 'profile',
+    settings:  page === 'options-general' || page === 'options' || page === 'options-permalink',
+  };
+
+  // (menuItem function removed - now using inline SVG menu)
+
+  return `<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${pageTitle} &#8249; ${siteName} &#8212; WordPress</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f0f0f1;color:#1d2327;font-size:13px;line-height:1.4}
+a{color:#2271b1;text-decoration:none}a:hover{color:#135e96}
+#wpadminbar{position:fixed;top:0;left:0;right:0;height:32px;background:#1d2327;display:flex;align-items:center;padding:0 12px;z-index:9999;gap:0}
+#wpadminbar .ab-item{color:#a7aaad;font-size:.8125rem;display:flex;align-items:center;gap:4px;text-decoration:none;padding:0 8px;height:32px;line-height:32px}
+#wpadminbar .ab-item:hover{color:#fff;background:#3c434a}
+#wpadminbar .ab-item svg{width:20px;height:20px;fill:#a7aaad;vertical-align:middle}
+#wpadminbar .ab-item:hover svg{fill:#fff}
+#wpadminbar .ab-label{font-size:.8125rem}
+#wpadminbar .spacer{flex:1}
+#adminmenuwrap{position:fixed;top:32px;left:0;bottom:0;width:160px;background:#1d2327;overflow-y:auto;z-index:100}
+#adminmenu{list-style:none;margin:0;padding:0}
+#adminmenu li>a{display:flex;align-items:center;gap:8px;padding:9px 10px;color:#a7aaad;font-size:.8125rem;text-decoration:none;transition:background .15s,color .1s}
+#adminmenu li>a:hover,#adminmenu li.current>a{background:#2c3338;color:#fff}
+#adminmenu li.current>a{border-left:3px solid #2271b1;padding-left:7px}
+#adminmenu .menu-icon svg{width:16px;height:16px;fill:currentColor;flex-shrink:0}
+#adminmenu .menu-sep{height:1px;background:#3c434a;margin:6px 0}
+#wpcontent{margin-left:160px;margin-top:32px;min-height:calc(100vh - 32px)}
+#wpbody-content{padding:20px 20px 40px}
+.wrap{max-width:1200px}
+h1.wp-heading-inline{font-size:1.4rem;font-weight:400;color:#1d2327;margin:0 0 20px;display:block}
+.welcome-panel{background:#fff;border:1px solid #c3c4c7;border-radius:4px;padding:23px;margin-bottom:20px}
+.admin-widgets{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px;margin-top:16px}
+.admin-widget{background:#fff;border:1px solid #c3c4c7;border-radius:4px;overflow:hidden}
+.widget-title{background:#f6f7f7;border-bottom:1px solid #c3c4c7;padding:9px 12px;font-size:.875rem;font-weight:600;color:#1d2327}
+.widget-body{padding:14px}
+.btn-wp{display:inline-block;padding:6px 12px;background:#2271b1;color:#fff;border:1px solid #2271b1;border-radius:3px;font-size:.8125rem;cursor:pointer;text-decoration:none;line-height:1.4;transition:background .15s}
+.btn-wp:hover{background:#135e96;border-color:#135e96;color:#fff;text-decoration:none}
+.btn-wp.btn-secondary{background:#f6f7f7;color:#1d2327;border-color:#8c8f94}
+.btn-wp.btn-secondary:hover{background:#dcdcde;color:#1d2327}
+.wp-list-table th{font-weight:600;color:#1d2327}
+.form-table th{font-weight:600;color:#1d2327;vertical-align:top}
+.tablenav{display:flex;align-items:center;gap:10px}
+@media(max-width:782px){
+  #adminmenuwrap{width:36px;overflow:hidden}
+  #adminmenuwrap:hover{width:160px}
+  #adminmenu .menu-label{display:none}
+  #adminmenuwrap:hover .menu-label{display:inline}
+  #wpcontent{margin-left:36px}
+}
+</style>
+</head>
+<body class="wp-admin">
+<div id="wpadminbar">
+  <a class="ab-item" href="/wp-admin/" aria-label="WordPress">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M10 2C5.589 2 2 5.589 2 10s3.589 8 8 8 8-3.589 8-8-3.589-8-8-8zm-7 8c0-1.036.228-2.015.625-2.896l3.449 9.449C4.456 15.492 3 12.906 3 10zm7 7c-.698 0-1.372-.1-2.01-.281l2.133-6.198 2.186 5.99c.014.036.03.069.049.1A6.977 6.977 0 0110 17zm1.21-12.93c.529-.028.999-.084.999-.084.47-.056.414-.749-.056-.721 0 0-1.413.111-2.325.111-.857 0-2.298-.111-2.298-.111-.47-.028-.526.693-.055.721 0 0 .44.056.913.084l1.356 3.712-1.905 5.712-3.167-9.424c.528-.028.999-.084.999-.084.47-.056.414-.749-.056-.721 0 0-1.413.111-2.297.111.159-.244.331-.479.519-.702A7 7 0 0110 3a6.98 6.98 0 014.418 1.566c-.028 0-.055-.002-.084-.002-1.083 0-1.831.942-1.831 1.553 0 .664.52 1.027 1.014 1.495.471.44.999 1.027.999 1.943 0 .636-.246 1.404-.635 2.395l-.838 2.8-3.032-9.02-1.8.24zM14.577 6.58l1.95 5.641A6.995 6.995 0 0117 10c0-1.32-.365-2.554-.997-3.612l1.27-3.48-1.47.414-.226.618z"/></svg>
+  </a>
+  <a class="ab-item" href="/wp-admin/" title="${siteName} ">
+    <span class="ab-label">${siteName}</span>
+  </a>
+  <a class="ab-item" href="/" title=" " target="_blank"> </a>
+  <a class="ab-item" href="/wp-admin/post-new.php" title=" ">+  </a>
+  <div class="spacer"></div>
+  <a class="ab-item" href="/wp-admin/profile.php" title=" ">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M10 6c1.105 0 2 .895 2 2s-.895 2-2 2-2-.895-2-2 .895-2 2-2m0 9c-2.209 0-4-1.343-4-3s1.791-3 4-3 4 1.343 4 3-1.791 3-4 3m0-15C4.477 0 0 4.477 0 10s4.477 10 10 10 10-4.477 10-10S15.523 0 10 0z"/></svg>
+    <span class="ab-label">${displayName}</span>
+  </a>
+  <a class="ab-item" href="/wp-login.php?action=logout" title="" style="color:#f86368"></a>
+</div>
+<div id="adminmenuwrap">
+  <ul id="adminmenu">
+    <li${menuActive.dashboard?' class="current"':''}><a href="/wp-admin/"><span class="menu-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M3 3h7v7H3zm8 0h6v3h-6zm0 4h6v3h-6zm-8 4h7v7H3zm8 1h6v6h-6z"/></svg></span><span class="menu-label"></span></a></li>
+    <li class="menu-sep"></li>
+    <li${menuActive.posts?' class="current"':''}><a href="/wp-admin/edit.php"><span class="menu-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M1 1h18v2H1zm0 4h18v2H1zm0 4h12v2H1zm0 4h18v2H1zm0 4h18v2H1z"/></svg></span><span class="menu-label"></span></a></li>
+    <li${menuActive.media?' class="current"':''}><a href="/wp-admin/upload.php"><span class="menu-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M18 12h-2.18c-.17.7-.44 1.35-.81 1.93l1.54 1.54-2.1 2.1-1.54-1.54c-.58.37-1.23.64-1.91.81V19H8v-2.16c-.68-.17-1.33-.44-1.91-.81l-1.54 1.54-2.12-2.12 1.54-1.54C3.6 13.35 3.33 12.7 3.16 12H1V9h2.16c.17-.7.44-1.35.81-1.93L2.43 5.53l2.1-2.1 1.54 1.54C6.65 4.6 7.3 4.33 8 4.16V2h3v2.16c.68.17 1.33.44 1.91.81l1.54-1.54 2.12 2.12-1.54 1.54c.37.58.64 1.23.81 1.91H18v3zm-8.5 1.5c1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3 1.34 3 3 3z"/></svg></span><span class="menu-label"></span></a></li>
+    <li${menuActive.pages?' class="current"':''}><a href="/wp-admin/edit.php?post_type=page"><span class="menu-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M13 2H3v16h14V6l-4-4zm2 14H5V4h7l3 3v9z"/></svg></span><span class="menu-label"></span></a></li>
+    <li${menuActive.comments?' class="current"':''}><a href="/wp-admin/edit-comments.php"><span class="menu-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M18 2H2v14h3v3l4-3h9V2zM5 9h10v2H5V9zm0-3h10v2H5V6zm7 6H5v2h7v-2z"/></svg></span><span class="menu-label"></span></a></li>
+    <li class="menu-sep"></li>
+    <li${menuActive.themes?' class="current"':''}><a href="/wp-admin/themes.php"><span class="menu-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M10 0C4.477 0 0 4.477 0 10s4.477 10 10 10 10-4.477 10-10S15.523 0 10 0zm0 18C5.582 18 2 14.418 2 10S5.582 2 10 2s8 3.582 8 8-3.582 8-8 8zm1-13H9v6l5.25 3.15.75-1.23-4-2.37V5z"/></svg></span><span class="menu-label"></span></a></li>
+    <li${menuActive.plugins?' class="current"':''}><a href="/wp-admin/plugins.php"><span class="menu-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M18 8h-2V6c0-1.1-.9-2-2-2h-1V2h-2v2H9V2H7v2H6C4.9 4 4 4.9 4 6v2H2v2h2v1H2v2h2v1c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2v-1h2v-2h-2v-1h2V8zm-4 7H6V6h10v9z"/></svg></span><span class="menu-label"></span></a></li>
+    <li${menuActive.users?' class="current"':''}><a href="/wp-admin/users.php"><span class="menu-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M10 1C5.03 1 1 5.03 1 10s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm0 4a3 3 0 110 6 3 3 0 010-6zm0 12.9c-2.57 0-4.84-1.2-6.32-3.07.23-.84.69-1.37 1.33-1.62.65-.26 1.42-.39 1.99-.39h6c.57 0 1.34.13 1.99.39.64.25 1.1.78 1.33 1.62A7.957 7.957 0 0110 17.9z"/></svg></span><span class="menu-label"></span></a></li>
+    <li class="menu-sep"></li>
+    <li${menuActive.settings?' class="current"':''}><a href="/wp-admin/options-general.php"><span class="menu-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M10 1C4.477 1 0 5.477 0 11s4.477 10 10 10 10-4.477 10-10S15.523 1 10 1zm0 18C5.582 19 2 15.418 2 11S5.582 3 10 3s8 3.582 8 8-3.582 8-8 8zm1-13H9v6l5.25 3.15.75-1.23-4-2.37V6z"/></svg></span><span class="menu-label"></span></a></li>
+    <li><a href="/" target="_blank"><span class="menu-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M10 1C4.477 1 0 5.477 0 11s4.477 10 10 10 10-4.477 10-10S15.523 1 10 1zm-1 14.414V13H5.586L10 8.586 14.414 13H11v2.414L10 16.414l-1-1zm8-4.414A8 8 0 0110 19a8 8 0 01-8-8 8 8 0 018-8 8 8 0 018 8z"/></svg></span><span class="menu-label"> </span></a></li>
+  </ul>
+</div>
+<div id="wpcontent">
+  <div id="wpbody-content">
+    <div class="wrap">
+      <h1 class="wp-heading-inline">${pageTitle}</h1>
+      ${bodyHtml}
+      ${inlineScript ? `<script>${inlineScript}<\/script>` : ''}
+    </div>
   </div>
 </div>
 </body>
 </html>`;
 }
-__name(renderLoginPage, "renderLoginPage");
 
-// cp-includes/feed.js
-init_cp_load();
-init_option();
-async function handleFeed(request, env, ctx) {
-  const cp = await cpLoad(request, env, ctx);
-  if (cp.__cpError)
-    return cp.response;
-  const url = new URL(request.url);
-  const path = url.pathname;
-  const isAtom = path.endsWith("/atom");
-  const [blogname, tagline, siteurl, postsPerRss] = await Promise.all([
-    getOption(cp, "blogname", "CloudPress Site"),
-    getOption(cp, "blogdescription", ""),
-    getOption(cp, "siteurl", url.origin),
-    getOption(cp, "posts_per_rss", 10)
-  ]);
-  const posts = await getPosts(cp, {
-    post_type: "post",
-    post_status: "publish",
-    posts_per_page: parseInt(postsPerRss) || 10,
-    orderby: "date",
-    order: "DESC"
-  });
-  const feedUrl = `${siteurl}/feed`;
-  if (isAtom) {
-    return atomFeed({ posts, blogname, tagline, siteurl, feedUrl, cp });
-  }
-  return rssFeed({ posts, blogname, tagline, siteurl, feedUrl, cp });
-}
-__name(handleFeed, "handleFeed");
-function rssFeed({ posts, blogname, tagline, siteurl, feedUrl, cp }) {
-  const lastBuild = posts[0]?.post_modified || (/* @__PURE__ */ new Date()).toUTCString();
-  const pubDate = new Date(lastBuild).toUTCString();
-  const items = posts.map((post) => {
-    const link = postLink(siteurl, post);
-    const pubdate = new Date(post.post_date || Date.now()).toUTCString();
-    const content = escXml4(post.post_content || "");
-    const excerpt = escXml4(trimExcerpt(post.post_content || post.post_excerpt || "", 55));
-    return `
-  <item>
-    <title><![CDATA[${post.post_title || "(no title)"}]]></title>
-    <link>${escXml4(link)}</link>
-    <pubDate>${pubdate}</pubDate>
-    <dc:creator><![CDATA[${post.post_author || ""}]]></dc:creator>
-    <guid isPermaLink="true">${escXml4(link)}</guid>
-    <description><![CDATA[${excerpt}]]></description>
-    <content:encoded><![CDATA[${content}]]></content:encoded>
-  </item>`;
-  }).join("");
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0"
-  xmlns:content="http://purl.org/rss/1.0/modules/content/"
-  xmlns:dc="http://purl.org/dc/elements/1.1/"
-  xmlns:atom="http://www.w3.org/2005/Atom">
-<channel>
-  <title><![CDATA[${blogname}]]></title>
-  <link>${escXml4(siteurl)}</link>
-  <description><![CDATA[${tagline}]]></description>
-  <language>ko</language>
-  <lastBuildDate>${pubDate}</lastBuildDate>
-  <atom:link href="${escXml4(feedUrl)}" rel="self" type="application/rss+xml"/>
-  <generator>CloudPress</generator>
-${items}
-</channel>
-</rss>`;
-  return new Response(xml, {
-    headers: {
-      "Content-Type": "application/rss+xml; charset=UTF-8",
-      "Cache-Control": "public, max-age=600"
-    }
-  });
-}
-__name(rssFeed, "rssFeed");
-function atomFeed({ posts, blogname, tagline, siteurl, feedUrl, cp }) {
-  const updated = posts[0]?.post_modified ? new Date(posts[0].post_modified).toISOString() : (/* @__PURE__ */ new Date()).toISOString();
-  const entries = posts.map((post) => {
-    const link = postLink(siteurl, post);
-    const updated2 = new Date(post.post_modified || post.post_date || Date.now()).toISOString();
-    const content = escXml4(post.post_content || "");
-    return `
-  <entry>
-    <title type="html"><![CDATA[${post.post_title || "(no title)"}]]></title>
-    <link rel="alternate" type="text/html" href="${escXml4(link)}"/>
-    <id>${escXml4(link)}</id>
-    <updated>${updated2}</updated>
-    <content type="html"><![CDATA[${content}]]></content>
-    <summary type="html"><![CDATA[${trimExcerpt(post.post_content || "", 55)}]]></summary>
-  </entry>`;
-  }).join("");
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<feed xmlns="http://www.w3.org/2005/Atom">
-  <title type="html"><![CDATA[${blogname}]]></title>
-  <subtitle type="html"><![CDATA[${tagline}]]></subtitle>
-  <link rel="alternate" type="text/html" href="${escXml4(siteurl)}"/>
-  <link rel="self" type="application/atom+xml" href="${escXml4(feedUrl)}/atom"/>
-  <id>${escXml4(siteurl)}/</id>
-  <updated>${updated}</updated>
-  <generator>CloudPress</generator>
-${entries}
-</feed>`;
-  return new Response(xml, {
-    headers: {
-      "Content-Type": "application/atom+xml; charset=UTF-8",
-      "Cache-Control": "public, max-age=600"
-    }
-  });
-}
-__name(atomFeed, "atomFeed");
-function postLink(siteurl, post) {
-  const base = String(siteurl || "").replace(/\/$/, "");
-  if (post.post_name) {
-    const d = post.post_date ? new Date(post.post_date) : /* @__PURE__ */ new Date();
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    return `${base}/${y}/${m}/${post.post_name}/`;
-  }
-  return `${base}/?p=${post.ID}`;
-}
-__name(postLink, "postLink");
-function escXml4(str) {
-  return String(str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
-}
-__name(escXml4, "escXml");
-function trimExcerpt(content, wordCount) {
-  const text = content.replace(/<[^>]+>/g, "").trim();
-  const words = text.split(/\s+/).filter(Boolean);
-  return words.length > wordCount ? words.slice(0, wordCount).join(" ") + "\u2026" : text;
-}
-__name(trimExcerpt, "trimExcerpt");
+//  REST API 
+async function handleWPRestAPI(env, request, url, siteInfo) {
+  const path = url.pathname.replace('/wp-json', '');
+  const method = request.method;
 
-// cp-includes/sitemap.js
-init_cp_load();
-init_option();
-async function handleSitemap(request, env, ctx) {
-  const cp = await cpLoad(request, env, ctx);
-  if (cp.__cpError)
-    return cp.response;
-  const url = new URL(request.url);
-  const path = url.pathname;
-  const prefix = cp.db_prefix || "cp_";
-  const siteUrl = (await getOption(cp, "siteurl", url.origin)).replace(/\/$/, "");
-  if (path === "/sitemap.xml" || path === "/cp-sitemap.xml") {
-    return sitemapIndex(cp, siteUrl, url);
-  }
-  if (path === "/sitemap-posts.xml") {
-    return postsSitemap(cp, prefix, siteUrl, "post");
-  }
-  if (path === "/sitemap-pages.xml") {
-    return postsSitemap(cp, prefix, siteUrl, "page");
-  }
-  if (path === "/sitemap-terms.xml") {
-    return termsSitemap(cp, prefix, siteUrl);
-  }
-  return new Response("Not Found", { status: 404 });
-}
-__name(handleSitemap, "handleSitemap");
-async function sitemapIndex(cp, siteUrl, url) {
-  const entries = [
-    `${siteUrl}/sitemap-posts.xml`,
-    `${siteUrl}/sitemap-pages.xml`,
-    `${siteUrl}/sitemap-terms.xml`
-  ].map((loc) => `
-  <sitemap>
-    <loc>${esc21(loc)}</loc>
-    <lastmod>${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}</lastmod>
-  </sitemap>`).join("");
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${entries}
-</sitemapindex>`;
-  return xmlResponse(xml);
-}
-__name(sitemapIndex, "sitemapIndex");
-async function postsSitemap(cp, prefix, siteUrl, postType) {
-  const rows = await cp.db.prepare(`
-    SELECT ID, post_name, post_date, post_modified, post_type
-    FROM ${prefix}posts
-    WHERE post_type=? AND post_status='publish'
-    ORDER BY post_modified DESC
-    LIMIT 1000
-  `).bind(postType).all();
-  const urls = (rows.results || []).map((post) => {
-    const loc = postPermalink(siteUrl, post);
-    const lastmod = (post.post_modified || post.post_date || "").slice(0, 10);
-    const freq = postType === "post" ? "weekly" : "monthly";
-    const priority = postType === "post" ? "0.8" : "0.6";
-    return `
-  <url>
-    <loc>${esc21(loc)}</loc>
-    ${lastmod ? `<lastmod>${lastmod}</lastmod>` : ""}
-    <changefreq>${freq}</changefreq>
-    <priority>${priority}</priority>
-  </url>`;
-  }).join("");
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${urls}
-</urlset>`;
-  return xmlResponse(xml);
-}
-__name(postsSitemap, "postsSitemap");
-async function termsSitemap(cp, prefix, siteUrl) {
-  const rows = await cp.db.prepare(`
-    SELECT t.term_id, t.slug, tt.taxonomy, tt.count
-    FROM ${prefix}terms t
-    JOIN ${prefix}term_taxonomy tt ON t.term_id = tt.term_id
-    WHERE tt.taxonomy IN ('category', 'post_tag') AND tt.count > 0
-    ORDER BY tt.count DESC
-    LIMIT 1000
-  `).all();
-  const urls = (rows.results || []).map((term) => {
-    const loc = termPermalink(siteUrl, term);
-    return `
-  <url>
-    <loc>${esc21(loc)}</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.4</priority>
-  </url>`;
-  }).join("");
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${urls}
-</urlset>`;
-  return xmlResponse(xml);
-}
-__name(termsSitemap, "termsSitemap");
-function postPermalink(siteUrl, post) {
-  if (post.post_name) {
-    const d = post.post_date ? new Date(post.post_date) : /* @__PURE__ */ new Date();
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    if (post.post_type === "page")
-      return `${siteUrl}/${post.post_name}/`;
-    return `${siteUrl}/${y}/${m}/${post.post_name}/`;
-  }
-  return `${siteUrl}/?p=${post.ID}`;
-}
-__name(postPermalink, "postPermalink");
-function termPermalink(siteUrl, term) {
-  if (term.taxonomy === "category")
-    return `${siteUrl}/category/${term.slug}/`;
-  if (term.taxonomy === "post_tag")
-    return `${siteUrl}/tag/${term.slug}/`;
-  return `${siteUrl}/${term.taxonomy}/${term.slug}/`;
-}
-__name(termPermalink, "termPermalink");
-function esc21(str) {
-  return String(str || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
-}
-__name(esc21, "esc");
-function xmlResponse(xml) {
-  return new Response(xml, {
-    headers: {
-      "Content-Type": "application/xml; charset=UTF-8",
-      "Cache-Control": "public, max-age=3600"
-    }
-  });
-}
-__name(xmlResponse, "xmlResponse");
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-WP-Nonce',
+    'Content-Type': 'application/json; charset=utf-8',
+  };
 
-// cp-router.js
-async function route(request, env, ctx) {
-  const url = new URL(request.url);
-  const path = url.pathname.replace(/\/+$/, "") || "/";
-  const method = request.method.toUpperCase();
-  if ((path.startsWith("/cp-includes/") && !path.startsWith("/cp-includes/css/")) || path.startsWith("/cp-config") || path.startsWith("/cp-settings") || path.startsWith("/cp-load") || path.startsWith("/node_modules/")) {
-    return forbidden();
-  }
-  if (path.startsWith("/cp-admin/css/")) {
-    return serveInlineCss(path);
-  }
-  if (path.startsWith("/cp-includes/css/")) {
-    return serveInlineCss(path);
-  }
-  if (path === "/cp-admin/setup-config" || path === "/cp-admin/install") {
-    return handleInstaller(request, env, ctx);
-  }
-  if (path.startsWith("/cp-admin/images/")) {
-    return serveAdminAsset(path);
-  }
-  if (path.startsWith("/uploads/") || path.startsWith("/cp-content/uploads/")) {
-    return handleMedia(request, env, ctx);
-  }
-  if (path === "/feed" || path === "/feed/rss" || path === "/feed/atom" || path.endsWith("/feed") || path.endsWith("/feed/rss")) {
-    return handleFeed(request, env, ctx);
-  }
-  if (path === "/cp-sitemap.xml" || path === "/sitemap.xml") {
-    return handleSitemap(request, env, ctx);
-  }
-  if (path === "/cp-login") {
-    return handleLogin(request, env, ctx);
-  }
-  if (path === "/cp-logout") {
-    return handleLogout(request, env, ctx);
-  }
-  if (path === "/cp-admin" || path.startsWith("/cp-admin/")) {
-    return handleAdmin(request, env, ctx);
-  }
-  if (path === "/cp-activate") {
-    return handleActivate(request, env, ctx);
-  }
-  if (path === "/cp-signup") {
-    return handleSignup(request, env, ctx);
-  }
-  if (path === "/cp-comments-post" || path === "/cp-comments-post.js") {
-    return handleCommentsPost(request, env, ctx);
-  }
-  if (path === "/cp-cron") {
-    return handleCronRequest(request, env, ctx);
-  }
-  if (path === "/cp-trackback" || path.includes("/trackback")) {
-    const parts = path.split("/").filter(Boolean);
-    const postIdx = parts.findIndex((p) => /^\d+$/.test(p));
-    const postId = postIdx >= 0 ? parts[postIdx] : "";
-    return handleTrackback(request, env, ctx, { post_id: postId });
-  }
-  if (path === "/cp-links-opml") {
-    return handleLinksOpml(request, env, ctx);
-  }
-  if (path === "/cp-mail") {
-    return handleMail(request, env, ctx);
-  }
-  if (path === "/robots.txt") {
-    return new Response(
-      `User-agent: *
-Disallow: /cp-admin/
-Sitemap: ${url.origin}/sitemap.xml
-`,
-      { headers: { "Content-Type": "text/plain" } }
-    );
-  }
-  if (path === "/favicon.ico") {
-    if (env.CP_KV) {
-      try {
-        const stored = await env.CP_KV.get("cp:favicon", { type: "arrayBuffer" });
-        if (stored) {
-          return new Response(stored, {
-            headers: { "Content-Type": "image/x-icon", "Cache-Control": "public, max-age=86400" }
-          });
-        }
-      } catch (_) {
-      }
-    }
-    return serveAdminAsset("/cp-admin/images/favicon.ico");
-  }
-  return handleRequest(request, env, ctx, { CP_USE_THEMES: true });
-}
-__name(route, "route");
-function serveAdminAsset(path) {
-  const file = path.replace("/cp-admin/images/", "");
-  switch (file) {
-    case "favicon.ico":
-    case "favicon.svg": {
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#1d2327"/>
-  <text x="4" y="24" font-family="system-ui,sans-serif" font-size="22" font-weight="800" fill="#F6821F">C</text>
-  <text x="14" y="24" font-family="system-ui,sans-serif" font-size="22" font-weight="800" fill="#ffffff">P</text>
-</svg>`;
-      return new Response(svg, {
-        headers: {
-          "Content-Type": "image/svg+xml",
-          "Cache-Control": "public, max-age=86400"
-        }
+  if (method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
+
+  const j = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: corsHeaders });
+
+  try {
+    // GET /wp/v2/posts
+    if (path.match(/^\/wp\/v2\/posts\/?$/) && method === 'GET') {
+      const perPage = Math.min(parseInt(url.searchParams.get('per_page') || '10', 10), 100);
+      const page    = parseInt(url.searchParams.get('page') || '1', 10);
+      const offset  = (page - 1) * perPage;
+      const search  = url.searchParams.get('search') || '';
+      const fields  = url.searchParams.get('_fields') || '';
+      const statusParam = url.searchParams.get('status') || 'publish';
+
+      //    
+      const allowedStatuses = ['publish','draft','future','private','pending','trash'];
+      const requestedStatuses = statusParam.split(',').map(s => s.trim()).filter(s => allowedStatuses.includes(s));
+      const statuses = requestedStatuses.length ? requestedStatuses : ['publish'];
+      const statusPlaceholders = statuses.map(() => '?').join(',');
+
+      let sql = `SELECT * FROM wp_posts WHERE post_type = 'post' AND post_status IN (${statusPlaceholders})`;
+      const binds = [...statuses];
+      if (search) { sql += ` AND (post_title LIKE ? OR post_content LIKE ?)`; binds.push(`%${search}%`, `%${search}%`); }
+      sql += ` ORDER BY post_date DESC LIMIT ? OFFSET ?`;
+      binds.push(perPage, offset);
+
+      const res = await env.DB.prepare(sql).bind(...binds).all();
+      const posts = (res.results || []).map(wpPostToJSON);
+      const countSql = `SELECT COUNT(*) as c FROM wp_posts WHERE post_type='post' AND post_status IN (${statusPlaceholders})`;
+      const countRes = await env.DB.prepare(countSql).bind(...statuses).first();
+      const total = countRes?.c || 0;
+
+      return new Response(JSON.stringify(posts), {
+        status: 200,
+        headers: { ...corsHeaders, 'X-WP-Total': String(total), 'X-WP-TotalPages': String(Math.ceil(total / perPage)) },
       });
     }
-    case "logo.svg": {
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 32">
-  <rect width="32" height="32" rx="6" fill="#1d2327"/>
-  <text x="4" y="24" font-family="system-ui,sans-serif" font-size="22" font-weight="800" fill="#F6821F">C</text>
-  <text x="14" y="24" font-family="system-ui,sans-serif" font-size="22" font-weight="800" fill="#ffffff">P</text>
-  <text x="40" y="22" font-family="system-ui,sans-serif" font-size="16" font-weight="700" fill="#1d2327">Cloud<tspan fill="#F6821F">Press</tspan></text>
-</svg>`;
-      return new Response(svg, {
-        headers: {
-          "Content-Type": "image/svg+xml",
-          "Cache-Control": "public, max-age=86400"
-        }
-      });
-    }
-    case "spinner.svg": {
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <circle cx="12" cy="12" r="10" fill="none" stroke="#dcdcde" stroke-width="3"/>
-  <path d="M12 2a10 10 0 0 1 10 10" fill="none" stroke="#2271b1" stroke-width="3" stroke-linecap="round">
-    <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite"/>
-  </path>
-</svg>`;
-      return new Response(svg, {
-        headers: {
-          "Content-Type": "image/svg+xml",
-          "Cache-Control": "no-cache"
-        }
-      });
-    }
-    default:
-      return new Response("Not found", { status: 404 });
-  }
-}
 
-__name(serveAdminAsset, "serveAdminAsset");
-function cssResp(css) {
-  return new Response(css, { headers: { "Content-Type": "text/css; charset=utf-8", "Cache-Control": "public, max-age=3600" } });
-}
-__name(cssResp, "cssResp");
-
-function serveInlineCss(path) {
-  switch(path) {
-    case "/cp-admin/css/admin.css": return cssResp(":root{--cp-sidebar-w:240px;--cp-topbar-h:48px;--cp-bg:#f0f0f1;--cp-sidebar-bg:#1d2327;--cp-sidebar-text:#a7aaad;--cp-sidebar-hover:#2c3338;--cp-sidebar-active:#2271b1;--cp-topbar-bg:#1d2327;--cp-topbar-text:#a7aaad;--cp-accent:#2271b1;--cp-accent-hover:#135e96;--cp-white:#fff;--cp-border:#dcdcde;--cp-text:#1d2327;--cp-muted:#646970;--cp-radius:4px;--cp-shadow:0 1px 3px rgba(0,0,0,.12);}*,*::before,*::after{box-sizing:border-box}html,body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;background:var(--cp-bg);color:var(--cp-text)}#cp-topbar{position:fixed;top:0;left:0;right:0;height:var(--cp-topbar-h);background:var(--cp-topbar-bg);display:flex;align-items:center;justify-content:space-between;padding:0 16px;z-index:1000;color:var(--cp-topbar-text)}.cp-topbar-left,.cp-topbar-right{display:flex;align-items:center;gap:12px}#cp-menu-toggle{background:none;border:none;cursor:pointer;padding:6px;color:var(--cp-topbar-text);display:none;flex-direction:column;gap:4px}#cp-menu-toggle span{display:block;width:20px;height:2px;background:currentColor;transition:.2s}.cp-site-link{color:var(--cp-topbar-text);text-decoration:none;font-size:13px;opacity:.8;transition:.15s}.cp-site-link:hover{opacity:1;color:var(--cp-white)}.cp-version{font-size:11px;opacity:.5}.cp-user-menu{position:relative}.cp-user-btn{background:none;border:none;color:var(--cp-topbar-text);cursor:pointer;font-size:13px;padding:6px 10px;border-radius:var(--cp-radius);transition:.15s}.cp-user-btn:hover{background:var(--cp-sidebar-hover);color:var(--cp-white)}.cp-user-dropdown{display:none;position:absolute;right:0;top:calc(100%+4px);background:var(--cp-white);border:1px solid var(--cp-border);border-radius:var(--cp-radius);min-width:150px;box-shadow:var(--cp-shadow);z-index:100}.cp-user-menu.open .cp-user-dropdown{display:block}.cp-user-dropdown a{display:block;padding:8px 14px;color:var(--cp-text);text-decoration:none;font-size:13px;transition:.1s}.cp-user-dropdown a:hover{background:var(--cp-bg)}.cp-user-dropdown hr{border:none;border-top:1px solid var(--cp-border);margin:4px 0}.cp-logout{color:#d63638 !important}#cp-layout{display:flex;min-height:100vh;padding-top:var(--cp-topbar-h)}#cp-sidebar{width:var(--cp-sidebar-w);background:var(--cp-sidebar-bg);flex-shrink:0;overflow-y:auto;position:fixed;top:var(--cp-topbar-h);left:0;bottom:0;z-index:500;transition:transform .2s}.cp-sidebar-header{padding:16px 14px 8px;border-bottom:1px solid rgba(255,255,255,.07)}.cp-logo{display:flex;align-items:center;gap:8px;color:var(--cp-white);text-decoration:none;font-weight:700;font-size:16px}.cp-logo span{letter-spacing:-.3px}.cp-nav-list{list-style:none;margin:8px 0;padding:0}.cp-nav-item{margin:1px 0}.cp-nav-link{display:flex;align-items:center;gap:10px;padding:9px 14px;color:var(--cp-sidebar-text);text-decoration:none;border-radius:var(--cp-radius);margin:0 6px;transition:.15s;font-size:13px}.cp-nav-link:hover,.cp-nav-item.active>.cp-nav-link{color:var(--cp-white);background:var(--cp-sidebar-hover)}.cp-nav-item.active>.cp-nav-link{background:var(--cp-sidebar-active)}.cp-nav-icon{font-size:16px;flex-shrink:0;width:20px;text-align:center}.cp-nav-label{flex:1}.cp-nav-arrow{font-size:9px;opacity:.5;transition:transform .2s}.cp-nav-item.has-children.active .cp-nav-arrow,.cp-nav-item.has-children:hover .cp-nav-arrow{transform:rotate(180deg)}.cp-subnav{list-style:none;margin:0;padding:0 0 4px 44px;display:none}.cp-nav-item.has-children.active .cp-subnav,.cp-nav-item.has-children:hover .cp-subnav{display:block}.cp-subnav li a{display:block;padding:6px 10px;color:var(--cp-sidebar-text);text-decoration:none;font-size:12.5px;border-radius:var(--cp-radius);transition:.1s}.cp-subnav li a:hover,.cp-subnav li.active a{color:var(--cp-white);background:rgba(255,255,255,.07)}#cp-main{flex:1;margin-left:var(--cp-sidebar-w);padding:24px;min-height:calc(100vh - var(--cp-topbar-h))}.cp-page-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}.cp-page-title{font-size:23px;font-weight:400;margin:0;color:var(--cp-text)}.cp-notice{border-left:4px solid var(--cp-accent);background:var(--cp-white);padding:10px 14px;border-radius:0 var(--cp-radius) var(--cp-radius) 0;margin-bottom:16px;box-shadow:var(--cp-shadow)}.cp-notice-success{border-color:#00a32a}.cp-notice-error{border-color:#d63638}.cp-notice-warning{border-color:#dba617}.cp-notice p{margin:0;font-size:13.5px}.cp-card{background:var(--cp-white);border:1px solid var(--cp-border);border-radius:var(--cp-radius);padding:20px;margin-bottom:20px;box-shadow:var(--cp-shadow)}.cp-card h2,.cp-card h3{margin:0 0 14px;font-size:15px;color:var(--cp-text)}.cp-table-wrap{background:var(--cp-white);border:1px solid var(--cp-border);border-radius:var(--cp-radius);overflow:hidden;margin-bottom:20px;box-shadow:var(--cp-shadow)}.cp-table{width:100%;border-collapse:collapse;font-size:13px}.cp-table th{background:var(--cp-bg);padding:10px 14px;text-align:left;font-weight:600;border-bottom:1px solid var(--cp-border);color:var(--cp-muted);font-size:12px;text-transform:uppercase;letter-spacing:.4px}.cp-table td{padding:10px 14px;border-bottom:1px solid var(--cp-border);vertical-align:middle}.cp-table tr:last-child td{border-bottom:none}.cp-table tr:hover td{background:#f9f9f9}.cp-table a{color:var(--cp-accent);text-decoration:none}.cp-table a:hover{text-decoration:underline}.cp-btn,.cp-btn-secondary{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:var(--cp-radius);font-size:13px;font-weight:500;cursor:pointer;text-decoration:none;border:1px solid transparent;transition:.15s;line-height:1.4}.cp-btn{background:var(--cp-accent);color:var(--cp-white);border-color:var(--cp-accent)}.cp-btn:hover{background:var(--cp-accent-hover);border-color:var(--cp-accent-hover)}.cp-btn-secondary{background:var(--cp-white);color:var(--cp-text);border-color:var(--cp-border)}.cp-btn-secondary:hover{background:var(--cp-bg);border-color:#8c8f94}.cp-btn-danger{background:#d63638;color:var(--cp-white);border-color:#d63638}.cp-btn-danger:hover{background:#b32d2e}.cp-form-table{width:100%;border-collapse:collapse}.cp-form-table tr{border-bottom:1px solid var(--cp-border)}.cp-form-table tr:last-child{border-bottom:none}.cp-form-table th{padding:14px 20px 14px 0;text-align:right;font-weight:600;width:200px;vertical-align:top;padding-top:18px;font-size:13px}.cp-form-table td{padding:14px 0}.cp-form-input,.cp-form-select,.cp-form-textarea{border:1px solid var(--cp-border);border-radius:var(--cp-radius);padding:7px 10px;font-size:14px;color:var(--cp-text);transition:.15s;width:100%;max-width:400px}.cp-form-input:focus,.cp-form-select:focus,.cp-form-textarea:focus{border-color:var(--cp-accent);outline:2px solid rgba(34,113,177,.2)}.cp-form-textarea{resize:vertical;min-height:80px}.cp-description{color:var(--cp-muted);font-size:12.5px;margin:.4rem 0 0}.cp-dash-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px;margin-bottom:20px}.cp-dash-stat{background:var(--cp-white);border:1px solid var(--cp-border);border-radius:var(--cp-radius);padding:20px;display:flex;align-items:center;gap:16px;box-shadow:var(--cp-shadow)}.cp-dash-stat-icon{font-size:32px;flex-shrink:0}.cp-dash-stat-num{font-size:28px;font-weight:700;color:var(--cp-text);line-height:1}.cp-dash-stat-label{font-size:12px;color:var(--cp-muted);margin-top:4px}.cp-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.4px}.cp-badge-publish{background:#edfaef;color:#00a32a}.cp-badge-draft{background:#f0f0f1;color:var(--cp-muted)}.cp-badge-pending{background:#fff8e5;color:#996800}.cp-badge-private{background:#f0f4f8;color:var(--cp-accent)}.cp-badge-trash{background:#fcf0f1;color:#d63638}#cp-footer{text-align:center;padding:16px;color:var(--cp-muted);font-size:12px;border-top:1px solid var(--cp-border);margin-left:var(--cp-sidebar-w)}#cp-footer a{color:var(--cp-accent);text-decoration:none}@media(max-width:782px){#cp-menu-toggle{display:flex}#cp-sidebar{transform:translateX(-100%)}body.cp-sidebar-open #cp-sidebar{transform:none}#cp-main,#cp-footer{margin-left:0}.cp-form-table th{display:none}.cp-form-table td{display:block;padding:10px 0}.cp-form-input,.cp-form-select,.cp-form-textarea{max-width:100%}.cp-dash-grid{grid-template-columns:1fr}}");
-    case "/cp-admin/css/installer.css": return cssResp("*,*::before,*::after{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f0f1;margin:0;padding:2rem 1rem;color:#1d2327}.install-wrap{max-width:700px;margin:0 auto}.install-header{text-align:center;margin-bottom:2rem}.install-logo{font-size:2rem;font-weight:800;color:#1d2327;text-decoration:none}.install-logo span{color:#F6821F}.install-card{background:#fff;border-radius:8px;padding:2rem 2.5rem;box-shadow:0 2px 10px rgba(0,0,0,.08);margin-bottom:1.5rem}h2{font-size:1.4rem;margin:0 0 .5rem;color:#1d2327}.lead{color:#646970;margin:0 0 1.5rem}.form-table{width:100%;border-collapse:collapse;margin-bottom:1.5rem}.form-table tr{border-bottom:1px solid #dcdcde}.form-table tr:last-child{border-bottom:none}.form-table th{padding:14px 20px 14px 0;text-align:right;width:180px;font-size:13px;font-weight:600;vertical-align:top;padding-top:18px}.form-table td{padding:12px 0}.regular-text{width:100%;max-width:380px;padding:7px 10px;border:1px solid #8c8f94;border-radius:4px;font-size:14px;transition:.15s}.regular-text:focus{border-color:#2271b1;outline:2px solid rgba(34,113,177,.2)}.description{color:#646970;font-size:12.5px;margin:.4rem 0 0}code{background:#f0f0f1;padding:2px 6px;border-radius:3px;font-size:12px}.btn{display:inline-flex;align-items:center;padding:8px 18px;border-radius:4px;font-size:14px;font-weight:500;cursor:pointer;text-decoration:none;border:1px solid transparent;margin-right:8px;transition:.15s}.btn-primary{background:#2271b1;color:#fff;border-color:#2271b1}.btn-primary:hover{background:#135e96}.btn-secondary{background:#fff;color:#1d2327;border-color:#dcdcde}.btn-secondary:hover{background:#f0f0f1}.submit{margin-top:1rem}.notice-error{background:#fcf0f1;border-left:4px solid #d63638;padding:.8rem 1rem;border-radius:0 4px 4px 0;margin-bottom:1.2rem}.notice-error ul{margin:0;padding:0 0 0 1rem;color:#d63638;font-size:13.5px}.success-card{border-left:4px solid #00a32a}.success-icon{font-size:3rem;color:#00a32a;text-align:center;margin-bottom:1rem}");
-    case "/cp-includes/css/login.css": return cssResp("*,*::before,*::after{box-sizing:border-box;}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f0f1;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;}.login-wrap{width:100%;max-width:360px;}.login-logo{text-align:center;margin-bottom:24px;}.login-logo svg{width:64px;height:64px;}.login-logo h1{margin:8px 0 0;font-size:22px;font-weight:600;color:#1d2327;}.login-box{background:#fff;border-radius:8px;padding:28px 32px;box-shadow:0 2px 12px rgba(0,0,0,.08);}.login-box label{display:block;font-size:13px;font-weight:600;color:#1d2327;margin-bottom:6px;}.login-box input[type=text],.login-box input[type=password]{width:100%;padding:10px 14px;font-size:15px;border:1px solid #8c8f94;border-radius:4px;margin-bottom:16px;outline:none;transition:border-color .2s;}.login-box input:focus{border-color:#2271b1;box-shadow:0 0 0 1px #2271b1;}.login-remember{display:flex;align-items:center;gap:8px;font-size:13px;color:#3c434a;margin-bottom:18px;}.login-btn{width:100%;padding:10px;font-size:15px;font-weight:600;background:#2271b1;color:#fff;border:none;border-radius:4px;cursor:pointer;transition:background .2s;}.login-btn:hover{background:#135e96;}.login-error{background:#fff0f0;border-left:4px solid #d63638;padding:10px 14px;color:#d63638;font-size:13px;border-radius:4px;margin-bottom:16px;}.login-footer{text-align:center;margin-top:16px;font-size:12px;color:#646970;}.login-footer a{color:#2271b1;text-decoration:none;}");
-    case "/cp-includes/css/signup.css": return cssResp("*,*::before,*::after{box-sizing:border-box;}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f1f1f1;margin:0;padding:2rem 1rem;color:#333;}.signup-wrapper{max-width:560px;margin:0 auto;}.signup-box{background:#fff;border-radius:8px;padding:2.5rem;box-shadow:0 2px 10px rgba(0,0,0,.08);}h1{font-size:1.6rem;color:#1d2327;margin:0 0 .4rem;}.site-name{text-align:center;margin-bottom:1.5rem;}.site-name a{color:#1d2327;text-decoration:none;font-size:1.3rem;font-weight:700;}h2{font-size:1.2rem;margin:0 0 1.5rem;color:#1d2327;}label{display:block;font-weight:600;margin-bottom:.3rem;font-size:.9rem;}input[type=\"text\"],input[type=\"email\"]{width:100%;padding:.55rem .75rem;font-size:1rem;border:1px solid #8c8f94;border-radius:4px;margin-bottom:1rem;}input:focus{outline:2px solid #2271b1;border-color:#2271b1;}.cp-btn{background:#2271b1;color:#fff;border:none;padding:.65rem 1.5rem;font-size:1rem;border-radius:4px;cursor:pointer;width:100%;margin-top:.5rem;}.cp-btn:hover{background:#135e96;}.error-list{background:#fcf0f1;border-left:4px solid #d63638;border-radius:0 4px 4px 0;padding:.8rem 1rem;margin-bottom:1.2rem;list-style:none;padding-left:1rem;}.error-list li{color:#d63638;margin:.2rem 0;font-size:.9rem;}.hint{font-size:.8rem;color:#666;margin-top:-.7rem;margin-bottom:1rem;}.success{background:#edfaef;border-left:4px solid #00a32a;border-radius:0 4px 4px 0;padding:1rem 1.2rem;}.success h2{color:#00a32a;}");
-    case "/cp-includes/css/activate.css": return cssResp("*,*::before,*::after{box-sizing:border-box;}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f1f1f1;margin:0;padding:2rem 1rem;color:#333;}#signup-content{max-width:600px;margin:2rem auto;}.cp-activate-container{background:#fff;border-radius:6px;padding:2rem 2.5rem;box-shadow:0 2px 8px rgba(0,0,0,.1);}h2{font-size:1.4rem;margin:0 0 1.2rem;color:#1d2327;}label{font-weight:600;display:block;margin-bottom:.4rem;}input[type=\"text\"]{width:100%;padding:.6rem .8rem;font-size:1rem;border:1px solid #8c8f94;border-radius:4px;}.cp-btn{background:#2271b1;color:#fff;border:none;padding:.6rem 1.4rem;font-size:1rem;border-radius:4px;cursor:pointer;}.cp-btn:hover{background:#135e96;}#signup-welcome{background:#f0f6fc;border-left:4px solid #2271b1;padding:1rem 1.4rem;border-radius:0 4px 4px 0;margin:1rem 0;}#signup-welcome p{margin:.4rem 0;}.h3{font-weight:700;}a{color:#2271b1;}.lead-in{line-height:1.7;}");
-    case "/cp-includes/css/comments.css": return cssResp("body{font-family:-apple-system,sans-serif;background:#f1f1f1;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;}.box{background:#fff;padding:2rem 2.5rem;border-radius:6px;border-left:4px solid #d63638;max-width:480px;box-shadow:0 2px 8px rgba(0,0,0,.1);}h1{color:#d63638;font-size:1.2rem;margin:0 0 1rem;}a{color:#2271b1;}");
-    case "/cp-includes/css/error.css": return cssResp("body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f1f1f1;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;}.error-box{background:#fff;border-left:4px solid #e74c3c;border-radius:4px;padding:2rem 2.5rem;max-width:560px;box-shadow:0 2px 8px rgba(0,0,0,.1);}h1{color:#e74c3c;font-size:1.3rem;margin:0 0 1rem;}p{color:#444;line-height:1.6;}code{background:#f8f8f8;padding:2px 6px;border-radius:3px;font-family:monospace;color:#c0392b;}a{color:#0073aa;}");
-    default: return new Response("Not found", { status: 404 });
-  }
-}
-__name(serveInlineCss, "serveInlineCss");
-
-
-// =============================================================
-// ORIGINLESS EDGE CMS — Ultra-Performance Cache Layer v4
-// WordPress 대비 수백배 빠른 Cloudflare Edge 전용 아키텍처
-//
-// ┌─ 요청 흐름 ────────────────────────────────────────────────┐
-// │  Client                                                   │
-// │    ↓                                                      │
-// │  Edge Worker (Cloudflare PoP — 전 세계 300+ 데이터센터)    │
-// │    │                                                      │
-// │  [1] Edge Cache API HIT  →  즉시 응답     (1~5 ms)        │
-// │  [2] KV Cache HIT        →  Edge 승격 → 응답(5~20 ms)     │
-// │  [3] MISS                →  Edge SSR → KV+Edge 저장       │
-// │  [4] SSR 실패            →  Stale 응답 (절대 다운 없음)    │
-// └───────────────────────────────────────────────────────────┘
-//
-// 핵심 기능:
-//   ✓ Edge Cache API + KV 이중 캐시 (L1/L2)
-//   ✓ SWR (Stale-While-Revalidate) 백그라운드 갱신
-//   ✓ ISR (Incremental Static Regeneration) — 포스트 저장 시 즉시 Purge
-//   ✓ Prewarm — 배포 직후 주요 경로 자동 워밍
-//   ✓ 정밀 Purge — 전체/포스트/카테고리/개별 경로
-//   ✓ D1 쓰기 전용 (읽기는 항상 KV 캐시 우선)
-//   ✓ 다중 Failover: Edge → KV → Stale → 503
-//   ✓ 한 번 설치 후 재설치 불가 (KV 영구 잠금)
-//   ✓ Security Headers 자동 주입
-//   ✓ Vary: Accept-Encoding 자동 처리
-//   ✓ ETag 기반 304 Not Modified 지원
-//   ✓ /__edge/health 상태 엔드포인트
-// =============================================================
-
-var EDGE_VER      = "e5";           // 캐시 키 네임스페이스 버전
-var KV_TTL        = 3600;           // KV 신선도 TTL (초) — 1시간
-var CACHE_TTL     = 86400;          // Edge Cache TTL (초) — 24시간
-var STALE_TTL     = 604800;         // Stale 보관 TTL (초) — 7일
-var SWR_WINDOW    = 60;             // SWR 윈도우 (초) — 1분
-var PREWARM_PATHS = ["/", "/feed", "/sitemap.xml", "/cp-sitemap.xml"];
-
-// 캐시 제외 경로 Set (정확 일치)
-var SKIP_CACHE_EXACT = new Set([
-  "/cp-admin", "/cp-login", "/cp-logout", "/cp-signup",
-  "/cp-activate", "/cp-comments-post", "/cp-cron",
-  "/cp-mail", "/cp-trackback"
-]);
-
-// 보안 헤더 (모든 응답에 자동 주입)
-var SECURITY_HEADERS = {
-  "X-Content-Type-Options":  "nosniff",
-  "X-Frame-Options":         "SAMEORIGIN",
-  "X-XSS-Protection":       "1; mode=block",
-  "Referrer-Policy":         "strict-origin-when-cross-origin",
-  "Permissions-Policy":      "geolocation=(), microphone=(), camera=()"
-};
-
-// ── 캐시 가능 여부 판별 ────────────────────────────────────────
-function edgeIsCacheable(req, path) {
-  if (req.method !== "GET" && req.method !== "HEAD") return false;
-  if (SKIP_CACHE_EXACT.has(path)) return false;
-  if (path.startsWith("/cp-admin/"))    return false;
-  if (path.startsWith("/cp-includes/")) return false;
-  if (path.startsWith("/__edge/"))      return false;
-  if (path.startsWith("/uploads/"))     return false;  // 미디어는 R2/별도 캐시
-  // 로그인 쿠키가 있으면 개인화 콘텐츠 → 캐시 불가
-  var cookie = req.headers.get("cookie") || "";
-  if (cookie.includes("cp_token=") || cookie.includes("cp_session=")) return false;
-  return true;
-}
-__name(edgeIsCacheable, "edgeIsCacheable");
-
-// ── 캐시 키 생성 ──────────────────────────────────────────────
-function edgeKvKey(url) {
-  // query string 포함 (페이지네이션 등 구분)
-  var qs = url.search || "";
-  return EDGE_VER + ":" + url.pathname + qs;
-}
-__name(edgeKvKey, "edgeKvKey");
-
-// Edge Cache API용 내부 Request (실제 네트워크 요청 없음)
-function edgeCacheReq(key) {
-  return new Request("https://cp-edge-cache.internal/" + encodeURIComponent(key));
-}
-__name(edgeCacheReq, "edgeCacheReq");
-
-// ── 보안 헤더 + 캐시 태그 주입 ────────────────────────────────
-function edgeTagResponse(res, src, extra) {
-  var h = new Headers(res.headers);
-  h.set("X-Cache",        src);
-  h.set("X-Powered-By",   "CloudPress-Edge/" + EDGE_VER);
-  h.set("X-CF-Colo",      (extra && extra.colo) || "");
-  // 보안 헤더
-  for (var k in SECURITY_HEADERS) h.set(k, SECURITY_HEADERS[k]);
-  return new Response(res.body, { status: res.status, headers: h });
-}
-__name(edgeTagResponse, "edgeTagResponse");
-
-// ── ETag 기반 304 처리 ────────────────────────────────────────
-function edgeMaybe304(req, res) {
-  var etag    = res.headers.get("ETag");
-  var ifNone  = req.headers.get("If-None-Match");
-  if (etag && ifNone && etag === ifNone) {
-    return new Response(null, {
-      status: 304,
-      headers: { "ETag": etag, "Cache-Control": res.headers.get("Cache-Control") || "" }
-    });
-  }
-  return null;
-}
-__name(edgeMaybe304, "edgeMaybe304");
-
-// ── [L1] Edge Cache API 조회 ──────────────────────────────────
-async function edgeFromCache(key) {
-  try {
-    var r = await caches.default.match(edgeCacheReq(key));
-    if (!r) return null;
-    var cachedAt = Number(r.headers.get("X-Cached-At") || 0);
-    var age = Math.floor(Date.now() / 1000) - cachedAt;
-    return { res: r, stale: age > CACHE_TTL, age: age };
-  } catch(e) { return null; }
-}
-__name(edgeFromCache, "edgeFromCache");
-
-// ── [L2] KV Cache 조회 ────────────────────────────────────────
-async function edgeFromKV(env, key) {
-  if (!env.CP_KV) return null;
-  try {
-    var r = await env.CP_KV.getWithMetadata(key, { type: "text" });
-    if (!r || !r.value) return null;
-    var m   = r.metadata || {};
-    var age = Math.floor((Date.now() - (m.ts || 0)) / 1000);
-    return {
-      html:    r.value,
-      headers: m.h || {},
-      etag:    m.etag || null,
-      age:     age,
-      stale:   age > KV_TTL,
-      expired: age > KV_TTL + SWR_WINDOW
-    };
-  } catch(e) { return null; }
-}
-__name(edgeFromKV, "edgeFromKV");
-
-// ── Edge Cache 저장 (비동기 waitUntil) ────────────────────────
-function edgeSaveCache(key, res, ctx) {
-  ctx.waitUntil((async () => {
-    try {
-      var h = new Headers(res.headers);
-      h.set("X-Cached-At", String(Math.floor(Date.now() / 1000)));
-      h.set("Cache-Control", "public, max-age=" + CACHE_TTL + ", stale-while-revalidate=" + SWR_WINDOW);
-      // body를 clone해야 하므로 text로 소비 후 재생성
-      var body = await res.clone().text();
-      await caches.default.put(edgeCacheReq(key), new Response(body, { status: res.status, headers: h }));
-    } catch(e) {}
-  })());
-}
-__name(edgeSaveCache, "edgeSaveCache");
-
-// ── KV 저장 (비동기 waitUntil) ────────────────────────────────
-function edgeSaveKV(env, key, html, headersObj, ctx) {
-  if (!env.CP_KV) return;
-  // ETag 생성 (간단한 길이+타임스탬프 기반)
-  var etag = '"' + html.length.toString(16) + "-" + Date.now().toString(16) + '"';
-  ctx.waitUntil(
-    env.CP_KV.put(key, html, {
-      expirationTtl: STALE_TTL,
-      metadata: { ts: Date.now(), h: headersObj, etag: etag }
-    }).catch(() => {})
-  );
-}
-__name(edgeSaveKV, "edgeSaveKV");
-
-// ── KV → Edge Cache 승격 ──────────────────────────────────────
-function edgePromoteToCache(key, html, headersObj, ctx) {
-  ctx.waitUntil((async () => {
-    try {
-      var h = new Headers(headersObj);
-      h.set("X-Cached-At", String(Math.floor(Date.now() / 1000)));
-      h.set("Cache-Control", "public, max-age=" + CACHE_TTL + ", stale-while-revalidate=" + SWR_WINDOW);
-      h.set("Content-Type", h.get("Content-Type") || "text/html; charset=utf-8");
-      await caches.default.put(edgeCacheReq(key), new Response(html, { headers: h }));
-    } catch(e) {}
-  })());
-}
-__name(edgePromoteToCache, "edgePromoteToCache");
-
-// ── SWR 백그라운드 재생성 ─────────────────────────────────────
-function edgeBgRevalidate(req, env, ctx, key) {
-  ctx.waitUntil((async () => {
-    try {
-      var fresh = await route(req.clone(), env, ctx);
-      if (!fresh || fresh.status >= 400) return;
-      var html = await fresh.clone().text();
-      var ho = {};
-      fresh.headers.forEach(function(v, k) { ho[k] = v; });
-      edgeSaveKV(env, key, html, ho, ctx);
-      edgePromoteToCache(key, html, ho, ctx);
-    } catch(e) {}
-  })());
-}
-__name(edgeBgRevalidate, "edgeBgRevalidate");
-
-// ── 설치 잠금 확인 ────────────────────────────────────────────
-async function edgeIsLocked(env) {
-  try {
-    return (await env.CP_KV.get("cp:installed_lock")) === "1";
-  } catch(e) { return false; }
-}
-__name(edgeIsLocked, "edgeIsLocked");
-
-// ── 설치 잠금 설정 (10년 — 사실상 영구) ──────────────────────
-async function edgeSetLock(env) {
-  try {
-    await env.CP_KV.put("cp:installed_lock", "1", { expirationTtl: 315360000 });
-  } catch(e) {}
-}
-__name(edgeSetLock, "edgeSetLock");
-
-// ── 정밀 Purge API ────────────────────────────────────────────
-// POST /__edge/purge?type=all|post|category|path&path=/...
-// Header: X-Purge-Key: <AUTH_KEY>
-async function edgeHandlePurge(req, env) {
-  // 인증
-  var authKey = req.headers.get("X-Purge-Key") || "";
-  try {
-    var cfg = await env.CP_KV.get("cp:config", { type: "json" });
-    if (!cfg || !cfg.AUTH_KEY || authKey !== cfg.AUTH_KEY)
-      return new Response("Unauthorized", { status: 401 });
-  } catch(e) {
-    return new Response("Unauthorized", { status: 401 });
-  }
-
-  var url    = new URL(req.url);
-  var type   = url.searchParams.get("type") || "path";
-  var target = url.searchParams.get("path") || "/";
-  var cache  = caches.default;
-  var purged = [];
-
-  try {
-    if (type === "all") {
-      // 전체 KV 캐시 삭제 (페이지네이션 지원)
-      var cursor;
-      do {
-        var list = await env.CP_KV.list({ prefix: EDGE_VER + ":", cursor: cursor });
-        for (var k of (list.keys || [])) {
-          await env.CP_KV.delete(k.name).catch(() => {});
-          await cache.delete(edgeCacheReq(k.name)).catch(() => {});
-          purged.push(k.name);
-        }
-        cursor = list.list_complete ? null : list.cursor;
-      } while (cursor);
-
-    } else if (type === "post") {
-      // 포스트 관련 경로 + 공통 경로 모두 Purge
-      var postPaths = [
-        target,
-        "/",
-        "/feed",
-        "/sitemap.xml",
-        "/cp-sitemap.xml",
-        "/page/2",   // 페이지네이션도 무효화
-      ];
-      // 카테고리/태그 경로도 포함 (쿼리 기반이면 KV 키로 처리)
-      for (var p of postPaths) {
-        var ck = EDGE_VER + ":" + p;
-        await env.CP_KV.delete(ck).catch(() => {});
-        await cache.delete(edgeCacheReq(ck)).catch(() => {});
-        purged.push(p);
-      }
-
-    } else if (type === "category") {
-      // 카테고리 아카이브 + 홈 + 피드 Purge
-      var catPaths = [target, "/", "/feed"];
-      for (var cp2 of catPaths) {
-        var ck2 = EDGE_VER + ":" + cp2;
-        await env.CP_KV.delete(ck2).catch(() => {});
-        await cache.delete(edgeCacheReq(ck2)).catch(() => {});
-        purged.push(cp2);
-      }
-
-    } else {
-      // 개별 경로 Purge
-      var ck3 = EDGE_VER + ":" + target;
-      await env.CP_KV.delete(ck3).catch(() => {});
-      await cache.delete(edgeCacheReq(ck3)).catch(() => {});
-      purged.push(target);
-    }
-  } catch(e) {}
-
-  return new Response(JSON.stringify({ ok: true, type: type, purged: purged, ts: Date.now() }), {
-    headers: { "Content-Type": "application/json" }
-  });
-}
-__name(edgeHandlePurge, "edgeHandlePurge");
-
-// ── Prewarm API ───────────────────────────────────────────────
-// POST /__edge/prewarm
-// Header: X-Purge-Key: <AUTH_KEY>
-async function edgeHandlePrewarm(req, env, ctx) {
-  var authKey = req.headers.get("X-Purge-Key") || "";
-  try {
-    var cfg = await env.CP_KV.get("cp:config", { type: "json" });
-    if (!cfg || !cfg.AUTH_KEY || authKey !== cfg.AUTH_KEY)
-      return new Response("Unauthorized", { status: 401 });
-  } catch(e) {
-    return new Response("Unauthorized", { status: 401 });
-  }
-
-  var origin    = new URL(req.url).origin;
-  var warmed    = [];
-  var failed    = [];
-
-  ctx.waitUntil((async () => {
-    for (var wp of PREWARM_PATHS) {
+    // POST /wp/v2/posts
+    if (path.match(/^\/wp\/v2\/posts\/?$/) && method === 'POST') {
+      const body = await request.json().catch(() => ({}));
+      const title   = String(body.title?.raw || body.title || '');
+      const content = String(body.content?.raw || body.content || '');
+      const excerpt = String(body.excerpt?.raw || body.excerpt || '');
+      const status  = ['publish','draft','private','future','pending'].includes(body.status) ? body.status : 'publish';
+      const slug    = body.slug || title.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '') || `post-${Date.now()}`;
+      const now     = new Date().toISOString().replace('T', ' ').slice(0, 19);
+      // : date/date_gmt  
+      let postDate = now, postDateGmt = now;
+      if (body.date) { try { postDate = new Date(body.date).toISOString().replace('T',' ').slice(0,19); postDateGmt = postDate; } catch {} }
+      if (body.date_gmt) { try { postDateGmt = new Date(body.date_gmt).toISOString().replace('T',' ').slice(0,19); } catch {} }
+      if (!title) return j({ code: 'rest_title_required', message: ' .' }, 400);
       try {
-        var r = await fetch(new Request(origin + wp, {
-          headers: { "X-Prewarm": "1", "X-CF-Worker": "1" }
-        }));
-        if (r.ok) {
-          var html = await r.text();
-          var ho   = {};
-          r.headers.forEach(function(v, k) { ho[k] = v; });
-          var wk = EDGE_VER + ":" + wp;
-          if (env.CP_KV) {
-            await env.CP_KV.put(wk, html, {
-              expirationTtl: STALE_TTL,
-              metadata: { ts: Date.now(), h: ho }
-            }).catch(() => {});
-          }
-          edgePromoteToCache(wk, html, ho, ctx);
-          warmed.push(wp);
-        } else {
-          failed.push(wp);
-        }
-      } catch(e) {
-        failed.push(wp);
-      }
-    }
-  })());
-
-  return new Response(JSON.stringify({ ok: true, warming: PREWARM_PATHS, ts: Date.now() }), {
-    headers: { "Content-Type": "application/json" }
-  });
-}
-__name(edgeHandlePrewarm, "edgeHandlePrewarm");
-
-// ── 메인 Edge Fetch 핸들러 ────────────────────────────────────
-
-// =============================================================
-// WAF — CloudPress Built-in Web Application Firewall v1
-// 사이트 생성 시 자동 포함. 별도 플러그인/WP Rocket 불필요.
-// 보호 항목:
-//   ✓ SQL Injection (GET/POST 파라미터)
-//   ✓ XSS (Cross-Site Scripting)
-//   ✓ Path Traversal / LFI
-//   ✓ Bad User-Agent (scanners, exploit tools)
-//   ✓ Rate Limiting (IP당 분당 요청수 제한, KV 기반)
-//   ✓ 허용 메서드 제한
-//   ✓ 요청 크기 제한
-// =============================================================
-
-var WAF_RATE_LIMIT        = 120;    // 분당 최대 요청수 (IP당)
-var WAF_RATE_WINDOW_SEC   = 60;     // 슬라이딩 윈도우 (초)
-var WAF_BLOCK_DURATION    = 300;    // 초과 시 블록 시간 (초)
-var WAF_MAX_BODY_BYTES     = 2 * 1024 * 1024; // 2MB
-
-// SQL Injection 패턴
-var WAF_SQL_RE = /((union|select|insert|update|delete|drop|alter|create|exec|execute|xp_|sp_).*(from|into|where|table|database|schema)|--|;--|\/\*|\*\/|0x[0-9a-f]{4,})/i;
-// XSS 패턴
-var WAF_XSS_RE = /(<script[\s>]|javascript\s*:|on\w+\s*=|<\s*iframe|<\s*object|<\s*embed|<\s*svg\s+on)/i;
-// Path Traversal
-var WAF_PATH_RE = /(\.\.[\/\]|%2e%2e[\/\%]|%252e%252e|\/etc\/passwd|\/proc\/self|cmd=|shell=)/i;
-// 악성 User-Agent
-var WAF_BAD_UA_RE = /(sqlmap|nmap|nikto|masscan|zgrab|nuclei|dirbuster|gobuster|wfuzz|hydra|medusa|acunetix|appscan|nessus|openvas|burpsuite|metasploit|python-requests\/[01]\.|curl\/[0-6]\.|libwww|lwp-|wget\/[01]\.|go-http-client\/1\.0)/i;
-
-async function wafCheck(req, env) {
-  var url    = req.url ? new URL(req.url) : null;
-  var path   = url ? url.pathname : "";
-  var method = req.method || "GET";
-
-  // 관리자 경로는 WAF 적용하지 않음 (관리자 자신의 요청 차단 방지)
-  // — 단, 관리자 경로는 별도 auth로 보호됨
-  if (path.startsWith("/cp-admin/")) return null;
-
-  // 허용 메서드 검사
-  var ALLOWED_METHODS = new Set(["GET","HEAD","POST","PUT","PATCH","DELETE","OPTIONS"]);
-  if (!ALLOWED_METHODS.has(method)) {
-    return wafBlock(405, "Method Not Allowed");
-  }
-
-  // User-Agent 검사
-  var ua = (req.headers && req.headers.get("user-agent")) || "";
-  if (WAF_BAD_UA_RE.test(ua)) {
-    return wafBlock(403, "Forbidden: scanner detected");
-  }
-
-  // URL 파라미터 SQLi / XSS / Path Traversal 검사
-  if (url) {
-    var rawQuery = url.search || "";
-    var fullUrl  = url.href || "";
-    if (WAF_SQL_RE.test(rawQuery) || WAF_SQL_RE.test(decodeURIComponent(rawQuery))) {
-      return wafBlock(403, "Forbidden: SQLi detected");
-    }
-    if (WAF_XSS_RE.test(rawQuery) || WAF_XSS_RE.test(decodeURIComponent(rawQuery))) {
-      return wafBlock(403, "Forbidden: XSS detected");
-    }
-    if (WAF_PATH_RE.test(fullUrl)) {
-      return wafBlock(403, "Forbidden: path traversal detected");
-    }
-  }
-
-  // POST 바디 크기 제한
-  if (method === "POST" || method === "PUT" || method === "PATCH") {
-    var cl = parseInt((req.headers && req.headers.get("content-length")) || "0", 10);
-    if (cl > WAF_MAX_BODY_BYTES) {
-      return wafBlock(413, "Request Entity Too Large");
-    }
-  }
-
-  // Rate Limiting (KV 기반 슬라이딩 카운터)
-  if (env && env.CP_KV) {
-    try {
-      var ip = (req.headers && (
-        req.headers.get("CF-Connecting-IP") ||
-        req.headers.get("X-Forwarded-For") ||
-        req.headers.get("X-Real-IP")
-      )) || "unknown";
-      // 안전한 KV 키 (IP에 포함된 특수문자 제거)
-      var safeIp  = ip.replace(/[^a-zA-Z0-9.:_-]/g, "").slice(0, 64);
-      var rlKey   = "waf:rl:" + safeIp;
-      var blockKey = "waf:blk:" + safeIp;
-
-      // 블록 상태 확인
-      var blocked = await env.CP_KV.get(blockKey);
-      if (blocked === "1") {
-        return wafBlock(429, "Too Many Requests: temporarily blocked");
-      }
-
-      // 카운터 증가
-      var raw   = await env.CP_KV.get(rlKey, { type: "json" });
-      var now   = Math.floor(Date.now() / 1000);
-      var entry = raw || { count: 0, window_start: now };
-
-      // 윈도우 만료 시 리셋
-      if (now - entry.window_start > WAF_RATE_WINDOW_SEC) {
-        entry = { count: 1, window_start: now };
-      } else {
-        entry.count += 1;
-      }
-
-      if (entry.count > WAF_RATE_LIMIT) {
-        // 블록 등록 (비동기, 응답 차단)
-        await env.CP_KV.put(blockKey, "1", { expirationTtl: WAF_BLOCK_DURATION });
-        return wafBlock(429, "Too Many Requests: rate limit exceeded");
-      }
-
-      // 카운터 저장 (백그라운드)
-      env.CP_KV.put(rlKey, JSON.stringify(entry), { expirationTtl: WAF_RATE_WINDOW_SEC * 2 }).catch(function(){});
-    } catch(e) {
-      // WAF KV 오류는 무시하고 요청 통과 (가용성 우선)
-    }
-  }
-
-  return null; // 통과
-}
-__name(wafCheck, "wafCheck");
-
-function wafBlock(status, msg) {
-  var body = "<!doctype html><html lang=\"ko\"><head><meta charset=\"utf-8\"><title>" + status + " " + msg + "</title>" +
-    "<style>body{font-family:sans-serif;text-align:center;padding:60px;background:#0f0f0f;color:#fff}" +
-    "h1{color:#f55;font-size:2rem}p{color:#aaa}</style></head>" +
-    "<body><h1>" + status + "</h1><p>" + msg + "</p></body></html>";
-  return new Response(body, {
-    status: status,
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "X-CloudPress-WAF": "BLOCK",
-      "Cache-Control": "no-store"
-    }
-  });
-}
-__name(wafBlock, "wafBlock");
-
-async function edgeFetch(req, env, ctx) {
-  var url    = new URL(req.url);
-  var path   = url.pathname;
-  var method = req.method;
-  var colo   = (req.cf && req.cf.colo) || "UNK";
-
-  // ── WAF — 모든 요청에 선행 검사 ───────────────────────────
-  var wafRes = await wafCheck(req, env);
-  if (wafRes) return wafRes;
-
-  // ── 특수 엔드포인트 ────────────────────────────────────────
-  if (method === "POST" && path === "/__edge/purge")
-    return edgeHandlePurge(req, env);
-  if (method === "POST" && path === "/__edge/prewarm")
-    return edgeHandlePrewarm(req, env, ctx);
-  if (path === "/__edge/health") {
-    return new Response(JSON.stringify({
-      ok:      true,
-      ver:     EDGE_VER,
-      colo:    colo,
-      country: (req.cf && req.cf.country) || null,
-      ts:      Date.now()
-    }), { headers: { "Content-Type": "application/json" } });
-  }
-
-  // ── 설치 경로 — 한 번 설치 후 재설치 불가 (KV 잠금) ───────
-  if (path === "/cp-admin/setup-config" || path === "/cp-admin/install") {
-    if (await edgeIsLocked(env)) {
-      // 이미 설치됨 → 관리자 페이지로 리다이렉트
-      return Response.redirect(url.origin + "/cp-admin", 302);
-    }
-    var installRes = await route(req, env, ctx);
-    // 설치 완료되면 KV에 영구 잠금 기록
-    ctx.waitUntil((async () => {
-      try {
-        var cfg = await env.CP_KV.get("cp:config", { type: "json" });
-        if (cfg && cfg.installed) await edgeSetLock(env);
-      } catch(e) {}
-    })());
-    return installRes;
-  }
-
-  // ── 캐시 불가 요청 → 직접 라우팅 (관리자, 로그인 등) ──────
-  if (!edgeIsCacheable(req, path)) {
-    var bypass = await route(req, env, ctx);
-    // 관리자 응답에도 보안 헤더 주입
-    var bh = new Headers(bypass.headers);
-    for (var sk in SECURITY_HEADERS) bh.set(sk, SECURITY_HEADERS[sk]);
-    return new Response(bypass.body, { status: bypass.status, headers: bh });
-  }
-
-  var cacheKey = edgeKvKey(url);
-
-  // ══════════════════════════════════════════════════════════
-  // [1] Edge Cache API HIT — L1 캐시 (1~5ms)
-  // ══════════════════════════════════════════════════════════
-  var ec = await edgeFromCache(cacheKey);
-  if (ec && !ec.stale) {
-    var r304 = edgeMaybe304(req, ec.res);
-    if (r304) return r304;
-    return edgeTagResponse(ec.res, "EDGE-HIT", { colo: colo });
-  }
-
-  // ══════════════════════════════════════════════════════════
-  // [2] KV Cache HIT — L2 캐시 (5~20ms)
-  // ══════════════════════════════════════════════════════════
-  var kv = await edgeFromKV(env, cacheKey);
-  if (kv && !kv.expired) {
-    // KV → Edge Cache 승격 (다음 요청은 L1에서 HIT)
-    edgePromoteToCache(cacheKey, kv.html, kv.headers, ctx);
-    // Stale이면 SWR 백그라운드 갱신
-    if (kv.stale) edgeBgRevalidate(req, env, ctx, cacheKey);
-
-    var kvH = new Headers(kv.headers);
-    kvH.set("Content-Type", kvH.get("Content-Type") || "text/html; charset=utf-8");
-    kvH.set("Cache-Control", "public, max-age=" + KV_TTL + ", stale-while-revalidate=" + SWR_WINDOW);
-    if (kv.etag) kvH.set("ETag", kv.etag);
-
-    var kvRes = new Response(kv.html, { headers: kvH });
-    var r304kv = edgeMaybe304(req, kvRes);
-    if (r304kv) return r304kv;
-    return edgeTagResponse(kvRes, kv.stale ? "KV-STALE" : "KV-HIT", { colo: colo });
-  }
-
-  // ══════════════════════════════════════════════════════════
-  // [3] MISS → Edge SSR → KV + Edge Cache 저장
-  // ══════════════════════════════════════════════════════════
-  var fresh = null;
-  try {
-    fresh = await route(req, env, ctx);
-  } catch(e) {
-    fresh = null;
-  }
-
-  // ══════════════════════════════════════════════════════════
-  // [4] Failover — SSR 실패 시 Stale 응답 (절대 다운 없음)
-  // ══════════════════════════════════════════════════════════
-  if (!fresh || fresh.status >= 500) {
-    // KV Stale 응답
-    if (kv) {
-      var staleH = new Headers(kv.headers);
-      staleH.set("Warning", "110 - \"Response is Stale\"");
-      return edgeTagResponse(new Response(kv.html, { headers: staleH }), "STALE-FAILOVER", { colo: colo });
-    }
-    // Edge Cache Stale 응답
-    if (ec && ec.res) {
-      return edgeTagResponse(ec.res, "EDGE-STALE-FAILOVER", { colo: colo });
-    }
-    // 최후 수단 503
-    return new Response(
-      "<!doctype html><html lang='ko'><head><meta charset='utf-8'><title>503 Service Unavailable</title>" +
-      "<style>body{font-family:sans-serif;text-align:center;padding:60px;background:#f8f8f8}" +
-      "h1{color:#c00}p{color:#555}</style></head>" +
-      "<body><h1>503</h1><p>일시적으로 서비스를 이용할 수 없습니다. 잠시 후 다시 시도해주세요.</p></body></html>",
-      { status: 503, headers: { "Content-Type": "text/html; charset=utf-8", "Retry-After": "10" } }
-    );
-  }
-
-  // ── 2xx → KV + Edge Cache 저장 ────────────────────────────
-  if (fresh.status < 300) {
-    var freshHtml = await fresh.clone().text();
-    var freshHeaders = {};
-    fresh.headers.forEach(function(v, k) { freshHeaders[k] = v; });
-    edgeSaveKV(env, cacheKey, freshHtml, freshHeaders, ctx);
-    var freshCC = new Response(freshHtml, {
-      status: fresh.status,
-      headers: Object.assign({}, freshHeaders, {
-        "Cache-Control": "public, max-age=" + KV_TTL + ", stale-while-revalidate=" + SWR_WINDOW
-      })
-    });
-    edgeSaveCache(cacheKey, freshCC.clone(), ctx);
-    return edgeTagResponse(freshCC, "MISS", { colo: colo });
-  }
-
-  // 3xx 등 — 캐시 없이 그대로 반환
-  return edgeTagResponse(fresh, "BYPASS", { colo: colo });
-}
-__name(edgeFetch, "edgeFetch");
-
-// ── Cron Handler — KV 만료 정리 + 기존 cron 작업 ─────────────
-async function edgeScheduled(event, env, ctx) {
-  ctx.waitUntil((async () => {
-    // 1. 만료된 KV 캐시 항목 정리
-    try {
-      if (env.CP_KV) {
-        var cursor;
-        var now = Date.now();
-        do {
-          var list = await env.CP_KV.list({ prefix: EDGE_VER + ":", cursor: cursor });
-          for (var k of (list.keys || [])) {
-            var ts  = (k.metadata && k.metadata.ts) || 0;
-            var age = (now - ts) / 1000;
-            if (age > STALE_TTL) {
-              await env.CP_KV.delete(k.name).catch(() => {});
+        const result = await env.DB.prepare(
+          `INSERT INTO wp_posts (post_title, post_content, post_excerpt, post_status, post_type, post_name, post_date, post_date_gmt, post_modified, post_modified_gmt, post_author, comment_status, ping_status, guid)
+           VALUES (?, ?, ?, ?, 'post', ?, ?, ?, ?, ?, 1, 'open', 'open', ?)`
+        ).bind(title, content, excerpt, status, slug, postDate, postDateGmt, now, now, slug).run();
+        const newId = result.meta?.last_row_id || result.lastRowId || Date.now();
+        const newPost = await env.DB.prepare(`SELECT * FROM wp_posts WHERE ID = ? LIMIT 1`).bind(newId).first().catch(() => null);
+        //  
+        if (body.categories && Array.isArray(body.categories) && body.categories.length && newId) {
+          for (const catId of body.categories) {
+            const tt = await env.DB.prepare(`SELECT term_taxonomy_id FROM wp_term_taxonomy WHERE term_id = ? AND taxonomy = 'category' LIMIT 1`).bind(catId).first().catch(() => null);
+            if (tt) {
+              await env.DB.prepare(`INSERT OR IGNORE INTO wp_term_relationships (object_id, term_taxonomy_id) VALUES (?, ?)`).bind(newId, tt.term_taxonomy_id).run().catch(() => {});
             }
           }
-          cursor = list.list_complete ? null : list.cursor;
-        } while (cursor);
+        }
+        return j(wpPostToJSON(newPost || { ID: newId, post_title: title, post_content: content, post_status: status, post_name: slug, post_date: postDate }), 201);
+      } catch (e) {
+        return j({ code: 'rest_db_error', message: ' : ' + e.message }, 500);
       }
-    } catch(e) {}
+    }
 
-    // 2. 기존 CMS cron 작업 실행
-    try {
-      await handleCronRequest(new Request("https://internal/cp-cron"), env, ctx);
-    } catch(e) {}
-  })());
+    // PATCH /wp/v2/posts/:id
+    if (path.match(/^\/wp\/v2\/posts\/(\d+)\/?$/) && (method === 'PUT' || method === 'PATCH')) {
+      const postId = parseInt(path.match(/\/posts\/(\d+)/)[1], 10);
+      const body = await request.json().catch(() => ({}));
+      const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+      const fields = [], binds = [];
+      if (body.title   !== undefined) { fields.push('post_title = ?');   binds.push(String(body.title?.raw || body.title || '')); }
+      if (body.content !== undefined) { fields.push('post_content = ?'); binds.push(String(body.content?.raw || body.content || '')); }
+      if (body.excerpt !== undefined) { fields.push('post_excerpt = ?'); binds.push(String(body.excerpt?.raw || body.excerpt || '')); }
+      if (body.status  !== undefined) { fields.push('post_status = ?');  binds.push(body.status); }
+      if (body.slug    !== undefined) { fields.push('post_name = ?');    binds.push(body.slug); }
+      if (body.date    !== undefined) { try { const d=new Date(body.date).toISOString().replace('T',' ').slice(0,19); fields.push('post_date = ?','post_date_gmt = ?'); binds.push(d,d); } catch {} }
+      if (!fields.length) return j({ code: 'rest_no_fields', message: '  .' }, 400);
+      fields.push('post_modified = ?', 'post_modified_gmt = ?');
+      binds.push(now, now, postId);
+      await env.DB.prepare(`UPDATE wp_posts SET ${fields.join(', ')} WHERE ID = ?`).bind(...binds).run();
+      const updated = await env.DB.prepare(`SELECT * FROM wp_posts WHERE ID = ? LIMIT 1`).bind(postId).first();
+      return j(wpPostToJSON(updated));
+    }
+
+    // DELETE /wp/v2/posts/:id
+    if (path.match(/^\/wp\/v2\/posts\/(\d+)\/?$/) && method === 'DELETE') {
+      const postId = parseInt(path.match(/\/posts\/(\d+)/)[1], 10);
+      await env.DB.prepare(`UPDATE wp_posts SET post_status = 'trash' WHERE ID = ?`).bind(postId).run();
+      return j({ deleted: true, id: postId });
+    }
+
+    // GET /wp/v2/posts/:id
+    const postMatch = path.match(/^\/wp\/v2\/posts\/(\d+)\/?$/);
+    if (postMatch && method === 'GET') {
+      const post = await env.DB.prepare(
+        `SELECT * FROM wp_posts WHERE ID = ? AND post_status IN ('publish','draft') LIMIT 1`
+      ).bind(parseInt(postMatch[1], 10)).first();
+      if (!post) return j({ code: 'rest_post_invalid_id', message: '   ID.' }, 404);
+      return j(wpPostToJSON(post));
+    }
+
+    // GET /wp/v2/pages
+    if (path.match(/^\/wp\/v2\/pages\/?$/) && method === 'GET') {
+      const res = await env.DB.prepare(
+        `SELECT * FROM wp_posts WHERE post_type = 'page' AND post_status = 'publish' ORDER BY menu_order ASC, post_date DESC LIMIT 100`
+      ).all();
+      return j((res.results || []).map(wpPostToJSON));
+    }
+
+    // GET /wp/v2/categories
+    if (path.match(/^\/wp\/v2\/categories\/?$/) && method === 'GET') {
+      const res = await env.DB.prepare(
+        `SELECT t.term_id as id, t.name, t.slug, tt.description, tt.count, tt.parent FROM wp_terms t JOIN wp_term_taxonomy tt ON tt.term_id = t.term_id WHERE tt.taxonomy = 'category' ORDER BY t.name ASC`
+      ).all();
+      return j(res.results || []);
+    }
+
+    // GET /wp/v2/tags
+    if (path.match(/^\/wp\/v2\/tags\/?$/) && method === 'GET') {
+      const res = await env.DB.prepare(
+        `SELECT t.term_id as id, t.name, t.slug, tt.description, tt.count FROM wp_terms t JOIN wp_term_taxonomy tt ON tt.term_id = t.term_id WHERE tt.taxonomy = 'post_tag' ORDER BY tt.count DESC LIMIT 100`
+      ).all();
+      return j(res.results || []);
+    }
+
+    // GET /wp/v2/users
+    if (path.match(/^\/wp\/v2\/users\/?$/) && method === 'GET') {
+      const res = await env.DB.prepare(
+        `SELECT ID as id, display_name as name, user_login as slug, user_url as url FROM wp_users LIMIT 20`
+      ).all();
+      return j(res.results || []);
+    }
+
+    // GET /wp/v2/media
+    if (path.match(/^\/wp\/v2\/media\/?$/) && method === 'GET') {
+      try {
+        const res = await env.DB.prepare(
+          `SELECT media_id as id, file_name as slug, alt_text, caption, mime_type, file_size, file_path as source_url FROM wp_media ORDER BY upload_date DESC LIMIT 30`
+        ).all();
+        return j((res.results || []).map(m => ({
+          ...m, title: { rendered: m.slug || '' }, guid: { rendered: m.source_url || '' },
+        })));
+      } catch { return j([]); }
+    }
+
+    // GET /wp/v2/comments
+    if (path.match(/^\/wp\/v2\/comments\/?$/) && method === 'GET') {
+      try {
+        const perPage = parseInt(url.searchParams.get('per_page') || '20', 10);
+        const res = await env.DB.prepare(
+          `SELECT comment_ID as id, comment_author as author_name, comment_content as content, comment_date as date, comment_post_ID as post FROM wp_comments WHERE comment_approved = '1' ORDER BY comment_date DESC LIMIT ?`
+        ).bind(perPage).all();
+        const total = await env.DB.prepare(`SELECT COUNT(*) as c FROM wp_comments WHERE comment_approved='1'`).first();
+        return new Response(JSON.stringify((res.results || []).map(c => ({ ...c, content: { rendered: c.content || '' } }))), {
+          status: 200,
+          headers: { ...corsHeaders, 'X-WP-Total': String(total?.c || 0) },
+        });
+      } catch { return j([]); }
+    }
+
+    // GET /wp/v2/settings
+    if (path.match(/^\/wp\/v2\/settings\/?$/) && method === 'GET') {
+      const opts = await getWPOptions(env, siteInfo.site_prefix, ['blogname','blogdescription','siteurl','admin_email','timezone_string','date_format','posts_per_page']);
+      return j({
+        title: opts.blogname || '',
+        description: opts.blogdescription || '',
+        url: opts.siteurl || '',
+        email: opts.admin_email || '',
+        timezone: opts.timezone_string || 'Asia/Seoul',
+        date_format: opts.date_format || 'Y n j',
+        posts_per_page: parseInt(opts.posts_per_page || '10', 10),
+      });
+    }
+
+    // POST /wp/v2/settings
+    if (path.match(/^\/wp\/v2\/settings\/?$/) && method === 'POST') {
+      const body = await request.json().catch(() => ({}));
+      const map = { title:'blogname', description:'blogdescription', email:'admin_email', timezone:'timezone_string', date_format:'date_format', posts_per_page:'posts_per_page' };
+      const updated = {};
+      for (const [bodyKey, optKey] of Object.entries(map)) {
+        if (body[bodyKey] !== undefined) {
+          const val = String(body[bodyKey]);
+          try {
+            await env.DB.prepare(
+              `INSERT INTO wp_options (option_name, option_value, autoload) VALUES (?, ?, 'yes') ON CONFLICT(option_name) DO UPDATE SET option_value = excluded.option_value`
+            ).bind(optKey, val).run();
+            updated[bodyKey] = val;
+          } catch {}
+        }
+      }
+      return j({ ...updated, ok: true });
+    }
+
+    //  CloudPress v1 API 
+
+    // GET /cloudpress/v1/plugins —   
+    if (path === '/cloudpress/v1/plugins' && method === 'GET') {
+      try {
+        const res = await env.DB.prepare(
+          `SELECT option_value FROM wp_options WHERE option_name = 'active_plugins' LIMIT 1`
+        ).first();
+        const allPluginsRes = await env.DB.prepare(
+          `SELECT option_name, option_value FROM wp_options WHERE option_name LIKE 'cp_plugin_%'`
+        ).all();
+        const activePlugins = res?.option_value ? JSON.parse(res.option_value) : [];
+        const pluginMeta = {};
+        for (const row of (allPluginsRes.results || [])) {
+          try { pluginMeta[row.option_name] = JSON.parse(row.option_value); } catch {}
+        }
+        // DB    (   )
+        const dbPlugins = Object.entries(pluginMeta).map(([k, v]) => ({
+          slug: k.replace('cp_plugin_', ''),
+          ...v,
+        }));
+        const result = dbPlugins.map(p => ({
+          ...p,
+          active: activePlugins.includes(p.slug) || activePlugins.includes(p.slug + '/index.php'),
+        }));
+        return j(result);
+      } catch(e) {
+        return j([]);
+      }
+    }
+
+    // POST /cloudpress/v1/plugins/install
+    if (path === '/cloudpress/v1/plugins/install' && method === 'POST') {
+      let body = {};
+      try { body = await request.json(); } catch {}
+      const { slug, name } = body;
+      if (!slug) return j({ success: false, message: 'slug ' }, 400);
+      try {
+        // WordPress.org API   
+        let pluginInfo = { slug, name: name || slug, version: 'latest', description: '' };
+        try {
+          const wpRes = await fetch(
+            `https://api.wordpress.org/plugins/info/1.2/?action=plugin_information&request[slug]=${encodeURIComponent(slug)}&request[fields][short_description]=1&request[fields][versions]=0&request[fields][icons]=1`,
+            { headers: { 'User-Agent': 'CloudPress/20' } }
+          );
+          if (wpRes.ok) {
+            const info = await wpRes.json();
+            if (info && info.slug) {
+              pluginInfo = {
+                slug: info.slug,
+                name: info.name || name || slug,
+                version: info.version || 'latest',
+                description: (info.short_description || '').replace(/<[^>]+>/g, '').slice(0, 200),
+                author: (info.author || '').replace(/<[^>]+>/g, ''),
+                icon: info.icons?.['1x'] || info.icons?.default || '',
+                download_link: info.download_link || '',
+                installed_at: new Date().toISOString(),
+              };
+            }
+          }
+        } catch {}
+        // DB   
+        await env.DB.prepare(
+          `INSERT OR REPLACE INTO wp_options (option_name, option_value, autoload) VALUES (?, ?, 'no')`
+        ).bind(`cp_plugin_${slug}`, JSON.stringify(pluginInfo)).run();
+        return j({ success: true, plugin: pluginInfo, message: `${pluginInfo.name} ` });
+      } catch(e) {
+        return j({ success: false, message: ' : ' + e.message }, 500);
+      }
+    }
+
+    // POST /cloudpress/v1/plugins/activate
+    if (path === '/cloudpress/v1/plugins/activate' && method === 'POST') {
+      let body = {};
+      try { body = await request.json(); } catch {}
+      const { slug } = body;
+      if (!slug) return j({ success: false, message: 'slug ' }, 400);
+      try {
+        const res = await env.DB.prepare(
+          `SELECT option_value FROM wp_options WHERE option_name = 'active_plugins' LIMIT 1`
+        ).first();
+        const active = res?.option_value ? JSON.parse(res.option_value) : [];
+        if (!active.includes(slug)) active.push(slug);
+        await env.DB.prepare(
+          `INSERT OR REPLACE INTO wp_options (option_name, option_value, autoload) VALUES ('active_plugins', ?, 'yes')`
+        ).bind(JSON.stringify(active)).run();
+        return j({ success: true, message: `${slug} `, active_plugins: active });
+      } catch(e) { return j({ success: false, message: e.message }, 500); }
+    }
+
+    // POST /cloudpress/v1/plugins/deactivate
+    if (path === '/cloudpress/v1/plugins/deactivate' && method === 'POST') {
+      let body = {};
+      try { body = await request.json(); } catch {}
+      const { slug } = body;
+      if (!slug) return j({ success: false, message: 'slug ' }, 400);
+      try {
+        const res = await env.DB.prepare(
+          `SELECT option_value FROM wp_options WHERE option_name = 'active_plugins' LIMIT 1`
+        ).first();
+        const active = (res?.option_value ? JSON.parse(res.option_value) : []).filter(s => s !== slug);
+        await env.DB.prepare(
+          `INSERT OR REPLACE INTO wp_options (option_name, option_value, autoload) VALUES ('active_plugins', ?, 'yes')`
+        ).bind(JSON.stringify(active)).run();
+        return j({ success: true, message: `${slug} ` });
+      } catch(e) { return j({ success: false, message: e.message }, 500); }
+    }
+
+    // POST /cloudpress/v1/plugins/delete
+    if (path === '/cloudpress/v1/plugins/delete' && method === 'POST') {
+      let body = {};
+      try { body = await request.json(); } catch {}
+      const { slug } = body;
+      if (!slug) return j({ success: false, message: 'slug ' }, 400);
+      try {
+        // active_plugins 
+        const res = await env.DB.prepare(
+          `SELECT option_value FROM wp_options WHERE option_name = 'active_plugins' LIMIT 1`
+        ).first();
+        const active = (res?.option_value ? JSON.parse(res.option_value) : []).filter(s => s !== slug);
+        await env.DB.prepare(
+          `INSERT OR REPLACE INTO wp_options (option_name, option_value, autoload) VALUES ('active_plugins', ?, 'yes')`
+        ).bind(JSON.stringify(active)).run();
+        //   
+        await env.DB.prepare(`DELETE FROM wp_options WHERE option_name = ?`).bind(`cp_plugin_${slug}`).run();
+        return j({ success: true, message: `${slug} ` });
+      } catch(e) { return j({ success: false, message: e.message }, 500); }
+    }
+
+    // POST /cloudpress/v1/plugins/install-zip — ZIP   
+    if (path === '/cloudpress/v1/plugins/install-zip' && method === 'POST') {
+      let body = {};
+      try { body = await request.json(); } catch {}
+      const { slug, name, zip_base64, file_name } = body;
+      if (!slug || !zip_base64) return j({ success: false, message: 'slug zip_base64 ' }, 400);
+      try {
+        // ZIP    
+        const zipSize = Math.round(zip_base64.length * 0.75); // approximate decoded size
+        const pluginInfo = {
+          slug,
+          name: name || slug,
+          version: 'custom',
+          description: 'ZIP   ',
+          author: ' ',
+          file_name: file_name || slug + '.zip',
+          zip_size: zipSize,
+          installed_at: new Date().toISOString(),
+          install_method: 'zip',
+        };
+        // DB  (ZIP  ,    )
+        await env.DB.prepare(
+          `INSERT OR REPLACE INTO wp_options (option_name, option_value, autoload) VALUES (?, ?, 'no')`
+        ).bind(`cp_plugin_${slug}`, JSON.stringify(pluginInfo)).run();
+        return j({ success: true, plugin: pluginInfo, message: `${pluginInfo.name}  (ZIP)` });
+      } catch(e) {
+        return j({ success: false, message: 'ZIP  : ' + e.message }, 500);
+      }
+    }
+
+    // POST /cloudpress/v1/themes/install
+    if (path === '/cloudpress/v1/themes/install' && method === 'POST') {
+      let body = {};
+      try { body = await request.json(); } catch {}
+      const { slug, name } = body;
+      if (!slug) return j({ success: false, message: 'slug ' }, 400);
+      try {
+        let themeInfo = { slug, name: name || slug, version: 'latest' };
+        try {
+          const wpRes = await fetch(
+            `https://api.wordpress.org/themes/info/1.1/?action=theme_information&request[slug]=${encodeURIComponent(slug)}&request[fields][description]=1&request[fields][screenshots]=1&request[fields][version]=1`,
+            { headers: { 'User-Agent': 'CloudPress/20' } }
+          );
+          if (wpRes.ok) {
+            const info = await wpRes.json();
+            if (info && info.slug) {
+              themeInfo = {
+                slug: info.slug,
+                name: info.name || name || slug,
+                version: info.version || 'latest',
+                description: (info.description || '').replace(/<[^>]+>/g, '').slice(0, 200),
+                author: (info.author || '').replace(/<[^>]+>/g, ''),
+                screenshot_url: info.screenshot_url || '',
+                installed_at: new Date().toISOString(),
+              };
+            }
+          }
+        } catch {}
+        await env.DB.prepare(
+          `INSERT OR REPLACE INTO wp_options (option_name, option_value, autoload) VALUES (?, ?, 'no')`
+        ).bind(`cp_theme_${slug}`, JSON.stringify(themeInfo)).run();
+        return j({ success: true, theme: themeInfo, message: `${themeInfo.name} ` });
+      } catch(e) { return j({ success: false, message: '  : ' + e.message }, 500); }
+    }
+
+    // POST /cloudpress/v1/themes/activate
+    if (path === '/cloudpress/v1/themes/activate' && method === 'POST') {
+      let body = {};
+      try { body = await request.json(); } catch {}
+      const { slug, name } = body;
+      if (!slug) return j({ success: false, message: 'slug ' }, 400);
+      try {
+        await env.DB.prepare(
+          `INSERT OR REPLACE INTO wp_options (option_name, option_value, autoload) VALUES ('stylesheet', ?, 'yes')`
+        ).bind(slug).run();
+        await env.DB.prepare(
+          `INSERT OR REPLACE INTO wp_options (option_name, option_value, autoload) VALUES ('template', ?, 'yes')`
+        ).bind(slug).run();
+        return j({ success: true, message: `${name || slug}  `, active_theme: slug });
+      } catch(e) { return j({ success: false, message: e.message }, 500); }
+    }
+
+    // POST /cloudpress/v1/themes/delete
+    if (path === '/cloudpress/v1/themes/delete' && method === 'POST') {
+      let body = {};
+      try { body = await request.json(); } catch {}
+      const { slug } = body;
+      if (!slug) return j({ success: false, message: 'slug ' }, 400);
+      try {
+        await env.DB.prepare(`DELETE FROM wp_options WHERE option_name = ?`).bind(`cp_theme_${slug}`).run();
+        return j({ success: true, message: `${slug}  ` });
+      } catch(e) { return j({ success: false, message: e.message }, 500); }
+    }
+
+    // POST /cloudpress/v1/themes/install-zip — ZIP   
+    if (path === '/cloudpress/v1/themes/install-zip' && method === 'POST') {
+      let body = {};
+      try { body = await request.json(); } catch {}
+      const { slug, name, zip_base64, file_name } = body;
+      if (!slug || !zip_base64) return j({ success: false, message: 'slug zip_base64 ' }, 400);
+      try {
+        const themeInfo = {
+          slug,
+          name: name || slug,
+          version: 'custom',
+          description: 'ZIP   ',
+          author: ' ',
+          file_name: file_name || slug + '.zip',
+          installed_at: new Date().toISOString(),
+          install_method: 'zip',
+        };
+        await env.DB.prepare(
+          `INSERT OR REPLACE INTO wp_options (option_name, option_value, autoload) VALUES (?, ?, 'no')`
+        ).bind(`cp_theme_${slug}`, JSON.stringify(themeInfo)).run();
+        return j({ success: true, theme: themeInfo, message: `${themeInfo.name}   (ZIP)` });
+      } catch(e) {
+        return j({ success: false, message: 'ZIP   : ' + e.message }, 500);
+      }
+    }
+
+    return j({ code: 'rest_no_route', message: '  .', data: { status: 404 } }, 404);
+  } catch (e) {
+    console.error('[REST API] error:', e.message);
+    return j({ code: 'rest_error', message: '  .' }, 500);
+  }
 }
-__name(edgeScheduled, "edgeScheduled");
 
-// =============================================================
-// Worker 진입점 — ESM 모듈 형식 (export default)
-// main_module 지정 필수: CF Workers Upload API [10021] 대응
-// var 기반 번들 + export default 혼용 → SyntaxError 방지를 위해
-// 파일 최하단에만 export 구문을 배치하고 나머지는 var/function 유지
-// =============================================================
-var _edgeWorker = {
-  fetch:     edgeFetch,
-  scheduled: edgeScheduled
+function wpPostToJSON(p) {
+  if (!p) return null;
+  return {
+    id: p.ID || p.id,
+    date: p.post_date,
+    date_gmt: p.post_date_gmt,
+    modified: p.post_modified,
+    slug: p.post_name,
+    status: p.post_status,
+    type: p.post_type,
+    link: p.guid || `/?p=${p.ID||p.id}`,
+    title: { rendered: p.post_title || '', raw: p.post_title || '' },
+    content: { rendered: p.post_content || '', raw: p.post_content || '', protected: false },
+    excerpt: { rendered: p.post_excerpt || '', raw: p.post_excerpt || '', protected: false },
+    author: p.post_author || 1,
+    comment_status: p.comment_status || 'open',
+    comment_count: p.comment_count || 0,
+    _links: {
+      self: [{ href: `/wp-json/wp/v2/posts/${p.ID||p.id}` }],
+      collection: [{ href: '/wp-json/wp/v2/posts' }],
+    },
+  };
+}
+
+async function handleRSSFeed(env, siteInfo, url) {
+  const opts = await getWPOptions(env, siteInfo.site_prefix, ['blogname','blogdescription','siteurl']);
+  const siteName = opts.blogname || siteInfo.name;
+  const siteUrl  = `https://${url.hostname}`;
+  let posts = [];
+  try {
+    const res = await env.DB.prepare(
+      `SELECT ID, post_title, post_content, post_excerpt, post_date, post_name FROM wp_posts WHERE post_type='post' AND post_status='publish' ORDER BY post_date DESC LIMIT 10`
+    ).all();
+    posts = res.results || [];
+  } catch {}
+  const items = posts.map(p => {
+    const link = `${siteUrl}/${p.post_name}/`;
+    return `<item>
+  <title><![CDATA[${p.post_title}]]></title>
+  <link>${link}</link>
+  <pubDate>${new Date(p.post_date).toUTCString()}</pubDate>
+  <guid isPermaLink="true">${link}</guid>
+  <description><![CDATA[${(p.post_excerpt || p.post_content || '').slice(0, 500)}]]></description>
+</item>`;
+  }).join('\n');
+
+  const rss = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:atom="http://www.w3.org/2005/Atom">
+<channel>
+  <title>${siteName}</title>
+  <link>${siteUrl}</link>
+  <description>${opts.blogdescription || ''}</description>
+  <lastBuildDate>${new Date().toUTCString()}</lastBuildDate>
+  <language>ko</language>
+  <atom:link href="${siteUrl}/feed/" rel="self" type="application/rss+xml"/>
+  ${items}
+</channel>
+</rss>`;
+
+  return new Response(rss, {
+    headers: { 'Content-Type': 'application/rss+xml; charset=utf-8', 'Cache-Control': `public, max-age=${CACHE_TTL_API}` },
+  });
+}
+
+async function handleMediaUpload(env, request, siteInfo) {
+  const ct = request.headers.get('content-type') || '';
+  if (!ct.includes('multipart/form-data')) {
+    return new Response(JSON.stringify({ error: 'multipart/form-data ' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+  }
+  const formData = await request.formData();
+  const file = formData.get('file') || formData.get('async-upload');
+  if (!file || typeof file === 'string') {
+    return new Response(JSON.stringify({ error: ' ' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+  }
+  const fileName = file.name || 'upload_' + Date.now();
+  const mimeType = file.type || 'application/octet-stream';
+  const fileSize = file.size || 0;
+  const bucket   = siteInfo.storage_bucket || 'media';
+  const datePath = new Date().toISOString().slice(0, 7).replace('-', '/');
+  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const storagePath = `${siteInfo.site_prefix}/${datePath}/${Date.now()}_${safeName}`;
+  const arrayBuffer = await file.arrayBuffer();
+  const result = await supabaseUpload(siteInfo, bucket, storagePath, arrayBuffer, mimeType);
+
+  if (!result.ok) {
+    if (fileSize < 500 * 1024) {
+      const b64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+      try {
+        await env.DB.prepare(
+          `INSERT INTO wp_media (file_name, file_path, mime_type, file_size, upload_date, storage, alt_text) VALUES (?, ?, ?, ?, datetime('now'), 'd1', '')`
+        ).bind(safeName, storagePath, mimeType, fileSize).run();
+        if (env.CACHE) await env.CACHE.put(`media:${storagePath}`, b64, { metadata: { mimeType, size: fileSize } });
+        return new Response(JSON.stringify({ id: Date.now(), url: `/wp-content/uploads/${storagePath}`, title: safeName }), {
+          status: 201, headers: { 'Content-Type': 'application/json' },
+        });
+      } catch {}
+    }
+    return new Response(JSON.stringify({ error: ' ' }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+  try {
+    await env.DB.prepare(
+      `INSERT INTO wp_media (file_name, file_path, mime_type, file_size, upload_date, storage, alt_text) VALUES (?, ?, ?, ?, datetime('now'), 'supabase', '')`
+    ).bind(safeName, result.url, mimeType, fileSize).run();
+  } catch {}
+  return new Response(JSON.stringify({
+    id: Date.now(), url: result.url, title: safeName.replace(/\.[^.]+$/, ''),
+    mime_type: mimeType, source_url: result.url, secondary: result.secondary || false,
+  }), { status: 201, headers: { 'Content-Type': 'application/json' } });
+}
+
+async function revalidatePage(env, siteInfo, url, request) {
+  try {
+    const { html } = await renderWordPressPage(env, siteInfo, url, request);
+    const kvKey = `${siteInfo.site_prefix}:${url.pathname}${url.search}`;
+    await kvCachePut(env, kvKey, html, 'text/html; charset=utf-8', 200, CACHE_TTL_HTML);
+    const freshResp = new Response(html, {
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': `public, max-age=${CACHE_TTL_HTML}, stale-while-revalidate=${CACHE_TTL_STALE}`,
+        'x-cp-cached': 'edge', 'x-cp-revalidated': '1',
+      },
+    });
+    await edgeCache.put(new Request(url.toString()), freshResp);
+  } catch (e) { console.warn('[SWR] revalidation failed:', e.message); }
+}
+
+async function handlePurge(env, request, url, siteInfo) {
+  const auth = request.headers.get('Authorization') || '';
+  const purgeKey = env.PURGE_KEY || '';
+  if (purgeKey && auth !== `Bearer ${purgeKey}`) return new Response('Unauthorized', { status: 401 });
+  const body = await request.json().catch(() => ({}));
+  const paths = body.paths || [url.searchParams.get('path') || '/'];
+  let purged = 0;
+  for (const p of paths) {
+    const kvKey = `${siteInfo.site_prefix}:${p}`;
+    try {
+      await env.CACHE?.delete(KV_PAGE_PREFIX + kvKey);
+      await edgeCache.delete(new Request(`https://${url.hostname}${p}`));
+      purged++;
+    } catch {}
+  }
+  return new Response(JSON.stringify({ ok: true, purged, paths }), { headers: { 'Content-Type': 'application/json' } });
+}
+
+async function handlePrewarm(env, request, url, siteInfo) {
+  const paths = ['/'];
+  try {
+    const res = await env.DB.prepare(
+      `SELECT post_name FROM wp_posts WHERE post_type='post' AND post_status='publish' ORDER BY post_date DESC LIMIT 5`
+    ).all();
+    for (const r of (res.results || [])) paths.push(`/${r.post_name}/`);
+  } catch {}
+  const hostname = url.hostname;
+  for (const p of paths) {
+    const warmUrl = new URL(`https://${hostname}${p}`);
+    revalidatePage(env, siteInfo, warmUrl, request).catch(() => {});
+  }
+  return new Response(JSON.stringify({ ok: true, paths, message: '  ' }), { headers: { 'Content-Type': 'application/json' } });
+}
+
+async function handleSitemap(env, siteInfo, url) {
+  const siteUrl = `https://${url.hostname}`;
+  let posts = [], pages = [];
+  try {
+    const [pr, pgr] = await Promise.all([
+      env.DB.prepare(`SELECT post_name, post_modified FROM wp_posts WHERE post_type='post' AND post_status='publish' ORDER BY post_date DESC LIMIT 1000`).all(),
+      env.DB.prepare(`SELECT post_name, post_modified FROM wp_posts WHERE post_type='page' AND post_status='publish' ORDER BY menu_order ASC LIMIT 100`).all(),
+    ]);
+    posts = pr.results || [];
+    pages = pgr.results || [];
+  } catch {}
+  const urls = [
+    `<url><loc>${siteUrl}/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>`,
+    ...pages.map(p => `<url><loc>${siteUrl}/${p.post_name}/</loc><lastmod>${(p.post_modified||'').slice(0,10)}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>`),
+    ...posts.map(p => `<url><loc>${siteUrl}/${p.post_name}/</loc><lastmod>${(p.post_modified||'').slice(0,10)}</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>`),
+  ];
+  return new Response(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>`, {
+    headers: { 'Content-Type': 'application/xml; charset=utf-8', 'Cache-Control': `public, max-age=${CACHE_TTL_API}` },
+  });
+}
+
+//    
+async function handleRequest(request, env, ctx) {
+  const url = new URL(request.url);
+  const hostname = url.hostname.toLowerCase();
+  const pathname = url.pathname;
+  const method   = request.method;
+  const ip       = getClientIP(request);
+
+  // WAF
+  const wafResult = wafCheck(request, url);
+  if (wafResult.block) {
+    if (wafResult.tarpit) await new Promise(r => setTimeout(r, BOT_TARPIT_MS));
+    return new Response(
+      `<!DOCTYPE html><html><head><title>403 Forbidden</title></head><body><h1>403 Forbidden</h1><p> . (${wafResult.reason})</p></body></html>`,
+      { status: wafResult.status || 403, headers: { 'Content-Type': 'text/html', 'X-WAF-Block': wafResult.reason } }
+    );
+  }
+
+  // Rate limit
+  const isWrite = !['GET','HEAD','OPTIONS'].includes(method);
+  const rlResult = await rateLimitCheck(env, ip, isWrite, pathname);
+  if (!rlResult.allowed) {
+    if (rlResult.banned) {
+      return new Response('IP .', { status: 429, headers: { 'Retry-After': String(DDOS_BAN_TTL) } });
+    }
+    return new Response('Too Many Requests', { status: 429, headers: { 'Retry-After': String(RATE_LIMIT_WIN) } });
+  }
+
+  // CloudPress     WordPress  
+  // (pass-through  — //   )
+
+  //  
+  if (pathname.startsWith('/.well-known/cloudpress-verify/')) {
+    const token = pathname.split('/').pop();
+    return new Response(`cloudpress-verify=${token}`, { headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' } });
+  }
+
+  //  
+  const siteInfo = await getSiteInfo(env, hostname);
+  if (!siteInfo) {
+    return new Response(NOT_FOUND_HTML, { status: 404, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+  }
+  if (siteInfo.suspended) {
+    return new Response(SUSPENDED_HTML, { status: 403, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+  }
+  if (siteInfo.status === 'pending' || siteInfo.status === 'provisioning') {
+    return new Response(PROVISIONING_HTML, { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Retry-After': '10' } });
+  }
+
+  //   
+
+  // wp-login.php
+  if (pathname === '/wp-login.php') {
+    return handleWPLogin(env, request, url, siteInfo);
+  }
+
+  // wp-admin
+  if (pathname.startsWith('/wp-admin')) {
+    return handleWPAdmin(env, request, url, siteInfo);
+  }
+
+  // REST API
+  if (pathname.startsWith('/wp-json/')) {
+    return handleWPRestAPI(env, request, url, siteInfo);
+  }
+
+  // RSS
+  if (pathname === '/feed/' || pathname === '/feed' || url.searchParams.has('feed')) {
+    return handleRSSFeed(env, siteInfo, url);
+  }
+
+  // Sitemap
+  if (pathname === '/wp-sitemap.xml' || pathname === '/sitemap.xml' || pathname === '/sitemap_index.xml') {
+    const r = await handleSitemap(env, siteInfo, url);
+    ctx.waitUntil(cachePut(ctx, request, r.clone(), CACHE_TTL_API));
+    return r;
+  }
+
+  //  
+  if (pathname === '/wp-admin/async-upload.php' && method === 'POST') {
+    return handleMediaUpload(env, request, siteInfo);
+  }
+
+  // Purge API
+  if (pathname === '/cp-purge' || pathname === '/wp-json/cloudpress/v1/purge') {
+    return handlePurge(env, request, url, siteInfo);
+  }
+
+  // Prewarm
+  if (pathname === '/cp-prewarm') {
+    return handlePrewarm(env, request, url, siteInfo);
+  }
+
+  // robots.txt
+  if (pathname === '/robots.txt') {
+    return new Response(
+      `User-agent: *\nDisallow: /wp-admin/\nDisallow: /wp-login.php\nDisallow: /wp-json/\nAllow: /wp-admin/admin-ajax.php\nSitemap: https://${hostname}/wp-sitemap.xml\n`,
+      { headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'public, max-age=86400' } }
+    );
+  }
+
+  // OPTIONS
+  if (method === 'OPTIONS') {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-WP-Nonce',
+      },
+    });
+  }
+
+  //  
+  if (isStaticAsset(pathname)) {
+    const cached = await cacheGet(request);
+    if (cached && !cached.stale) {
+      const r = new Response(cached.response.body, { status: cached.response.status, headers: cached.response.headers });
+      r.headers.set('x-cp-hit', 'edge');
+      return r;
+    }
+    if (siteInfo.supabase_url) {
+      const mediaPath = pathname.replace('/wp-content/uploads/', '');
+      const mediaUrl  = `${siteInfo.supabase_url}/storage/v1/object/public/${siteInfo.storage_bucket || 'media'}/${siteInfo.site_prefix}/${mediaPath}`;
+      try {
+        const mediaResp = await fetch(mediaUrl, { cf: { cacheTtl: CACHE_TTL_ASSET, cacheEverything: true } });
+        if (mediaResp.ok) {
+          ctx.waitUntil(cachePut(ctx, request, mediaResp.clone(), CACHE_TTL_ASSET));
+          return new Response(mediaResp.body, {
+            status: mediaResp.status,
+            headers: new Headers({ ...Object.fromEntries(mediaResp.headers), 'Cache-Control': `public, max-age=${CACHE_TTL_ASSET}` }),
+          });
+        }
+      } catch {}
+    }
+    return new Response('Not Found', { status: 404 });
+  }
+
+  //   
+  if (!isCacheable(request, url)) {
+    const { html, contentData } = await renderWordPressPage(env, siteInfo, url, request);
+    return new Response(html, {
+      status: contentData.type === '404' ? 404 : 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, private' },
+    });
+  }
+
+  //   : Edge → KV → SSR 
+  const kvKey = `${siteInfo.site_prefix}:${pathname}${url.search}`;
+
+  const edgeHit = await cacheGet(request);
+  if (edgeHit) {
+    if (!edgeHit.stale) {
+      const r = new Response(edgeHit.response.body, { status: edgeHit.response.status, headers: edgeHit.response.headers });
+      r.headers.set('x-cp-hit', 'edge');
+      return r;
+    }
+    ctx.waitUntil(revalidatePage(env, siteInfo, url, request));
+    const r = new Response(edgeHit.response.body, { status: edgeHit.response.status, headers: edgeHit.response.headers });
+    r.headers.set('x-cp-hit', 'edge-stale');
+    r.headers.set('x-cp-swr', '1');
+    return r;
+  }
+
+  const kvHit = await kvCacheGet(env, kvKey);
+  if (kvHit) {
+    const headers = new Headers({
+      'Content-Type': kvHit.contentType || 'text/html; charset=utf-8',
+      'Cache-Control': `public, max-age=${CACHE_TTL_HTML}, stale-while-revalidate=${CACHE_TTL_STALE}`,
+      'x-cp-hit': 'kv',
+    });
+    const resp = new Response(kvHit.body, { status: kvHit.status || 200, headers });
+    ctx.waitUntil(cachePut(ctx, request, resp.clone(), CACHE_TTL_HTML));
+    if (kvHit.stale) {
+      ctx.waitUntil(revalidatePage(env, siteInfo, url, request));
+      resp.headers.set('x-cp-swr', '1');
+    }
+    return resp;
+  }
+
+  let html, contentData;
+  try {
+    ({ html, contentData } = await renderWordPressPage(env, siteInfo, url, request));
+  } catch (ssrError) {
+    console.error('[SSR] render failed:', ssrError?.message);
+    return new Response(ERROR_HTML, { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Retry-After': '10' } });
+  }
+
+  const isNotFound = contentData.type === '404';
+  const respStatus = isNotFound ? 404 : 200;
+  const ttl        = isNotFound ? 60 : CACHE_TTL_HTML;
+
+  const responseHeaders = new Headers({
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': isNotFound ? 'public, max-age=60' : `public, max-age=${ttl}, stale-while-revalidate=${CACHE_TTL_STALE}`,
+    'x-cp-hit': 'miss',
+    'x-cp-via': 'cloudpress-ssr',
+  });
+
+  if (!isNotFound) {
+    ctx.waitUntil(kvCachePut(env, kvKey, html, 'text/html; charset=utf-8', respStatus, ttl));
+  }
+  const ssrResp = new Response(html, { status: respStatus, headers: responseHeaders });
+  if (!isNotFound) ctx.waitUntil(cachePut(ctx, request, ssrResp.clone(), ttl));
+  return new Response(html, { status: respStatus, headers: responseHeaders });
+}
+
+//  HTML  
+const SUSPENDED_HTML = `<!DOCTYPE html>
+<html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title> </title>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#0f0f0f;color:#fff}.box{text-align:center;padding:2rem;max-width:480px}h1{font-size:2rem;margin-bottom:1rem;color:#f55}p{color:#aaa;line-height:1.6}</style>
+</head><body><div class="box"><h1>  </h1><p>     .</p></div></body></html>`;
+
+const NOT_FOUND_HTML = `<!DOCTYPE html>
+<html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>   </title>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#0f0f0f;color:#fff}.box{text-align:center;padding:2rem;max-width:480px}h1{font-size:2rem;margin-bottom:1rem;color:#fa0}p{color:#aaa;line-height:1.6}a{color:#7af;text-decoration:none}</style>
+</head><body><div class="box"><h1>    </h1><p>    .<br><a href="https://cloudpress.site/">CloudPress </a>   .</p></div></body></html>`;
+
+const PROVISIONING_HTML = `<!DOCTYPE html>
+<html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="10">
+<title>  </title>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#0f0f0f;color:#fff;text-align:center}.box{padding:2rem;max-width:480px}h1{font-size:1.8rem;margin-bottom:1rem;color:#7af}p{color:#aaa;line-height:1.6}.spin{font-size:2.5rem;display:inline-block;animation:spin 1.2s linear infinite;margin-bottom:1rem}@keyframes spin{to{transform:rotate(360deg)}}</style>
+</head><body><div class="box"><div class="spin"></div><h1>  </h1><p>  .</p></div></body></html>`;
+
+const ERROR_HTML = `<!DOCTYPE html>
+<html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title> </title>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#0f0f0f;color:#fff}.box{text-align:center;padding:2rem;max-width:480px}h1{color:#f55;margin-bottom:1rem}p{color:#aaa;line-height:1.6}</style>
+</head><body><div class="box"><h1>   </h1><p>    .</p></div></body></html>`;
+
+//  Worker  
+export default {
+  async fetch(request, env, ctx) {
+    try {
+      return await handleRequest(request, env, ctx);
+    } catch (e) {
+      console.error('[worker] Unhandled error:', e?.message || e, e?.stack);
+      return new Response(ERROR_HTML, {
+        status: 500,
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      });
+    }
+  },
+
+  async scheduled(event, env, ctx) {
+    try {
+      const sites = await env.DB.prepare(
+        `SELECT id, site_prefix, primary_domain FROM sites WHERE status='active' AND deleted_at IS NULL LIMIT 100`
+      ).all();
+      for (const site of (sites.results || [])) {
+        if (!site.primary_domain) continue;
+        const siteInfo = await getSiteInfo(env, site.primary_domain).catch(() => null);
+        if (!siteInfo) continue;
+        const homeUrl = new URL(`https://${site.primary_domain}/`);
+        ctx.waitUntil(revalidatePage(env, siteInfo, homeUrl, new Request(homeUrl)));
+      }
+    } catch (e) {
+      console.error('[scheduled] ISR error:', e?.message);
+    }
+  },
 };
-export default _edgeWorker;
